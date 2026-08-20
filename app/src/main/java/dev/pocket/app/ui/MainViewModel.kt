@@ -43,6 +43,7 @@ data class AppUiState(
     val startupError: String? = null,
     val onboardingComplete: Boolean = false,
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
+    val themeMode: dev.pocket.app.ui.theme.AppThemeMode = dev.pocket.app.ui.theme.AppThemeMode.DARK,
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val projects: List<Project> = emptyList(),
     val activeProject: Project? = null,
@@ -72,10 +73,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AppUiState(
             onboardingComplete = preferences.onboardingComplete,
             provider = preferences.loadProvider(vault),
+            themeMode = runCatching { dev.pocket.app.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
+                .getOrDefault(dev.pocket.app.ui.theme.AppThemeMode.DARK),
             projects = emptyList(),
         ),
     )
     val state: StateFlow<AppUiState> = _state.asStateFlow()
+
+    fun toggleTheme() {
+        val next = if (_state.value.themeMode == dev.pocket.app.ui.theme.AppThemeMode.DARK) {
+            dev.pocket.app.ui.theme.AppThemeMode.LIGHT
+        } else {
+            dev.pocket.app.ui.theme.AppThemeMode.DARK
+        }
+        preferences.themeMode = next.name.lowercase()
+        _state.update { it.copy(themeMode = next) }
+    }
 
     init {
         viewModelScope.launch { runtime.events.collect(::onRuntimeEvent) }

@@ -15,6 +15,11 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean("runtime_setup_complete", false)
         set(value) { preferences.edit().putBoolean("runtime_setup_complete", value).apply() }
 
+    var themeMode: String
+        get() = preferences.getString("theme_mode", "dark") ?: "dark"
+        set(value) { preferences.edit().putString("theme_mode", value).apply() }
+
+
     fun saveProvider(profile: ProviderProfile) {
         preferences.edit()
             .putString("provider_kind", profile.kind.name)

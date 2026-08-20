@@ -4,6 +4,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.pocket.app.ui.MainViewModel
 import dev.pocket.app.ui.PocketDevApp
 import dev.pocket.app.ui.theme.PocketTheme
 
@@ -12,7 +16,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            PocketTheme { PocketDevApp() }
+            val vm: MainViewModel = viewModel()
+            val state by vm.state.collectAsStateWithLifecycle()
+            PocketTheme(themeMode = state.themeMode) {
+                PocketDevApp(vm)
+            }
         }
     }
 }
