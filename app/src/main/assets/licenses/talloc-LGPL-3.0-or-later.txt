@@ -1,0 +1,7 @@
+talloc is Copyright (C) Andrew Tridgell 2004-2005 and
+Copyright (C) Stefan Metzmacher 2006.
+
+The talloc library is distributed under the GNU Lesser General Public License,
+version 3 or (at your option) any later version. The complete license text is
+available at https://www.gnu.org/licenses/lgpl-3.0.txt and the corresponding
+source is available from https://talloc.samba.org/.

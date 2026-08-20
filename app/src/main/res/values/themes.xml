@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.PocketDev" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#0B0E14</item>
+        <item name="android:navigationBarColor">#0B0E14</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>
