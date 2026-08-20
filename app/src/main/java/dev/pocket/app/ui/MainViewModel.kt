@@ -33,6 +33,8 @@ import kotlinx.coroutines.withContext
 
 enum class StartupStage { CHECKING, SETUP_REQUIRED, INSTALLING, MODEL_SETUP, INITIALIZING, READY, ERROR }
 
+enum class ApiPingStatus { IDLE, PINGING, OK, FAILED }
+
 data class AppUiState(
     val startupStage: StartupStage = StartupStage.CHECKING,
     val startupProgress: Float = 0f,
@@ -41,10 +43,14 @@ data class AppUiState(
     val startupError: String? = null,
     val onboardingComplete: Boolean = false,
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
+    val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val projects: List<Project> = emptyList(),
     val activeProject: Project? = null,
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
     val filesLoading: Boolean = false,
+    val openedFilePath: String? = null,
+    val openedFileContent: String? = null,
+    val fileContentLoading: Boolean = false,
     val messages: List<ChatMessage> = listOf(
         ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change."),
     ),
@@ -171,6 +177,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val remaining = MINIMUM_INITIALIZATION_SCREEN_MS - (SystemClock.elapsedRealtime() - startedAt)
             if (remaining > 0) delay(remaining)
             _state.update { it.copy(startupStage = StartupStage.READY, startupProgress = 1f) }
+            pingApi()
         } else {
             showStartupError(result.exceptionOrNull() ?: IllegalStateException("Claude Code initialization failed"))
         }
@@ -193,6 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProvider(saved)
         preferences.onboardingComplete = true
         _state.update { it.copy(onboardingComplete = true, provider = saved, startupStage = StartupStage.READY) }
+        pingApi()
     }
 
     fun updateProvider(profile: ProviderProfile, secret: String) = finishOnboarding(profile, secret)
@@ -210,6 +218,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
         return providerApi.validate(profile.baseUrl, profile.model, key, profile.kind.protocol, models)
     }
+
+    fun pingApi() {
+        val url = _state.value.provider.baseUrl.ifBlank { return }
+        if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING) }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "HEAD"
+                    conn.connectTimeout = 5_000
+                    conn.readTimeout = 5_000
+                    conn.instanceFollowRedirects = true
+                    conn.connect()
+                    val code = conn.responseCode
+                    conn.disconnect()
+                    code in 100..599  // any HTTP response = server is alive
+                }.getOrDefault(false)
+            }
+            _state.update { it.copy(apiPingStatus = if (ok) ApiPingStatus.OK else ApiPingStatus.FAILED) }
+        }
+    }
+
     fun openProject(project: Project) {
         _state.update { it.copy(activeProject = project, workspaceFiles = emptyList(), filesLoading = true) }
         refreshProjectFiles()
@@ -244,6 +275,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    fun openFile(entry: WorkspaceEntry) {
+        if (entry.isDirectory) return
+        val project = _state.value.activeProject ?: return
+        _state.update { it.copy(openedFilePath = entry.path, openedFileContent = null, fileContentLoading = true) }
+        viewModelScope.launch {
+            val content = withContext(Dispatchers.IO) {
+                val file = File(getApplication<Application>().filesDir, "workspaces/${project.id}/${entry.path}")
+                runCatching {
+                    if (file.length() > 512_000L) {
+                        file.inputStream().use { stream ->
+                            val buf = ByteArray(512_000)
+                            val read = stream.read(buf)
+                            String(buf, 0, read)
+                        } + "\n\n[File truncated — too large to display fully]"
+                    } else {
+                        file.readText()
+                    }
+                }.getOrElse { "Could not read file: ${it.message}" }
+            }
+            _state.update { it.copy(openedFileContent = content, fileContentLoading = false) }
+        }
+    }
+
+    fun closeFile() {
+        _state.update { it.copy(openedFilePath = null, openedFileContent = null, fileContentLoading = false) }
+    }
+
 
     private fun readWorkspace(projectId: String): List<WorkspaceEntry> {
         val root = File(getApplication<Application>().filesDir, "workspaces/$projectId")
