@@ -51,5 +51,19 @@ class RuntimeLaunchConfigBuilderTest {
         assertEquals("custom-model", config.environment["CLAUDE_CODE_SUBAGENT_MODEL"])
         assertEquals("1", config.environment["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"])
         assertEquals("temporary-secret", config.environment["ANTHROPIC_AUTH_TOKEN"])
+        assertEquals("temporary-secret", config.environment["ANTHROPIC_API_KEY"])
+    }
+
+    @Test
+    fun openRouterMatchesVerifiedClaudeCodeEnvironment() {
+        val config = RuntimeLaunchConfigBuilder.build(
+            ProviderProfile(ProviderKind.CUSTOM, "https://openrouter.ai/api/", "stealth/ox-alpha", true),
+            authToken = "temporary-openrouter-secret",
+        )
+
+        assertEquals("https://openrouter.ai/api", config.environment["ANTHROPIC_BASE_URL"])
+        assertEquals("temporary-openrouter-secret", config.environment["ANTHROPIC_AUTH_TOKEN"])
+        assertEquals("temporary-openrouter-secret", config.environment["OPENROUTER_API_KEY"])
+        assertEquals("temporary-openrouter-secret", config.environment["ANTHROPIC_API_KEY"])
     }
 }

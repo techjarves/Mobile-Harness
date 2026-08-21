@@ -1,5 +1,7 @@
 package dev.pocket.app.runtime
 
+import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.model.RuntimeEvent
 import dev.pocket.app.model.ToolRequest
@@ -13,9 +15,15 @@ data class RuntimeLaunchConfig(
 
 interface RuntimeBridge {
     val events: Flow<RuntimeEvent>
-    suspend fun startSession(projectId: String, prompt: String, provider: ProviderProfile): String
+    suspend fun startSession(projectId: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)
     suspend fun stopSession(sessionId: String)
+    suspend fun stopActiveSession()
+    suspend fun undoLastChanges(projectId: String): Boolean
+    suspend fun acceptLastChanges(projectId: String)
+    suspend fun loadPendingChanges(projectId: String): List<ChangeItem>
+    suspend fun undoFileChange(projectId: String, path: String): Boolean
+    suspend fun acceptFileChange(projectId: String, path: String): Boolean
 }
 
 object RuntimeLaunchConfigBuilder {
@@ -43,14 +51,16 @@ object RuntimeLaunchConfigBuilder {
             environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] = profile.model
             environment["ANTHROPIC_DEFAULT_SONNET_MODEL"] = profile.model
             environment["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = profile.model
+            environment["ANTHROPIC_SMALL_MODEL"] = profile.model
+            environment["ANTHROPIC_FAST_MODEL"] = profile.model
             environment["CLAUDE_CODE_SUBAGENT_MODEL"] = profile.model
             environment["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
+            environment["CLAUDE_CODE_DISABLE_TOKEN_COUNTING"] = "1"
+            environment["DISABLE_TELEMETRY"] = "1"
             if (!authToken.isNullOrBlank()) {
-                if (profile.kind == dev.pocket.app.model.ProviderKind.ANTHROPIC) {
-                    environment["ANTHROPIC_API_KEY"] = authToken
-                } else {
-                    environment["ANTHROPIC_AUTH_TOKEN"] = authToken
-                }
+                environment["ANTHROPIC_API_KEY"] = authToken
+                environment["ANTHROPIC_AUTH_TOKEN"] = authToken
+                environment["OPENROUTER_API_KEY"] = authToken
             }
         }
         return RuntimeLaunchConfig(

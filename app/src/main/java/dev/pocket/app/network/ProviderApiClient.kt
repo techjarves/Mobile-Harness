@@ -58,10 +58,6 @@ class ProviderApiClient {
         if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
             return@withContext ConnectionValidation.Failure("Base URL, model, and API key are required.")
         }
-        if (discoveredModels.any { it.id == model }) {
-            return@withContext ConnectionValidation.Success("API key accepted and model found.")
-        }
-
         val endpoint = messagesEndpoint(baseUrl, protocol)
         val body = validationBody(model, protocol)
         val response = request(endpoint, "POST", apiKey, body)

@@ -27,6 +27,13 @@ class ApiKeyVault(context: Context) {
 
     fun contains(providerId: String): Boolean = preferences.contains("$providerId.value")
 
+    fun remove(providerId: String) {
+        preferences.edit()
+            .remove("$providerId.iv")
+            .remove("$providerId.value")
+            .apply()
+    }
+
     fun get(providerId: String): String? = runCatching {
         val iv = Base64.decode(preferences.getString("$providerId.iv", null), Base64.NO_WRAP)
         val encrypted = Base64.decode(preferences.getString("$providerId.value", null), Base64.NO_WRAP)

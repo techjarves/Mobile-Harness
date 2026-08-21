@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.webkit.WebView
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -88,6 +92,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -99,7 +104,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.pocket.app.model.ActivityItem
 import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.DiffLine
+import dev.pocket.app.model.DiffLineType
 import dev.pocket.app.model.Project
+import dev.pocket.app.model.ProjectChat
 import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.model.ToolRequest
@@ -119,18 +127,31 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 
-private enum class RootScreen { PROJECTS, SETTINGS }
+import dev.pocket.app.ui.theme.AppThemeMode
+import androidx.compose.material.icons.filled.Terminal
+
+private enum class RootScreen(val label: String, val icon: ImageVector) {
+    PROJECTS("Projects", Icons.Default.Folder),
+    TERMINAL("Terminal", Icons.Default.Terminal),
+    SETTINGS("Settings", Icons.Default.Settings),
+}
 private enum class WorkspaceTab(val label: String, val icon: ImageVector) {
     CHAT("Chat", Icons.Default.AutoAwesome),
     FILES("Files", Icons.Default.Folder),
     CHANGES("Changes", Icons.Default.Code),
     PREVIEW("Preview", Icons.Default.Preview),
-    ACTIVITY("Activity", Icons.Default.History),
 }
 
 @Composable
 fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    LaunchedEffect(state.toastMessage) {
+        state.toastMessage?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            viewModel.consumeToast()
+        }
+    }
     when {
         state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(viewModel::startRuntimeSetup)
         state.startupStage == StartupStage.INSTALLING ||
@@ -153,6 +174,12 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRefreshFiles = viewModel::refreshProjectFiles,
             onOpenFile = viewModel::openFile,
             onCloseFile = viewModel::closeFile,
+            onUndoChanges = viewModel::undoLastChanges,
+            onKeepChanges = viewModel::keepLastChanges,
+            onUndoFileChange = viewModel::undoFileChange,
+            onKeepFileChange = viewModel::keepFileChange,
+            onCreateChat = viewModel::createChat,
+            onSwitchChat = viewModel::switchChat,
         )
         else -> RootScreenHost(state, viewModel)
     }
@@ -284,27 +311,58 @@ private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1_04
 @Composable
 private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
-    AnimatedContent(screen, label = "root") { current ->
-        when (current) {
-            RootScreen.PROJECTS -> ProjectsScreen(
-                state = state,
-                onOpen = viewModel::openProject,
-                onCreate = viewModel::createProject,
-                onSettings = { screen = RootScreen.SETTINGS },
-                onPing = viewModel::pingApi,
-                onToggleTheme = viewModel::toggleTheme,
-            )
-            RootScreen.SETTINGS -> ProviderSetupScreen(
-                initial = state.provider,
-                onboarding = false,
-                onBack = { screen = RootScreen.PROJECTS },
-                onSave = { profile, key ->
-                    viewModel.updateProvider(profile, key)
-                    screen = RootScreen.PROJECTS
-                },
-                onDiscover = viewModel::discoverModels,
-                onValidate = viewModel::validateProvider,
-            )
+    val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
+    val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
+
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                RootScreen.entries.forEach { tab ->
+                    NavigationBarItem(
+                        selected = screen == tab,
+                        onClick = { screen = tab },
+                        icon = { Icon(tab.icon, contentDescription = tab.label) },
+                        label = { Text(tab.label, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            when (screen) {
+                RootScreen.PROJECTS -> ProjectsScreen(
+                    state = state,
+                    onOpen = viewModel::openProject,
+                    onCreate = viewModel::createProject,
+                    onSettings = { screen = RootScreen.SETTINGS },
+                    onPing = viewModel::pingApi,
+                    onToggleTheme = viewModel::toggleTheme,
+                )
+                RootScreen.TERMINAL -> TerminalScreen(
+                    lines = terminalLines,
+                    isRunning = isTerminalRunning,
+                    onRun = viewModel::runTerminalCommand,
+                    onClear = viewModel::clearTerminal,
+                    onToggleTheme = viewModel::toggleTheme,
+                    themeMode = state.themeMode,
+                )
+                RootScreen.SETTINGS -> SettingsScreen(
+                    state = state,
+                    onSaveProvider = { profile, key ->
+                        viewModel.updateProvider(profile, key)
+                    },
+                    onDiscoverModels = viewModel::discoverModels,
+                    onValidateProvider = viewModel::validateProvider,
+                    onSetThemeMode = viewModel::setThemeMode,
+                    onPing = viewModel::pingApi,
+                    onClearTerminal = viewModel::clearTerminal,
+                    getSavedApiKey = viewModel::getSavedApiKey,
+                )
+            }
         }
     }
 }
@@ -319,13 +377,15 @@ private fun ProviderSetupScreen(
     onSave: (ProviderProfile, String) -> Unit,
     onDiscover: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidate: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
+    onToggleTheme: (() -> Unit)? = null,
+    themeMode: AppThemeMode = AppThemeMode.DARK,
 ) {
     val context = LocalContext.current
     var step by rememberSaveable { mutableIntStateOf(initialStep) }
     var selected by rememberSaveable { mutableStateOf(initial.kind) }
     var baseUrl by rememberSaveable { mutableStateOf(initial.baseUrl.ifBlank { "https://api.deepseek.com/anthropic" }) }
     var model by rememberSaveable { mutableStateOf(initial.model.ifBlank { "deepseek-chat" }) }
-    var apiKey by rememberSaveable { mutableStateOf("sk-d0c486c16b9e404786b57172f183f691") }
+    var apiKey by rememberSaveable { mutableStateOf("") }
 
     val handleBack: (() -> Unit)? = when {
         step > 1 -> { { step = 1 } }
@@ -340,11 +400,21 @@ private fun ProviderSetupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (onboarding) "Set up Pocket Dev" else "AI provider") },
+                title = { Text(if (onboarding) "Set up Pocket Dev" else "AI Provider & Settings") },
                 navigationIcon = {
                     if (handleBack != null) {
                         IconButton(onClick = handleBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    }
+                },
+                actions = {
+                    if (onToggleTheme != null) {
+                        IconButton(onClick = onToggleTheme) {
+                            Icon(
+                                if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = "Toggle theme",
+                            )
                         }
                     }
                 },
@@ -370,7 +440,7 @@ private fun ProviderSetupScreen(
                                 it.defaultBaseUrl
                             }
                             model = if (it == ProviderKind.CUSTOM) "deepseek-chat" else it.defaultModel
-                            apiKey = "sk-d0c486c16b9e404786b57172f183f691"
+                            apiKey = ""
                         }
                     },
                     onContinue = {
@@ -458,7 +528,11 @@ private fun ProviderChoiceStep(selected: ProviderKind, onSelected: (ProviderKind
         Text("Choose your AI", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("You can change this later.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             items(ProviderKind.entries) { provider ->
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onSelected(provider) },
@@ -673,9 +747,6 @@ private fun ProjectsScreen(
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(state.provider.baseUrl, state.provider.model) {
-        onPing()
-    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -687,29 +758,9 @@ private fun ProjectsScreen(
                             contentDescription = "Toggle theme",
                         )
                     }
-                    IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
-        },
-        bottomBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.background,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-            ) {
-                Button(
-                    onClick = { showCreate = true },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                ) {
-                    Icon(Icons.Default.Add, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("New project", fontWeight = FontWeight.SemiBold)
-                }
-            }
         },
     ) { padding ->
         LazyColumn(
@@ -722,7 +773,17 @@ private fun ProjectsScreen(
                 Text("Chat, review changes, and preview your project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 ApiStatusChip(state = state, onSettings = onSettings, onPing = onPing)
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { showCreate = true },
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("New project", fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(12.dp))
                 Text("Your projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
             if (state.projects.isEmpty()) {
@@ -861,7 +922,7 @@ private fun ProjectCard(project: Project, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
             Text(project.name, fontWeight = FontWeight.SemiBold)
                 Text(project.description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                Text("${project.language} · ${project.updatedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                Text("${project.language} · ${project.formattedUpdatedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
         }
     }
@@ -877,6 +938,12 @@ private fun WorkspaceScreen(
     onRefreshFiles: () -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onCloseFile: () -> Unit,
+    onUndoChanges: () -> Unit,
+    onKeepChanges: () -> Unit,
+    onUndoFileChange: (String) -> Unit,
+    onKeepFileChange: (String) -> Unit,
+    onCreateChat: () -> Unit,
+    onSwitchChat: (String) -> Unit,
 ) {
     BackHandler(onBack = onBack)
 
@@ -893,12 +960,46 @@ private fun WorkspaceScreen(
     }
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
+    var showChats by rememberSaveable { mutableStateOf(false) }
+    val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
+
+    if (showChats) {
+        ChatSwitcherDialog(
+            chats = state.projectChats,
+            activeChatId = state.activeChatId,
+            switchingEnabled = !state.isRunning,
+            onDismiss = { showChats = false },
+            onCreate = {
+                onCreateChat()
+                showChats = false
+                selectedTab = WorkspaceTab.CHAT
+            },
+            onSwitch = { chatId ->
+                onSwitchChat(chatId)
+                showChats = false
+                selectedTab = WorkspaceTab.CHAT
+            },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Column { Text(state.activeProject?.name.orEmpty(), fontWeight = FontWeight.SemiBold); Text(state.provider.kind.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                title = {
+                    Column {
+                        Text(state.activeProject?.name.orEmpty(), fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${activeChat?.title ?: "Chat"} · ${state.provider.kind.title}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Projects") } },
-                actions = { if (state.isRunning) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp) },
+                actions = {
+                    IconButton(onClick = { showChats = true }) { Icon(Icons.Default.History, "Project chats") }
+                    if (state.isRunning) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -921,14 +1022,77 @@ private fun WorkspaceScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (selectedTab) {
-                WorkspaceTab.CHAT -> ChatTab(state.messages, state.pendingApproval, state.isRunning, onSend, onApproval)
+                WorkspaceTab.CHAT -> ChatTab(
+                    state.messages,
+                    state.pendingApproval,
+                    state.liveProcess,
+                    state.isRunning,
+                    onSend,
+                    onApproval,
+                )
                 WorkspaceTab.FILES -> FilesTab(state.workspaceFiles, state.filesLoading, onRefreshFiles, onOpenFile)
-                WorkspaceTab.CHANGES -> ChangesTab(state.changes)
+                WorkspaceTab.CHANGES -> ChangesTab(
+                    state.changes,
+                    onUndoChanges,
+                    onKeepChanges,
+                    onUndoFileChange,
+                    onKeepFileChange,
+                )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady)
-                WorkspaceTab.ACTIVITY -> ActivityTab(state.activity)
             }
         }
     }
+}
+
+@Composable
+private fun ChatSwitcherDialog(
+    chats: List<ProjectChat>,
+    activeChatId: String?,
+    switchingEnabled: Boolean,
+    onDismiss: () -> Unit,
+    onCreate: () -> Unit,
+    onSwitch: (String) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Project chats") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = onCreate, enabled = switchingEnabled, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("New chat")
+                }
+                if (!switchingEnabled) {
+                    Text("Finish the running task before switching chats.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(chats, key = { it.id }) { chat ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = switchingEnabled) { onSwitch(chat.id) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (chat.id == activeChatId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.AutoAwesome, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(chat.title, fontWeight = if (chat.id == activeChatId) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                                    Text(
+                                        if (chat.id == activeChatId) "Current chat" else "Saved conversation",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (chat.id == activeChatId) Icon(Icons.Default.Check, "Current", tint = PocketGreen)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1103,11 +1267,31 @@ private fun FilesTab(
 }
 
 @Composable
-private fun ChatTab(messages: List<ChatMessage>, approval: ToolRequest?, isRunning: Boolean, onSend: (String) -> Unit, onApproval: (Boolean) -> Unit) {
+private fun ChatTab(
+    messages: List<ChatMessage>,
+    approval: ToolRequest?,
+    liveProcess: List<ActivityItem>,
+    isRunning: Boolean,
+    onSend: (String) -> Unit,
+    onApproval: (Boolean) -> Unit,
+) {
     var prompt by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val expectedItems = messages.size + (if (liveProcess.isNotEmpty()) 1 else 0) + (if (approval != null) 1 else 0)
+    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length, liveProcess.size, liveProcess.lastOrNull()?.detail, approval) {
+        if (isRunning && expectedItems > 0) listState.animateScrollToItem(expectedItems - 1)
+    }
     Column(Modifier.fillMaxSize().imePadding()) {
-        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            state = listState,
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             items(messages, key = { it.id }) { message -> MessageBubble(message) }
+            if (liveProcess.isNotEmpty()) {
+                item(key = "live-claude-process") { LiveClaudeProcess(liveProcess, isRunning) }
+            }
             approval?.let { request -> item { ApprovalCard(request, onApproval) } }
         }
         HorizontalDivider()
@@ -1126,6 +1310,95 @@ private fun ChatTab(messages: List<ChatMessage>, approval: ToolRequest?, isRunni
                 enabled = prompt.isNotBlank() && !isRunning,
                 modifier = Modifier.background(PocketOrange, CircleShape),
             ) { Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Color.Black) }
+        }
+    }
+}
+
+@Composable
+private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boolean) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val processListState = rememberLazyListState()
+    LaunchedEffect(isRunning) { expanded = isRunning }
+    LaunchedEffect(processItems.size, processItems.lastOrNull()?.detail, expanded) {
+        if (expanded && processItems.isNotEmpty()) processListState.animateScrollToItem(processItems.lastIndex)
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Terminal, null, tint = PocketOrange, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Live Claude Code", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (isRunning) {
+                            processItems.lastOrNull { !it.isComplete }?.title ?: "Working in real time"
+                        } else {
+                            "Task completed · ${processItems.size} process steps"
+                        },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (isRunning) {
+                    CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = PocketOrange)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (expanded) "Hide" else "Show", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+            }
+
+            if (expanded) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
+                    state = processListState,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(processItems.size) { index ->
+                        val item = processItems[index]
+                        Column {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                                if (!item.isComplete && isRunning) {
+                                    CircularProgressIndicator(Modifier.padding(top = 3.dp).size(14.dp), strokeWidth = 2.dp, color = PocketOrange)
+                                } else {
+                                    Icon(Icons.Default.Check, null, tint = PocketGreen, modifier = Modifier.padding(top = 1.dp).size(17.dp))
+                                }
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(item.title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    if (item.detail.isNotBlank()) {
+                                        Text(
+                                            item.detail,
+                                            fontSize = 12.sp,
+                                            lineHeight = 17.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                            if (index != processItems.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 26.dp, top = 8.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                )
+                            }
+                        }
+                    }
+                }
+                Text(
+                    "Shows structured progress from Claude Code. Private chain-of-thought and credentials are never displayed.",
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -1218,25 +1491,109 @@ private fun formatFileSize(bytes: Long): String = when {
 }
 
 @Composable
-private fun ChangesTab(changes: List<ChangeItem>) {
+private fun ChangesTab(
+    changes: List<ChangeItem>,
+    onUndo: () -> Unit,
+    onKeep: () -> Unit,
+    onUndoFile: (String) -> Unit,
+    onKeepFile: (String) -> Unit,
+) {
+    var expandedPath by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { Text("Changes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("Review everything the AI changed.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (changes.isEmpty()) item { EmptyState(Icons.Default.Code, "No changes yet", "Ask Pocket Dev to update your project.") }
-        items(changes) { change ->
+        items(changes, key = { it.path }) { change ->
+            val expanded = expandedPath == change.path
             Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Description, null); Spacer(Modifier.width(10.dp)); Text(change.path, Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                    Text("+${change.additions}", color = PocketGreen); Spacer(Modifier.width(7.dp)); Text("-${change.deletions}", color = MaterialTheme.colorScheme.error)
+                Column {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { expandedPath = if (expanded) null else change.path }.padding(15.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.Description, null)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(change.path, fontWeight = FontWeight.Medium, maxLines = 1)
+                            Text(
+                                if (expanded) "Hide line-by-line diff" else "Tap to review diff",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text("+${change.additions}", color = PocketGreen)
+                        Spacer(Modifier.width(7.dp))
+                        Text("-${change.deletions}", color = MaterialTheme.colorScheme.error)
+                    }
+                    if (expanded) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(
+                            Modifier.fillMaxWidth().background(Color(0xFF0B0E14)).horizontalScroll(rememberScrollState()),
+                        ) {
+                            change.diffLines.forEach { line -> DiffLineRow(line) }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Row(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    expandedPath = null
+                                    onUndoFile(change.path)
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Undo file") }
+                            Button(
+                                onClick = {
+                                    expandedPath = null
+                                    onKeepFile(change.path)
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Keep file") }
+                        }
+                    }
                 }
             }
         }
         if (changes.isNotEmpty()) item {
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedButton(onClick = {}, Modifier.weight(1f)) { Text("Undo task") }
-                Button(onClick = {}, Modifier.weight(1f)) { Text("Keep changes") }
+                OutlinedButton(onClick = onUndo, Modifier.weight(1f)) { Text("Undo task") }
+                Button(onClick = onKeep, Modifier.weight(1f)) { Text("Keep changes") }
             }
         }
     }
+}
+
+@Composable
+private fun DiffLineRow(line: DiffLine) {
+    val marker = when (line.type) {
+        DiffLineType.ADDITION -> "+"
+        DiffLineType.DELETION -> "-"
+        DiffLineType.CONTEXT -> " "
+        DiffLineType.INFO -> "·"
+    }
+    val background = when (line.type) {
+        DiffLineType.ADDITION -> Color(0xFF123226)
+        DiffLineType.DELETION -> Color(0xFF3A1D22)
+        else -> Color.Transparent
+    }
+    val foreground = when (line.type) {
+        DiffLineType.ADDITION -> Color(0xFF83E6B8)
+        DiffLineType.DELETION -> Color(0xFFFFA4A4)
+        DiffLineType.INFO -> Color(0xFF8993A4)
+        DiffLineType.CONTEXT -> Color(0xFFD5DAE3)
+    }
+    val oldNumber = line.oldLine?.toString().orEmpty().padStart(4)
+    val newNumber = line.newLine?.toString().orEmpty().padStart(4)
+    Text(
+        text = "$oldNumber $newNumber  $marker ${line.text}",
+        modifier = Modifier.fillMaxWidth().background(background).padding(horizontal = 8.dp, vertical = 2.dp),
+        color = foreground,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+        softWrap = false,
+    )
 }
 
 @Composable
@@ -1264,27 +1621,6 @@ private fun PreviewTab(ready: Boolean) {
             },
             modifier = Modifier.fillMaxSize(),
         )
-    }
-}
-
-@Composable
-private fun ActivityTab(activity: List<ActivityItem>) {
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-        item { Text("Activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("Technical work translated into plain language.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        if (activity.isEmpty()) item { EmptyState(Icons.Default.History, "Nothing running", "Task progress will appear here.") }
-        items(activity) { item -> ActivityRow(item) }
-    }
-}
-
-@Composable
-private fun ActivityRow(item: ActivityItem) {
-    Row(verticalAlignment = Alignment.Top) {
-        Surface(shape = CircleShape, color = if (item.isComplete) PocketGreen.copy(alpha = .18f) else PocketOrange.copy(alpha = .18f)) {
-            if (item.isComplete) Icon(Icons.Default.Check, null, Modifier.padding(7.dp).size(16.dp), tint = PocketGreen)
-            else CircularProgressIndicator(Modifier.padding(8.dp).size(14.dp), strokeWidth = 2.dp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column { Text(item.title, fontWeight = FontWeight.SemiBold); Text(item.detail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 

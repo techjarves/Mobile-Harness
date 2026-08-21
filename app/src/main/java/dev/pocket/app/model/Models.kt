@@ -33,8 +33,29 @@ data class Project(
     val name: String,
     val description: String,
     val language: String,
-    val updatedAt: String = "Just now",
-)
+    val updatedAtMillis: Long = System.currentTimeMillis(),
+) {
+    val formattedUpdatedAt: String
+        get() {
+            val diff = System.currentTimeMillis() - updatedAtMillis
+            val seconds = diff / 1000
+            val minutes = seconds / 60
+            val hours = minutes / 60
+            val days = hours / 24
+
+            return when {
+                diff < 0 || seconds < 60 -> "Just now"
+                minutes < 60 -> "${minutes}m ago"
+                hours < 24 -> "${hours}h ago"
+                days == 1L -> "Yesterday"
+                days < 7 -> "${days}d ago"
+                else -> {
+                    val sdf = java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault())
+                    sdf.format(java.util.Date(updatedAtMillis))
+                }
+            }
+        }
+}
 
 data class WorkspaceEntry(
     val path: String,
@@ -61,11 +82,24 @@ sealed interface RuntimeEvent {
 
     data class SessionStarted(override val sessionId: String) : RuntimeEvent
     data class AssistantDelta(override val sessionId: String, val text: String) : RuntimeEvent
+    data class ReasoningProgress(override val sessionId: String, val estimatedTokens: Int) : RuntimeEvent
+    data class ToolStarted(
+        override val sessionId: String,
+        val toolName: String,
+        val detail: String,
+    ) : RuntimeEvent
+    data class RuntimeLog(
+        override val sessionId: String,
+        val title: String,
+        val detail: String,
+    ) : RuntimeEvent
     data class ToolRequested(override val sessionId: String, val request: ToolRequest) : RuntimeEvent
     data class ToolApproved(override val sessionId: String, val approvalId: String) : RuntimeEvent
     data class ToolRejected(override val sessionId: String, val approvalId: String) : RuntimeEvent
     data class ToolCompleted(override val sessionId: String, val toolName: String, val summary: String) : RuntimeEvent
-    data class FilesChanged(override val sessionId: String, val paths: List<String>) : RuntimeEvent
+    data class FilesChanged(override val sessionId: String, val changes: List<ChangeItem>) : RuntimeEvent {
+        val paths: List<String> get() = changes.map { it.path }
+    }
     data class PreviewStarted(override val sessionId: String, val url: String) : RuntimeEvent
     data class SessionCompleted(override val sessionId: String) : RuntimeEvent
     data class SessionFailed(override val sessionId: String, val reason: String) : RuntimeEvent
@@ -78,6 +112,29 @@ data class ChatMessage(
     val createdAt: Instant = Instant.now(),
 )
 
-data class ChangeItem(val path: String, val additions: Int, val deletions: Int, val accepted: Boolean? = null)
+data class ProjectChat(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String = "New chat",
+    val createdAtMillis: Long = System.currentTimeMillis(),
+    val updatedAtMillis: Long = System.currentTimeMillis(),
+)
+
+enum class DiffLineType { CONTEXT, ADDITION, DELETION, INFO }
+
+data class DiffLine(
+    val type: DiffLineType,
+    val text: String,
+    val oldLine: Int? = null,
+    val newLine: Int? = null,
+)
+
+data class ChangeItem(
+    val path: String,
+    val additions: Int,
+    val deletions: Int,
+    val diffLines: List<DiffLine> = emptyList(),
+    val binary: Boolean = false,
+    val accepted: Boolean? = null,
+)
 
 data class ActivityItem(val title: String, val detail: String, val isComplete: Boolean = true)

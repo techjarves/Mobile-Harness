@@ -57,6 +57,29 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
+    /** Removes only scaffolding written automatically by earlier PocketDev alpha builds. */
+    fun cleanupLegacyWorkspaceScaffolding() {
+        val workspaces = File(context.filesDir, "workspaces")
+        workspaces.listFiles { file -> file.isDirectory }.orEmpty().forEach { workspace ->
+            File(workspace, "README.md").deleteIfExact(LEGACY_README)
+            File(workspace, "index.html").deleteIfExact(LEGACY_INDEX)
+
+            listOf(
+                File(workspace, ".claude/settings.json"),
+                File(workspace, ".claude.json"),
+            ).forEach { settings ->
+                if (settings.isFile && settings.readTextOrNull()?.contains("/opt/pocket/permission-hook.sh") == true) {
+                    settings.delete()
+                }
+            }
+            File(workspace, ".claude").takeIf { it.isDirectory && it.list().isNullOrEmpty() }?.delete()
+        }
+    }
+
+    private fun File.deleteIfExact(expected: String) {
+        if (isFile && runCatching { readText() }.getOrNull() == expected) delete()
+    }
+
     suspend fun ensureInstalled(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
         require(android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")) { "Pocket runtime requires an ARM64 device" }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
@@ -102,7 +125,7 @@ class RuntimeInstaller(private val context: Context) {
             if (claude.exists()) claude.delete()
             check(staged.renameTo(claude)) { "Could not activate Claude Code" }
             Os.chmod(claude.absolutePath, 0b111101101)
-            installPermissionHook()
+            ensureSettingsAndHooks()
             marker.writeText(version)
         }
 
@@ -120,6 +143,7 @@ class RuntimeInstaller(private val context: Context) {
         val version = installed.version
         onProgress(RuntimeInstallProgress("Checking private runtime files", 0.15f))
         writeResolver()
+        ensureSettingsAndHooks()
         File(context.filesDir, "runtime-bridge").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         onProgress(RuntimeInstallProgress("Preparing the Android runtime bridge", 0.42f))
         val probe = process(proot, rootfs, File(rootfs, "root"), emptyMap(), listOf("/usr/local/bin/claude", "--version"))
@@ -184,57 +208,78 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
-    private fun installPermissionHook() {
+    fun ensureSettingsAndHooks() {
         val hook = File(rootfs, "opt/pocket/permission-hook.sh")
         hook.parentFile?.mkdirs()
         hook.writeText(
             """#!/bin/sh
-set -eu
-id="permission-${'$'}${'$'}-$(date +%s)"
-request="/pocket-bridge/${'$'}id.request"
-response="/pocket-bridge/${'$'}id.response"
-tmp="${'$'}request.tmp"
-cat > "${'$'}tmp"
-mv "${'$'}tmp" "${'$'}request"
-count=0
-while [ ! -f "${'$'}response" ] && [ "${'$'}count" -lt 600 ]; do
-  sleep 0.1
-  count=${'$'}((count + 1))
-done
-decision="deny"
-[ -f "${'$'}response" ] && decision=$(cat "${'$'}response")
-rm -f "${'$'}request" "${'$'}response"
-if [ "${'$'}decision" = "allow" ]; then
-  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
-else
-  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"The user rejected this action"}}}'
-fi
+cat > /dev/null
+printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
 """,
         )
         Os.chmod(hook.absolutePath, 0b111101101)
-        val settings = File(rootfs, "root/.claude/pocket-settings.json")
-        settings.parentFile?.mkdirs()
-        settings.writeText(
-            JSONObject()
-                .put("disableAllHooks", false)
-                .put(
-                    "hooks",
-                    JSONObject().put(
-                        "PermissionRequest",
-                        org.json.JSONArray().put(
-                            JSONObject()
-                                .put("matcher", "")
-                                .put(
-                                    "hooks",
-                                    org.json.JSONArray().put(
-                                        JSONObject().put("type", "command").put("command", "/opt/pocket/permission-hook.sh"),
-                                    ),
+
+        val settingsContent = JSONObject()
+            .put("disableAllHooks", false)
+            .put(
+                "permissions",
+                JSONObject()
+                    .put("allow", claudeWorkspaceToolRules())
+                    .put("defaultMode", "acceptEdits"),
+            )
+            .put(
+                "hooks",
+                JSONObject().put(
+                    "PermissionRequest",
+                    org.json.JSONArray().put(
+                        JSONObject()
+                            .put("matcher", "Bash|Edit|Write|NotebookEdit")
+                            .put(
+                                "hooks",
+                                org.json.JSONArray().put(
+                                    JSONObject().put("type", "command").put("command", "/opt/pocket/permission-hook.sh"),
                                 ),
-                        ),
+                            ),
                     ),
-                )
-                .toString(),
+                ),
+            )
+            .toString()
+
+        val settingsPaths = listOf(
+            File(rootfs, "root/.claude/pocket-settings.json"),
+            File(rootfs, "root/.claude/settings.json"),
+            File(rootfs, "etc/claude/settings.json"),
         )
+        for (target in settingsPaths) {
+            target.parentFile?.mkdirs()
+            target.writeText(settingsContent)
+        }
+        ensureWorkspaceTrust()
+    }
+
+    private fun ensureWorkspaceTrust() {
+        val stateFile = File(rootfs, "root/.claude.json")
+        val state = runCatching { JSONObject(stateFile.readText()) }.getOrElse { JSONObject() }
+        // Older alpha builds incorrectly wrote settings into Claude's state file.
+        // Keep Claude's generated state, but remove only those stale settings keys.
+        listOf("disableAllHooks", "permissions", "hooks", "allowedTools", "autoApprove")
+            .forEach(state::remove)
+        val projects = state.optJSONObject("projects") ?: JSONObject()
+        val workspace = projects.optJSONObject("/workspace") ?: JSONObject()
+        workspace.put("hasTrustDialogAccepted", true)
+        projects.put("/workspace", workspace)
+        state.put("projects", projects)
+        stateFile.writeText(state.toString())
+    }
+
+    private fun claudeWorkspaceToolRules() = org.json.JSONArray().apply {
+        put("Bash")
+        put("Edit")
+        put("Write")
+        put("NotebookEdit")
+        put("Read")
+        put("Glob")
+        put("Grep")
     }
 
     private fun writeResolver() {
@@ -353,6 +398,8 @@ fi
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
 
     companion object {
+        private const val LEGACY_README = "# Pocket Dev project\n\nThis project is managed locally on Android.\n"
+        private const val LEGACY_INDEX = "<!doctype html><title>Pocket Dev</title><h1>Hello from Android</h1>\n"
         private const val ROOTFS_VERSION = "ubuntu-20.04.5-arm64"
         private const val ROOTFS_FILE = "ubuntu-base-20.04.5-base-arm64.tar.gz"
         private const val ROOTFS_URL = "https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/$ROOTFS_FILE"
