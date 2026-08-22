@@ -67,13 +67,14 @@ class ClaudeRuntimeBridge(
     private val toolNames = ConcurrentHashMap<String, String>()
     private val seenToolCalls = ConcurrentHashMap.newKeySet<String>()
     private val finishedSessions = ConcurrentHashMap.newKeySet<String>()
+    private val projectRoots = ConcurrentHashMap<String, String>()
     @Volatile private var activeProcess: Process? = null
     @Volatile private var activeSessionId: String? = null
     private val streamedText = StringBuilder()
     private var lastReasoningTokens = 0
     private var lastReasoningUpdateAt = 0L
 
-    override suspend fun startSession(projectId: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO) {
+    override suspend fun startSession(projectId: String, projectSlug: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
         activeSessionId = sessionId
@@ -103,7 +104,8 @@ class ClaudeRuntimeBridge(
             Log.d("ClaudeBridge", "Launch environment keys: ${launch.environment.keys}")
 
             // Build a context-aware prompt that includes conversation history
-            val contextPrompt = buildContextPrompt(prompt, conversationHistory)
+            val guestWorkspacePath = "/workspace/$projectSlug"
+            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath)
 
             val command = buildList {
                 add(launch.executable)
@@ -119,7 +121,14 @@ class ClaudeRuntimeBridge(
                 add("25")
             }
             Log.d("ClaudeBridge", "Launching command: $command")
-            val process = installer.process(installed.proot, installed.rootfs, workspace, launch.environment, command)
+            val process = installer.process(
+                installed.proot,
+                installed.rootfs,
+                workspace,
+                launch.environment,
+                command,
+                guestWorkspacePath = guestWorkspacePath,
+            )
             activeProcess = process
             coroutineScope {
                 val permissionWatcher = launch { watchPermissionRequests(sessionId) }
@@ -403,6 +412,11 @@ class ClaudeRuntimeBridge(
                         }.ifBlank { "Task completed" },
                     ),
                 )
+                // The structured result is Claude Code's authoritative terminal event.
+                // Update the UI immediately instead of waiting for a PRoot/Node wrapper
+                // that may remain alive after the answer has already completed.
+                emitCompletedOnce(sessionId)
+                activeProcess?.destroy()
             }
         }
         return true
@@ -460,7 +474,7 @@ class ClaudeRuntimeBridge(
             .take(600)
     }
 
-    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>): String {
+    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>, guestWorkspacePath: String): String {
         // Filter out the current prompt (last user message), system greeting, and any error messages
         val priorMessages = history
             .filter { msg ->
@@ -471,9 +485,17 @@ class ClaudeRuntimeBridge(
             }
             .dropLast(1) // Drop the current prompt which was just added
 
-        if (priorMessages.isEmpty()) return currentPrompt
-
         val sb = StringBuilder()
+        sb.appendLine("<project_workspace>")
+        sb.appendLine("The current working directory $guestWorkspacePath is the project root.")
+        sb.appendLine("Create and edit project files directly in this directory. Do not create another outer project folder unless the user explicitly asks for one.")
+        sb.appendLine("When giving commands to the user, make them runnable from this project root.")
+        sb.appendLine("</project_workspace>")
+        sb.appendLine()
+        if (priorMessages.isEmpty()) {
+            sb.appendLine(currentPrompt)
+            return sb.toString()
+        }
         sb.appendLine("<conversation_history>")
         sb.appendLine("The following is our prior conversation in this project. Continue naturally from where we left off.")
         sb.appendLine()
@@ -490,7 +512,21 @@ class ClaudeRuntimeBridge(
     }
 
     private fun ensureWorkspace(projectId: String): File {
-        return File(context.filesDir, "workspaces/$projectId").apply { mkdirs() }
+        val base = File(context.filesDir, "workspaces/$projectId").apply { mkdirs() }.canonicalFile
+        val rootPath = projectRoots[projectId].orEmpty()
+        if (rootPath.isBlank()) return base
+        val selected = File(base, rootPath).canonicalFile
+        require(selected.toPath().startsWith(base.toPath())) { "Unsafe project root" }
+        return selected.apply { mkdirs() }
+    }
+
+    fun configureProjectRoot(projectId: String, rootPath: String) {
+        val normalized = rootPath.trim().trim('/')
+        require(normalized.isBlank() || (!normalized.contains("..") && !normalized.startsWith('/'))) {
+            "Unsafe project root"
+        }
+        val previous = projectRoots.put(projectId, normalized).orEmpty()
+        if (previous != normalized) checkpointDir(projectId).deleteRecursively()
     }
 
     private fun checkpointDir(projectId: String) = File(context.filesDir, "checkpoints/$projectId/latest")

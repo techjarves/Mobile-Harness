@@ -164,8 +164,15 @@ class RuntimeInstaller(private val context: Context) {
         workspace: File,
         environment: Map<String, String>,
         guestCommand: List<String>,
+        guestWorkspacePath: String = "/workspace",
     ): Process {
+        require(
+            guestWorkspacePath == "/workspace" ||
+                Regex("^/workspace/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$").matches(guestWorkspacePath),
+        ) { "Invalid project workspace path" }
         workspace.mkdirs()
+        File(rootfs, guestWorkspacePath.removePrefix("/")).mkdirs()
+        ensureWorkspaceTrust(guestWorkspacePath)
         val bridge = File(context.filesDir, "runtime-bridge").apply { mkdirs() }
         val args = buildList {
             add(proot.absolutePath)
@@ -180,11 +187,11 @@ class RuntimeInstaller(private val context: Context) {
             add("-b")
             add("/sys")
             add("-b")
-            add("${workspace.absolutePath}:/workspace")
+            add("${workspace.absolutePath}:$guestWorkspacePath")
             add("-b")
             add("${bridge.absolutePath}:/pocket-bridge")
             add("-w")
-            add("/workspace")
+            add(guestWorkspacePath)
             addAll(guestCommand)
         }
         val prootTemp = File(context.cacheDir, "proot-tmp").apply { mkdirs() }
@@ -254,10 +261,10 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             target.parentFile?.mkdirs()
             target.writeText(settingsContent)
         }
-        ensureWorkspaceTrust()
+        ensureWorkspaceTrust("/workspace")
     }
 
-    private fun ensureWorkspaceTrust() {
+    private fun ensureWorkspaceTrust(workspacePath: String) {
         val stateFile = File(rootfs, "root/.claude.json")
         val state = runCatching { JSONObject(stateFile.readText()) }.getOrElse { JSONObject() }
         // Older alpha builds incorrectly wrote settings into Claude's state file.
@@ -265,9 +272,9 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         listOf("disableAllHooks", "permissions", "hooks", "allowedTools", "autoApprove")
             .forEach(state::remove)
         val projects = state.optJSONObject("projects") ?: JSONObject()
-        val workspace = projects.optJSONObject("/workspace") ?: JSONObject()
+        val workspace = projects.optJSONObject(workspacePath) ?: JSONObject()
         workspace.put("hasTrustDialogAccepted", true)
-        projects.put("/workspace", workspace)
+        projects.put(workspacePath, workspace)
         state.put("projects", projects)
         stateFile.writeText(state.toString())
     }

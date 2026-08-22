@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -65,6 +66,7 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
+    onRunCode: ((String) -> Unit)? = null,
 ) {
     val blocks = remember(markdown) { parseMarkdown(markdown) }
 
@@ -72,7 +74,7 @@ fun MarkdownText(
         blocks.forEach { block ->
             when (block) {
                 is MarkdownBlock.Header -> HeaderBlock(block)
-                is MarkdownBlock.CodeBlock -> CodeSnippetBlock(block)
+                is MarkdownBlock.CodeBlock -> CodeSnippetBlock(block, onRunCode)
                 is MarkdownBlock.BulletItem -> BulletBlock(block, color)
                 is MarkdownBlock.NumberedItem -> NumberedBlock(block, color)
                 is MarkdownBlock.BlockQuote -> QuoteBlock(block)
@@ -178,7 +180,7 @@ private fun QuoteBlock(quote: MarkdownBlock.BlockQuote) {
 }
 
 @Composable
-private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock) {
+private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String) -> Unit)?) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -206,23 +208,39 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock) {
                     color = Color(0xFF9AA0A6),
                     fontFamily = FontFamily.Monospace,
                 )
-                IconButton(
-                    onClick = {
-                        clipboard.setText(AnnotatedString(block.code))
-                        copied = true
-                        scope.launch {
-                            delay(2000)
-                            copied = false
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val shellLanguage = block.language.lowercase() in setOf("", "bash", "sh", "shell", "zsh", "console", "terminal")
+                    if (onRunCode != null && shellLanguage) {
+                        IconButton(
+                            onClick = { onRunCode(block.code.trim()) },
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = "Run in project terminal",
+                                tint = PocketOrange,
+                                modifier = Modifier.size(18.dp),
+                            )
                         }
-                    },
-                    modifier = Modifier.size(28.dp),
-                ) {
-                    Icon(
-                        imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                        contentDescription = "Copy code",
-                        tint = if (copied) PocketOrange else Color(0xFF9AA0A6),
-                        modifier = Modifier.size(16.dp),
-                    )
+                    }
+                    IconButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(block.code))
+                            copied = true
+                            scope.launch {
+                                delay(2000)
+                                copied = false
+                            }
+                        },
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                            contentDescription = "Copy code",
+                            tint = if (copied) PocketOrange else Color(0xFF9AA0A6),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
             Box(

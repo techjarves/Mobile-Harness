@@ -3,9 +3,15 @@ package dev.pocket.app.ui
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
+import android.net.Uri
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,6 +49,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
@@ -52,6 +60,7 @@ import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -112,6 +121,7 @@ import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.model.ToolRequest
 import dev.pocket.app.model.WorkspaceEntry
+import dev.pocket.app.model.projectSlug
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.graphicsLayer
@@ -123,6 +133,7 @@ import dev.pocket.app.network.DiscoveredModel
 import dev.pocket.app.network.ModelDiscoveryResult
 import dev.pocket.app.ui.theme.PocketGreen
 import dev.pocket.app.ui.theme.PocketOrange
+import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -138,6 +149,7 @@ private enum class RootScreen(val label: String, val icon: ImageVector) {
 private enum class WorkspaceTab(val label: String, val icon: ImageVector) {
     CHAT("Chat", Icons.Default.AutoAwesome),
     FILES("Files", Icons.Default.Folder),
+    TERMINAL("Terminal", Icons.Default.Terminal),
     CHANGES("Changes", Icons.Default.Code),
     PREVIEW("Preview", Icons.Default.Preview),
 }
@@ -170,6 +182,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             state = state,
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
+            onStop = viewModel::stopTask,
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
             onOpenFile = viewModel::openFile,
@@ -180,6 +193,16 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onKeepFileChange = viewModel::keepFileChange,
             onCreateChat = viewModel::createChat,
             onSwitchChat = viewModel::switchChat,
+            onTerminalRun = viewModel::requestProjectTerminalCommand,
+            onTerminalPrepare = viewModel::prepareProjectTerminalCommand,
+            onTerminalDraftConsumed = viewModel::consumeProjectTerminalDraft,
+            onTerminalOpened = viewModel::openProjectTerminal,
+            onTerminalStop = viewModel::stopProjectTerminalCommand,
+            onTerminalClear = viewModel::clearProjectTerminal,
+            onTerminalConfirm = viewModel::confirmProjectTerminalCommand,
+            onTerminalCancel = viewModel::cancelProjectTerminalCommand,
+            onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
+            onExportProject = viewModel::exportActiveProject,
         )
         else -> RootScreenHost(state, viewModel)
     }
@@ -841,7 +864,19 @@ private fun ProjectsScreen(
     if (showCreate) AlertDialog(
         onDismissRequest = { showCreate = false },
         title = { Text("Create a starter project") },
-        text = { OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true)
+                if (name.isNotBlank()) {
+                    Text(
+                        "Terminal folder: /workspace/${projectSlug(name)}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
         confirmButton = { TextButton(onClick = { onCreate(name); showCreate = false; name = "" }, enabled = name.isNotBlank()) { Text("Create") } },
         dismissButton = { TextButton(onClick = { showCreate = false }) { Text("Cancel") } },
     )
@@ -922,6 +957,7 @@ private fun ProjectCard(project: Project, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
             Text(project.name, fontWeight = FontWeight.SemiBold)
                 Text(project.description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Text("/workspace/${project.slug}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 Text("${project.language} · ${project.formattedUpdatedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
         }
@@ -934,6 +970,7 @@ private fun WorkspaceScreen(
     state: AppUiState,
     onBack: () -> Unit,
     onSend: (String) -> Unit,
+    onStop: () -> Unit,
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
@@ -944,8 +981,41 @@ private fun WorkspaceScreen(
     onKeepFileChange: (String) -> Unit,
     onCreateChat: () -> Unit,
     onSwitchChat: (String) -> Unit,
+    onTerminalRun: (String) -> Unit,
+    onTerminalPrepare: (String) -> Unit,
+    onTerminalDraftConsumed: () -> Unit,
+    onTerminalOpened: () -> Unit,
+    onTerminalStop: () -> Unit,
+    onTerminalClear: () -> Unit,
+    onTerminalConfirm: () -> Unit,
+    onTerminalCancel: () -> Unit,
+    onUseSuggestedProjectRoot: () -> Unit,
+    onExportProject: (Uri) -> Unit,
 ) {
     BackHandler(onBack = onBack)
+    val exportProjectLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+        onResult = { uri -> if (uri != null) onExportProject(uri) },
+    )
+    val chatListState = rememberLazyListState()
+    val chatItemCount = state.messages.size +
+        (if (state.liveProcess.isNotEmpty()) 1 else 0) +
+        (if (state.pendingApproval != null) 1 else 0)
+
+    LaunchedEffect(state.activeChatId) {
+        if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
+    }
+    LaunchedEffect(
+        state.messages.size,
+        state.messages.lastOrNull()?.text?.length,
+        state.liveProcess.size,
+        state.liveProcess.lastOrNull()?.detail,
+        state.pendingApproval,
+    ) {
+        if (state.isRunning && chatItemCount > 0) {
+            chatListState.animateScrollToItem(chatItemCount - 1)
+        }
+    }
 
     // If a file is open, show the FileViewerScreen on top
     if (state.openedFilePath != null) {
@@ -981,6 +1051,28 @@ private fun WorkspaceScreen(
             },
         )
     }
+    state.pendingTerminalCommand?.let { command ->
+        AlertDialog(
+            onDismissRequest = onTerminalCancel,
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Run potentially destructive command?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("This command can delete files, rewrite Git history, or change the project significantly.")
+                    Surface(color = Color(0xFF14171E), shape = RoundedCornerShape(8.dp)) {
+                        Text(
+                            command,
+                            Modifier.fillMaxWidth().padding(10.dp),
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFFE2E8F0),
+                        )
+                    }
+                }
+            },
+            confirmButton = { Button(onClick = onTerminalConfirm) { Text("Run anyway") } },
+            dismissButton = { TextButton(onClick = onTerminalCancel) { Text("Cancel") } },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1011,6 +1103,7 @@ private fun WorkspaceScreen(
                         onClick = {
                             selectedTab = tab
                             if (tab == WorkspaceTab.FILES) onRefreshFiles()
+                            if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
                         },
                         icon = { Icon(tab.icon, tab.label) },
                         label = { Text(tab.label, fontSize = 10.sp) },
@@ -1028,9 +1121,43 @@ private fun WorkspaceScreen(
                     state.liveProcess,
                     state.isRunning,
                     onSend,
+                    onStop,
                     onApproval,
+                    listState = chatListState,
+                    onRunInTerminal = { command ->
+                        selectedTab = WorkspaceTab.TERMINAL
+                        onTerminalOpened()
+                        onTerminalPrepare(command)
+                    },
                 )
-                WorkspaceTab.FILES -> FilesTab(state.workspaceFiles, state.filesLoading, onRefreshFiles, onOpenFile)
+                WorkspaceTab.FILES -> FilesTab(
+                    files = state.workspaceFiles,
+                    loading = state.filesLoading,
+                    suggestedProjectRoot = state.suggestedProjectRoot,
+                    onRefresh = onRefreshFiles,
+                    onOpenFile = onOpenFile,
+                    onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
+                    onExport = {
+                        exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
+                    },
+                )
+                WorkspaceTab.TERMINAL -> TerminalScreen(
+                    lines = state.projectTerminalLines,
+                    isRunning = state.projectTerminalRunning,
+                    onRun = onTerminalRun,
+                    onClear = onTerminalClear,
+                    onToggleTheme = {},
+                    themeMode = state.themeMode,
+                    title = "Project Terminal",
+                    subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
+                    liveOutput = state.projectTerminalLiveOutput,
+                    currentCommand = state.projectTerminalCommand,
+                    commandDraft = state.projectTerminalDraft,
+                    onCommandDraftConsumed = onTerminalDraftConsumed,
+                    promptPath = state.projectTerminalCwd,
+                    onStop = onTerminalStop,
+                    showThemeAction = false,
+                )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
                     onUndoChanges,
@@ -1038,7 +1165,7 @@ private fun WorkspaceScreen(
                     onUndoFileChange,
                     onKeepFileChange,
                 )
-                WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady)
+                WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
         }
     }
@@ -1209,20 +1336,60 @@ private fun FileViewerScreen(
 private fun FilesTab(
     files: List<WorkspaceEntry>,
     loading: Boolean,
+    suggestedProjectRoot: String?,
     onRefresh: () -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
+    onUseSuggestedProjectRoot: () -> Unit,
+    onExport: () -> Unit,
 ) {
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Project files", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (loading) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh files") }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                ),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Files",
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (!loading && files.any { !it.isDirectory }) {
+                        IconButton(onClick = onExport) { Icon(Icons.Default.Download, "Export project as ZIP") }
+                    }
+                    if (loading) {
+                        CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh files") }
+                    }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
+        }
+        if (suggestedProjectRoot != null) {
+            item(key = "suggested-project-root") {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Project folder detected", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Use $suggestedProjectRoot as the project root so Chat, Terminal, Changes, and Preview all run from the same folder.",
+                            fontSize = 13.sp,
+                        )
+                        Button(onClick = onUseSuggestedProjectRoot, modifier = Modifier.fillMaxWidth()) {
+                            Text("Use $suggestedProjectRoot as project root")
+                        }
+                    }
+                }
+            }
         }
         if (!loading && files.isEmpty()) {
             item { EmptyState(Icons.Default.Folder, "No files yet", "Ask Claude Code to create something in this project.") }
@@ -1273,14 +1440,12 @@ private fun ChatTab(
     liveProcess: List<ActivityItem>,
     isRunning: Boolean,
     onSend: (String) -> Unit,
+    onStop: () -> Unit,
     onApproval: (Boolean) -> Unit,
+    listState: LazyListState,
+    onRunInTerminal: (String) -> Unit,
 ) {
     var prompt by rememberSaveable { mutableStateOf("") }
-    val listState = rememberLazyListState()
-    val expectedItems = messages.size + (if (liveProcess.isNotEmpty()) 1 else 0) + (if (approval != null) 1 else 0)
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length, liveProcess.size, liveProcess.lastOrNull()?.detail, approval) {
-        if (isRunning && expectedItems > 0) listState.animateScrollToItem(expectedItems - 1)
-    }
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -1288,7 +1453,7 @@ private fun ChatTab(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(messages, key = { it.id }) { message -> MessageBubble(message) }
+            items(messages, key = { it.id }) { message -> MessageBubble(message, onRunInTerminal) }
             if (liveProcess.isNotEmpty()) {
                 item(key = "live-claude-process") { LiveClaudeProcess(liveProcess, isRunning) }
             }
@@ -1305,11 +1470,22 @@ private fun ChatTab(
                 keyboardActions = KeyboardActions(onSend = { if (!isRunning) { onSend(prompt); prompt = "" } }),
             )
             Spacer(Modifier.width(8.dp))
-            IconButton(
-                onClick = { onSend(prompt); prompt = "" },
-                enabled = prompt.isNotBlank() && !isRunning,
-                modifier = Modifier.background(PocketOrange, CircleShape),
-            ) { Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Color.Black) }
+            if (isRunning) {
+                IconButton(
+                    onClick = onStop,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.error, CircleShape),
+                ) {
+                    Icon(Icons.Default.Stop, "Stop AI task", tint = MaterialTheme.colorScheme.onError)
+                }
+            } else {
+                IconButton(
+                    onClick = { onSend(prompt); prompt = "" },
+                    enabled = prompt.isNotBlank(),
+                    modifier = Modifier.background(PocketOrange, CircleShape),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Color.Black)
+                }
+            }
         }
     }
 }
@@ -1404,7 +1580,7 @@ private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boole
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
@@ -1423,6 +1599,7 @@ private fun MessageBubble(message: ChatMessage) {
                     markdown = message.text,
                     modifier = Modifier.padding(14.dp),
                     color = MaterialTheme.colorScheme.onSurface,
+                    onRunCode = onRunInTerminal,
                 )
             }
         }
@@ -1597,32 +1774,48 @@ private fun DiffLineRow(line: DiffLine) {
 }
 
 @Composable
-private fun PreviewTab(ready: Boolean) {
-    if (!ready) {
-        EmptyState(Icons.Default.PlayArrow, "Preview not running", "Approve a project update to start the demo preview.")
+private fun PreviewTab(ready: Boolean, url: String?) {
+    if (!ready || url == null) {
+        EmptyState(Icons.Default.PlayArrow, "Preview not running", "Start a local web server in the project Terminal. Its localhost URL will appear here automatically.")
         return
     }
     Column(Modifier.fillMaxSize()) {
         Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
             Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(9.dp).background(PocketGreen, CircleShape)); Spacer(Modifier.width(8.dp)); Text("127.0.0.1:4173", fontSize = 12.sp)
+                Box(Modifier.size(9.dp).background(PocketGreen, CircleShape)); Spacer(Modifier.width(8.dp)); Text(url, fontSize = 12.sp, maxLines = 1)
             }
         }
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
-                    settings.javaScriptEnabled = false
-                    loadDataWithBaseURL(
-                        "https://pocket.local/",
-                        """<html><meta name='viewport' content='width=device-width'><body style='background:#0b0e14;color:white;font-family:sans-serif;padding:40px'><p style='color:#f28c52'>POCKET DEV</p><h1>Your project is ready.</h1><p style='color:#aab2c0;line-height:1.6'>This secure preview panel will display the web server running inside the local workspace.</p><button style='padding:14px 20px;background:#f28c52;border:0;border-radius:12px;font-weight:bold'>Explore project</button></body></html>""",
-                        "text/html", "UTF-8", null,
-                    )
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                            val target = request?.url ?: return true
+                            return !target.isLoopbackPreviewUrl()
+                        }
+
+                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                            val target = request?.url ?: return blockedPreviewResponse()
+                            return if (target.isLoopbackPreviewUrl()) null else blockedPreviewResponse()
+                        }
+                    }
+                    loadUrl(url)
                 }
             },
+            update = { webView -> if (webView.url != url) webView.loadUrl(url) },
             modifier = Modifier.fillMaxSize(),
         )
     }
 }
+
+private fun Uri.isLoopbackPreviewUrl(): Boolean =
+    scheme in setOf("data", "blob", "about") ||
+        (scheme in setOf("http", "https", "ws", "wss") && host in setOf("127.0.0.1", "localhost", "0.0.0.0"))
+
+private fun blockedPreviewResponse(): WebResourceResponse =
+    WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
 @Composable
 private fun EmptyState(icon: ImageVector, title: String, body: String) {

@@ -1,9 +1,11 @@
 package dev.pocket.app.ui
 
 import android.app.Application
+import android.net.Uri
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.pocket.app.BuildConfig
 import dev.pocket.app.data.ApiKeyVault
 import dev.pocket.app.data.AppPreferences
 import dev.pocket.app.model.ActivityItem
@@ -16,13 +18,19 @@ import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.model.RuntimeEvent
 import dev.pocket.app.model.ToolRequest
 import dev.pocket.app.model.WorkspaceEntry
+import dev.pocket.app.model.projectSlug
 import dev.pocket.app.network.ConnectionValidation
 import dev.pocket.app.network.ModelDiscoveryResult
 import dev.pocket.app.network.ProviderApiClient
 import dev.pocket.app.runtime.ClaudeRuntimeBridge
+import dev.pocket.app.runtime.NativeSpawnProcess
 import dev.pocket.app.runtime.RuntimeInstaller
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.file.Files
+import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +39,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class StartupStage { CHECKING, SETUP_REQUIRED, INSTALLING, MODEL_SETUP, INITIALIZING, READY, ERROR }
 
@@ -41,6 +51,17 @@ data class TerminalOutputLine(
     val command: String,
     val output: String,
     val exitCode: Int = 0,
+)
+
+private data class ProjectTerminalSnapshot(
+    val lines: List<TerminalOutputLine> = emptyList(),
+    val cwd: String = "/workspace",
+)
+
+private data class ProjectTerminalResult(
+    val output: String,
+    val exitCode: Int,
+    val cwd: String,
 )
 
 data class AppUiState(
@@ -70,9 +91,18 @@ data class AppUiState(
     val activity: List<ActivityItem> = emptyList(),
     val liveProcess: List<ActivityItem> = emptyList(),
     val previewReady: Boolean = false,
+    val previewUrl: String? = null,
     val isRunning: Boolean = false,
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
+    val projectTerminalLines: List<TerminalOutputLine> = emptyList(),
+    val projectTerminalLiveOutput: String = "",
+    val projectTerminalRunning: Boolean = false,
+    val projectTerminalCwd: String = "/workspace",
+    val projectTerminalCommand: String? = null,
+    val projectTerminalDraft: String? = null,
+    val pendingTerminalCommand: String? = null,
+    val suggestedProjectRoot: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -81,6 +111,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val runtime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val installer = RuntimeInstaller(application)
     private val providerApi = ProviderApiClient()
+    @Volatile private var projectTerminalProcess: Process? = null
+    @Volatile private var projectTerminalProjectId: String? = null
+    @Volatile private var projectTerminalStopRequested: Boolean = false
     private val _state = MutableStateFlow(
         AppUiState(
             onboardingComplete = preferences.onboardingComplete,
@@ -100,6 +133,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     current.copy(provider = current.provider.copy(hasSecret = false))
                 } else current
             }
+        }
+        if (
+            BuildConfig.TEST_OPENROUTER_API_KEY.isNotBlank() &&
+            preferences.testProviderDefaultsVersion < TEST_PROVIDER_DEFAULTS_VERSION
+        ) {
+            val testProvider = ProviderProfile(
+                kind = ProviderKind.CUSTOM,
+                baseUrl = TEST_OPENROUTER_BASE_URL,
+                model = TEST_OPENROUTER_MODEL,
+                hasSecret = true,
+            )
+            vault.put(ProviderKind.CUSTOM.name, BuildConfig.TEST_OPENROUTER_API_KEY)
+            preferences.saveProvider(testProvider)
+            preferences.testProviderDefaultsVersion = TEST_PROVIDER_DEFAULTS_VERSION
+            _state.update { it.copy(provider = testProvider) }
         }
     }
 
@@ -155,6 +203,263 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearTerminal() {
         _terminalLines.value = emptyList()
+    }
+
+    fun requestProjectTerminalCommand(command: String) {
+        val normalized = command.trim()
+        if (normalized.isBlank() || _state.value.projectTerminalRunning || projectTerminalProcess?.isAlive == true) return
+        if (isDestructiveTerminalCommand(normalized)) {
+            _state.update { it.copy(pendingTerminalCommand = normalized) }
+        } else {
+            runProjectTerminalCommand(normalized)
+        }
+    }
+
+    fun prepareProjectTerminalCommand(command: String) {
+        val project = _state.value.activeProject ?: return
+        if (command.isBlank() || _state.value.projectTerminalRunning) return
+        _state.update {
+            it.copy(
+                projectTerminalCwd = projectGuestRoot(project),
+                projectTerminalDraft = command.trim(),
+            )
+        }
+    }
+
+    fun consumeProjectTerminalDraft() {
+        _state.update { it.copy(projectTerminalDraft = null) }
+    }
+
+    fun openProjectTerminal() {
+        val project = _state.value.activeProject ?: return
+        if (_state.value.projectTerminalRunning) return
+        _state.update { it.copy(projectTerminalCwd = projectGuestRoot(project)) }
+    }
+
+    fun confirmProjectTerminalCommand() {
+        val command = _state.value.pendingTerminalCommand ?: return
+        _state.update { it.copy(pendingTerminalCommand = null) }
+        runProjectTerminalCommand(command)
+    }
+
+    fun cancelProjectTerminalCommand() {
+        _state.update { it.copy(pendingTerminalCommand = null) }
+    }
+
+    private fun runProjectTerminalCommand(command: String) {
+        val project = _state.value.activeProject ?: return
+        if (_state.value.projectTerminalRunning) return
+        val startingCwd = _state.value.projectTerminalCwd
+        val existingLines = _state.value.projectTerminalLines
+        projectTerminalStopRequested = false
+        _state.update {
+            it.copy(
+                projectTerminalRunning = true,
+                projectTerminalLiveOutput = "",
+                projectTerminalCommand = command,
+                pendingTerminalCommand = null,
+            )
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { runProjectTerminalProcess(project.id, command, startingCwd) }
+                    .getOrElse { error ->
+                        ProjectTerminalResult(
+                            output = "Terminal error: ${error.message ?: error::class.java.simpleName}",
+                            exitCode = 1,
+                            cwd = startingCwd,
+                        )
+                    }
+            }
+            val completedLine = TerminalOutputLine(
+                command = command,
+                output = result.output.ifBlank {
+                    if (result.exitCode == 0) "[Process completed with exit code 0]" else "[Process exited with code ${result.exitCode}]"
+                },
+                exitCode = result.exitCode,
+            )
+            val updatedLines = (existingLines + completedLine).takeLast(MAX_PROJECT_TERMINAL_HISTORY)
+            saveProjectTerminal(project.id, result.cwd, updatedLines)
+            if (_state.value.activeProject?.id == project.id) {
+                _state.update {
+                    it.copy(
+                        projectTerminalLines = updatedLines,
+                        projectTerminalLiveOutput = "",
+                        projectTerminalRunning = false,
+                        projectTerminalCwd = result.cwd,
+                        projectTerminalCommand = null,
+                    )
+                }
+                refreshProjectFiles()
+            }
+            projectTerminalProcess = null
+            projectTerminalProjectId = null
+            projectTerminalStopRequested = false
+        }
+    }
+
+    fun stopProjectTerminalCommand() {
+        if (!_state.value.projectTerminalRunning) return
+        projectTerminalStopRequested = true
+        viewModelScope.launch(Dispatchers.IO) {
+            projectTerminalProcess?.destroy()
+            delay(400)
+            if (projectTerminalProcess?.isAlive == true) projectTerminalProcess?.destroyForcibly()
+        }
+    }
+
+    fun clearProjectTerminal() {
+        val project = _state.value.activeProject ?: return
+        if (_state.value.projectTerminalRunning) return
+        _state.update { it.copy(projectTerminalLines = emptyList(), projectTerminalLiveOutput = "") }
+        saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
+    }
+
+    private fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
+        if (!installer.isInstalled()) return ProjectTerminalResult("Linux environment is not ready yet.", 1, cwd)
+        val installed = installer.installedRuntime()
+        val project = _state.value.projects.firstOrNull { it.id == projectId }
+            ?: _state.value.activeProject?.takeIf { it.id == projectId }
+            ?: return ProjectTerminalResult("Project is no longer available.", 1, cwd)
+        val workspace = projectWorkspaceRoot(project)
+        val guestWorkspacePath = projectGuestRoot(project)
+        val marker = "__POCKETDEV_CWD_${UUID.randomUUID()}__"
+        val script = """
+            cd -- ${shellQuote(cwd)} || exit 1
+            $command
+            pocket_status=${'$'}?
+            printf '\n$marker%s\n' "${'$'}PWD"
+            exit ${'$'}pocket_status
+        """.trimIndent()
+        val process = installer.process(
+            proot = installed.proot,
+            rootfs = installed.rootfs,
+            workspace = workspace,
+            environment = emptyMap(),
+            guestCommand = listOf("/usr/bin/bash", "-lc", script),
+            guestWorkspacePath = guestWorkspacePath,
+        )
+        projectTerminalProcess = process
+        projectTerminalProjectId = projectId
+        if (projectTerminalStopRequested) process.destroy()
+        val native = process as? NativeSpawnProcess
+            ?: return ProjectTerminalResult("Unsupported terminal process.", 1, cwd)
+        var offset = 0L
+        val output = StringBuilder()
+        while (process.isAlive || native.outputFile.length() > offset) {
+            val available = native.outputFile.length() - offset
+            if (available <= 0) {
+                Thread.sleep(50)
+                continue
+            }
+            val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+            val count = RandomAccessFile(native.outputFile, "r").use { file ->
+                file.seek(offset)
+                file.read(bytes)
+            }
+            if (count > 0) {
+                offset += count
+                output.append(bytes.decodeToString(0, count))
+                val visible = output.toString().substringBefore(marker).takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                val detectedPreviewUrl = detectPreviewUrl(visible)
+                _state.update { current ->
+                    if (current.activeProject?.id == projectId) {
+                        current.copy(
+                            projectTerminalLiveOutput = visible,
+                            previewReady = current.previewReady || detectedPreviewUrl != null,
+                            previewUrl = detectedPreviewUrl ?: current.previewUrl,
+                        )
+                    } else current
+                }
+            }
+        }
+        val exitCode = process.waitFor()
+        val raw = output.toString()
+        val cwdAfter = raw.substringAfter(marker, "")
+            .lineSequence()
+            .firstOrNull()
+            ?.trim()
+            ?.takeIf { it == guestWorkspacePath || it.startsWith("$guestWorkspacePath/") }
+            ?: cwd
+        val cleanOutput = raw.substringBefore(marker).trim().takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+        return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
+    }
+
+    private fun isDestructiveTerminalCommand(command: String): Boolean {
+        val normalized = command.lowercase().replace(Regex("\\s+"), " ")
+        return listOf(
+            "rm -rf", "rm -fr", "git reset --hard", "git clean -f", "git push --force",
+            "mkfs", "dd if=", "chmod -r 777", "shutdown", "reboot", ":(){",
+        ).any(normalized::contains) || Regex("(curl|wget).*(\\||>)\\s*(sh|bash)").containsMatchIn(normalized)
+    }
+
+    private fun detectPreviewUrl(output: String): String? {
+        val match = Regex("https?://(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0):(\\d{2,5})(?:/[^\\s]*)?")
+            .findAll(output)
+            .lastOrNull()
+            ?: return null
+        val port = match.groupValues[1].toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+        return "http://127.0.0.1:$port/"
+    }
+
+    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+
+    private fun terminalHistoryFile(projectId: String): File =
+        File(getApplication<Application>().filesDir, "terminal-history/$projectId.json")
+
+    private fun loadProjectTerminal(project: Project): ProjectTerminalSnapshot {
+        val file = terminalHistoryFile(project.id)
+        val guestRoot = projectGuestRoot(project)
+        if (!file.isFile) return ProjectTerminalSnapshot(cwd = guestRoot)
+        return runCatching {
+            val root = JSONObject(file.readText())
+            val array = root.optJSONArray("lines") ?: JSONArray()
+            val lines = (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                TerminalOutputLine(
+                    id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
+                    command = item.optString("command"),
+                    output = item.optString("output"),
+                    exitCode = item.optInt("exitCode"),
+                )
+            }
+            ProjectTerminalSnapshot(
+                lines = lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY),
+                cwd = root.optString("cwd", guestRoot).takeIf {
+                    it == guestRoot || it.startsWith("$guestRoot/")
+                } ?: guestRoot,
+            )
+        }.getOrDefault(ProjectTerminalSnapshot(cwd = guestRoot))
+    }
+
+    private fun saveProjectTerminal(projectId: String, cwd: String, lines: List<TerminalOutputLine>) {
+        runCatching {
+            val file = terminalHistoryFile(projectId)
+            file.parentFile?.mkdirs()
+            val array = JSONArray()
+            lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY).forEach { line ->
+                array.put(
+                    JSONObject()
+                        .put("id", line.id)
+                        .put("command", line.command)
+                        .put("output", line.output.takeLast(MAX_PROJECT_TERMINAL_OUTPUT))
+                        .put("exitCode", line.exitCode),
+                )
+            }
+            file.writeText(JSONObject().put("cwd", cwd).put("lines", array).toString())
+        }
+    }
+
+    private fun projectGuestRoot(project: Project): String = "/workspace/${project.slug}"
+
+    private fun projectWorkspaceRoot(project: Project): File {
+        val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
+            .apply { mkdirs() }
+            .canonicalFile
+        if (project.rootPath.isBlank()) return base
+        val selected = File(base, project.rootPath).canonicalFile
+        require(selected.toPath().startsWith(base.toPath())) { "Unsafe project root" }
+        return selected.apply { mkdirs() }
     }
 
 
@@ -343,6 +648,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openProject(project: Project) {
+        runtime.configureProjectRoot(project.id, project.rootPath)
+        val terminal = loadProjectTerminal(project)
+        val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
             listOf(ProjectChat(title = "Main chat")).also { preferences.saveProjectChats(project.id, it) }
         }
@@ -359,6 +667,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
                 filesLoading = true,
+                projectTerminalLines = terminal.lines,
+                projectTerminalLiveOutput = "",
+                projectTerminalRunning = false,
+                projectTerminalCwd = terminal.cwd,
+                projectTerminalCommand = null,
+                projectTerminalDraft = null,
+                pendingTerminalCommand = null,
+                suggestedProjectRoot = suggestedRoot,
+                previewReady = false,
+                previewUrl = null,
             )
         }
         refreshProjectFiles()
@@ -373,6 +691,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.isRunning) {
             viewModelScope.launch { runtime.stopActiveSession() }
         }
+        if (_state.value.projectTerminalRunning) stopProjectTerminalCommand()
         _state.update {
             it.copy(
                 activeProject = null,
@@ -384,6 +703,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isRunning = false,
                 activeSessionId = null,
                 pendingApproval = null,
+                projectTerminalLines = emptyList(),
+                projectTerminalLiveOutput = "",
+                projectTerminalRunning = false,
+                projectTerminalCwd = "/workspace",
+                projectTerminalCommand = null,
+                projectTerminalDraft = null,
+                pendingTerminalCommand = null,
+                suggestedProjectRoot = null,
+                previewReady = false,
+                previewUrl = null,
             )
         }
     }
@@ -392,7 +721,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createProject(name: String) {
         if (name.isBlank()) return
-        val project = Project(name = name.trim(), description = "Starter web project", language = "TypeScript")
+        val baseSlug = projectSlug(name)
+        val usedSlugs = _state.value.projects.mapTo(mutableSetOf()) { it.slug }
+        val slug = generateSequence(1) { it + 1 }
+            .map { number -> if (number == 1) baseSlug else "$baseSlug-$number" }
+            .first { it !in usedSlugs }
+        val project = Project(
+            name = name.trim(),
+            description = "Starter web project",
+            language = "TypeScript",
+            slug = slug,
+        )
+        runtime.configureProjectRoot(project.id, project.rootPath)
+        val guestRoot = projectGuestRoot(project)
         _state.update {
             it.copy(
                 projects = listOf(project) + it.projects,
@@ -402,6 +743,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
                 filesLoading = true,
+                projectTerminalLines = emptyList(),
+                projectTerminalLiveOutput = "",
+                projectTerminalRunning = false,
+                projectTerminalCwd = guestRoot,
+                projectTerminalCommand = null,
+                projectTerminalDraft = null,
+                pendingTerminalCommand = null,
+                suggestedProjectRoot = null,
+                previewReady = false,
+                previewUrl = null,
             )
         }
         preferences.saveProjects(_state.value.projects)
@@ -410,6 +761,100 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProjectChats(project.id, listOf(firstChat))
         _state.update { it.copy(projectChats = listOf(firstChat), activeChatId = firstChat.id) }
         refreshProjectFiles()
+    }
+
+    private fun detectNestedProjectRoot(project: Project): String? {
+        val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
+        if (!base.isDirectory) return null
+        val visible = base.listFiles().orEmpty().filterNot { file ->
+            file.name == ".claude" || file.name == ".claude.json"
+        }
+        val onlyDirectory = visible.singleOrNull()?.takeIf(File::isDirectory) ?: return null
+        val containsProjectFiles = onlyDirectory.walkTopDown()
+            .maxDepth(2)
+            .any { it.isFile && it.name !in setOf(".DS_Store", ".claude.json") }
+        return onlyDirectory.name.takeIf { containsProjectFiles && !it.contains("..") }
+    }
+
+    fun useSuggestedProjectRoot() {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        val root = current.suggestedProjectRoot ?: return
+        if (current.isRunning || current.projectTerminalRunning) return
+        val updated = project.copy(rootPath = root)
+        runtime.configureProjectRoot(updated.id, updated.rootPath)
+        val projects = current.projects.map { if (it.id == updated.id) updated else it }
+        val guestRoot = projectGuestRoot(updated)
+        preferences.saveProjects(projects)
+        saveProjectTerminal(updated.id, guestRoot, current.projectTerminalLines)
+        _state.update {
+            it.copy(
+                projects = projects,
+                activeProject = updated,
+                suggestedProjectRoot = null,
+                projectTerminalCwd = guestRoot,
+                changes = emptyList(),
+                toastMessage = "$root is now the project root",
+            )
+        }
+        refreshProjectFiles()
+    }
+
+    fun exportActiveProject(uri: Uri) {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        if (current.isRunning || current.projectTerminalRunning) {
+            _state.update { it.copy(toastMessage = "Stop the running task before exporting") }
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = projectWorkspaceRoot(project)
+                    val rootPath = root.canonicalFile.toPath()
+                    val output = getApplication<Application>().contentResolver.openOutputStream(uri)
+                        ?: error("The selected location could not be opened")
+                    output.buffered().use { stream ->
+                        ZipOutputStream(stream).use { zip ->
+                            zip.putNextEntry(ZipEntry("${project.slug}/"))
+                            zip.closeEntry()
+                            root.walkTopDown()
+                                .onEnter { directory ->
+                                    if (directory == root) {
+                                        true
+                                    } else {
+                                        val relative = directory.relativeTo(root).invariantSeparatorsPath
+                                        !isExportExcludedPath(relative) &&
+                                            !Files.isSymbolicLink(directory.toPath()) &&
+                                            runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+                                    }
+                                }
+                                .drop(1)
+                                .filter { file ->
+                                    !Files.isSymbolicLink(file.toPath()) &&
+                                        runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
+                                        !isExportExcludedPath(file.relativeTo(root).invariantSeparatorsPath)
+                                }
+                                .forEach { file ->
+                                    val relative = file.relativeTo(root).invariantSeparatorsPath
+                                    val entryName = "${project.slug}/$relative" + if (file.isDirectory) "/" else ""
+                                    zip.putNextEntry(ZipEntry(entryName).apply { time = file.lastModified() })
+                                    if (file.isFile) file.inputStream().buffered().use { it.copyTo(zip) }
+                                    zip.closeEntry()
+                                }
+                        }
+                    }
+                }
+            }
+            _state.update {
+                it.copy(
+                    toastMessage = result.fold(
+                        onSuccess = { "${project.slug}.zip exported" },
+                        onFailure = { error -> "Export failed: ${error.message ?: "Unknown error"}" },
+                    ),
+                )
+            }
+        }
     }
 
     fun createChat() {
@@ -451,9 +896,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val project = _state.value.activeProject ?: return
         _state.update { it.copy(filesLoading = true) }
         viewModelScope.launch {
-            val entries = withContext(Dispatchers.IO) { readWorkspace(project.id) }
+            val (entries, suggestedRoot) = withContext(Dispatchers.IO) {
+                readWorkspace(project) to if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
+            }
             if (_state.value.activeProject?.id == project.id) {
-                _state.update { it.copy(workspaceFiles = entries, filesLoading = false) }
+                _state.update {
+                    it.copy(
+                        workspaceFiles = entries,
+                        filesLoading = false,
+                        suggestedProjectRoot = suggestedRoot,
+                    )
+                }
             }
         }
     }
@@ -464,7 +917,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(openedFilePath = entry.path, openedFileContent = null, fileContentLoading = true) }
         viewModelScope.launch {
             val content = withContext(Dispatchers.IO) {
-                val file = File(getApplication<Application>().filesDir, "workspaces/${project.id}/${entry.path}")
+                val file = File(projectWorkspaceRoot(project), entry.path)
                 runCatching {
                     if (file.length() > 512_000L) {
                         file.inputStream().use { stream ->
@@ -486,8 +939,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    private fun readWorkspace(projectId: String): List<WorkspaceEntry> {
-        val root = File(getApplication<Application>().filesDir, "workspaces/$projectId")
+    private fun readWorkspace(project: Project): List<WorkspaceEntry> {
+        val root = projectWorkspaceRoot(project)
         if (!root.isDirectory) return emptyList()
         val rootPath = root.canonicalFile.toPath()
         return root.walkTopDown()
@@ -527,6 +980,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             relativePath.startsWith(".claude/")
     }
 
+    private fun isExportExcludedPath(relativePath: String): Boolean {
+        val excludedNames = setOf(
+            ".git", ".claude", ".gradle", ".idea", ".next", ".cache",
+            "node_modules", ".venv", "venv", "__pycache__", "build",
+        )
+        return relativePath.split('/').any { it in excludedNames } || isClaudeRuntimeMetadata(relativePath)
+    }
+
     fun sendPrompt(prompt: String) {
         val project = state.value.activeProject ?: return
         if (prompt.isBlank() || state.value.isRunning) return
@@ -543,13 +1004,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistMessages()
         val history = state.value.messages // includes all messages up to now
         viewModelScope.launch {
-            runtime.startSession(project.id, prompt.trim(), history, state.value.provider)
+            runtime.startSession(project.id, project.slug, prompt.trim(), history, state.value.provider)
         }
     }
 
     fun answerApproval(approved: Boolean) {
         val request = state.value.pendingApproval ?: return
         viewModelScope.launch { runtime.respondToApproval(request, approved) }
+    }
+
+    fun stopTask() {
+        if (!_state.value.isRunning) return
+        viewModelScope.launch { runtime.stopActiveSession() }
     }
 
     fun undoLastChanges() {
@@ -713,6 +1179,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 is RuntimeEvent.PreviewStarted -> current.copy(
                     previewReady = true,
+                    previewUrl = event.url,
                     activity = listOf(ActivityItem("Preview ready", event.url)) + current.activity,
                     liveProcess = current.liveProcess + ActivityItem("Preview ready", event.url),
                 )
@@ -793,5 +1260,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
+        private const val MAX_PROJECT_TERMINAL_HISTORY = 100
+        private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
+        private const val TEST_PROVIDER_DEFAULTS_VERSION = 1
+        private const val TEST_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+        private const val TEST_OPENROUTER_MODEL = "stealth/ox-alpha"
     }
 }

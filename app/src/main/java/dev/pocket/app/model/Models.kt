@@ -1,6 +1,8 @@
 package dev.pocket.app.model
 
 import java.time.Instant
+import java.text.Normalizer
+import java.util.Locale
 import java.util.UUID
 
 enum class ProviderProtocol { CLAUDE_LOGIN, ANTHROPIC, ANTHROPIC_GATEWAY, OPENAI_RESPONSES, OPENAI_CHAT }
@@ -33,6 +35,8 @@ data class Project(
     val name: String,
     val description: String,
     val language: String,
+    val slug: String = projectSlug(name),
+    val rootPath: String = "",
     val updatedAtMillis: Long = System.currentTimeMillis(),
 ) {
     val formattedUpdatedAt: String
@@ -55,6 +59,17 @@ data class Project(
                 }
             }
         }
+}
+
+fun projectSlug(name: String): String {
+    val ascii = Normalizer.normalize(name, Normalizer.Form.NFKD)
+        .replace(Regex("\\p{M}+"), "")
+        .lowercase(Locale.US)
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+        .take(48)
+        .trimEnd('-')
+    return ascii.ifBlank { "project" }
 }
 
 data class WorkspaceEntry(

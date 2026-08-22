@@ -15,7 +15,7 @@ data class RuntimeLaunchConfig(
 
 interface RuntimeBridge {
     val events: Flow<RuntimeEvent>
-    suspend fun startSession(projectId: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String
+    suspend fun startSession(projectId: String, projectSlug: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)
     suspend fun stopSession(sessionId: String)
     suspend fun stopActiveSession()

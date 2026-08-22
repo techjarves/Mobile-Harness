@@ -6,6 +6,7 @@ import dev.pocket.app.model.Project
 import dev.pocket.app.model.ProjectChat
 import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
+import dev.pocket.app.model.projectSlug
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -29,6 +30,10 @@ class AppPreferences(private val context: Context) {
     var legacySeededCredentialRemoved: Boolean
         get() = preferences.getBoolean("legacy_seeded_credential_removed", false)
         set(value) { preferences.edit().putBoolean("legacy_seeded_credential_removed", value).apply() }
+
+    var testProviderDefaultsVersion: Int
+        get() = preferences.getInt("test_provider_defaults_version", 0)
+        set(value) { preferences.edit().putInt("test_provider_defaults_version", value).apply() }
 
 
     fun saveProvider(profile: ProviderProfile) {
@@ -58,6 +63,8 @@ class AppPreferences(private val context: Context) {
                 put("name", p.name)
                 put("description", p.description)
                 put("language", p.language)
+                put("slug", p.slug)
+                put("rootPath", p.rootPath)
                 put("updatedAtMillis", p.updatedAtMillis)
             })
         }
@@ -69,9 +76,19 @@ class AppPreferences(private val context: Context) {
         var needsSave = false
         val list = runCatching {
             val arr = JSONArray(raw)
+            val usedSlugs = mutableSetOf<String>()
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 val id = obj.getString("id")
+                val name = obj.getString("name")
+                val requestedSlug = obj.optString("slug").ifBlank { projectSlug(name) }
+                var slug = requestedSlug
+                if (!usedSlugs.add(slug)) {
+                    slug = "$requestedSlug-${id.take(6)}"
+                    var suffix = 2
+                    while (!usedSlugs.add(slug)) slug = "$requestedSlug-${suffix++}"
+                }
+                if (slug != obj.optString("slug")) needsSave = true
                 var millis = obj.optLong("updatedAtMillis", 0L)
                 if (millis <= 0L) {
                     val workspaceDir = File(context.filesDir, "workspaces/$id")
@@ -84,9 +101,13 @@ class AppPreferences(private val context: Context) {
                 }
                 Project(
                     id = id,
-                    name = obj.getString("name"),
+                    name = name,
                     description = obj.optString("description", ""),
                     language = obj.optString("language", ""),
+                    slug = slug,
+                    rootPath = obj.optString("rootPath", "").takeIf { root ->
+                        root.isBlank() || (!root.startsWith('/') && !root.contains(".."))
+                    } ?: "",
                     updatedAtMillis = millis,
                 )
             }
