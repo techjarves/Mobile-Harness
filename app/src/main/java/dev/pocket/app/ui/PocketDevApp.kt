@@ -1,9 +1,14 @@
 package dev.pocket.app.ui
 
+import android.Manifest
 import android.app.ActivityManager
+import android.content.Intent
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.net.Uri
+import android.provider.Settings
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -28,6 +33,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,6 +46,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -55,6 +62,8 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Refresh
@@ -100,9 +109,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -122,6 +133,7 @@ import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.model.ToolRequest
 import dev.pocket.app.model.WorkspaceEntry
 import dev.pocket.app.model.projectSlug
+import dev.pocket.app.runtime.RuntimeExecutionService
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.graphicsLayer
@@ -169,7 +181,11 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         state.startupStage == StartupStage.INSTALLING ||
             state.startupStage == StartupStage.INITIALIZING ||
             state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(state)
-        state.startupStage == StartupStage.ERROR -> StartupErrorScreen(state.startupError, viewModel::retryStartup)
+        state.startupStage == StartupStage.ERROR -> StartupErrorScreen(
+            message = state.startupError,
+            isOffline = state.startupErrorIsOffline,
+            onRetry = viewModel::retryStartup,
+        )
         state.startupStage == StartupStage.MODEL_SETUP -> ProviderSetupScreen(
             initial = state.provider,
             onboarding = true,
@@ -178,6 +194,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onDiscover = viewModel::discoverModels,
             onValidate = viewModel::validateProvider,
         )
+        state.startupStage == StartupStage.READY && !state.backgroundSetupComplete ->
+            BackgroundTaskSetupScreen(onContinue = viewModel::finishBackgroundSetup)
         state.activeProject != null -> WorkspaceScreen(
             state = state,
             onBack = viewModel::closeProject,
@@ -209,6 +227,109 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
 }
 
 @Composable
+private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
+    val context = LocalContext.current
+    val powerManager = context.getSystemService(PowerManager::class.java)
+    fun notificationsAllowed(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+    fun batteryUnrestricted(): Boolean = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+
+    var notificationGranted by remember { mutableStateOf(notificationsAllowed()) }
+    var batteryGranted by remember { mutableStateOf(batteryUnrestricted()) }
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        notificationGranted = notificationsAllowed()
+    }
+    val batteryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        batteryGranted = batteryUnrestricted()
+    }
+
+    LaunchedEffect(Unit) {
+        RuntimeExecutionService.ensureNotificationChannels(context)
+        notificationGranted = notificationsAllowed()
+    }
+
+    Scaffold { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            BrandMark()
+            Spacer(Modifier.height(24.dp))
+            Text("Let tasks finish in the background", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "You can lock your phone or use another app while Pocket Dev keeps working.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(24.dp))
+
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    CheckRow(
+                        Icons.Default.Notifications,
+                        "Task notifications",
+                        if (notificationGranted) "Allowed" else "Get completion and error alerts",
+                        notificationGranted,
+                    )
+                    if (!notificationGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Allow notifications") }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    CheckRow(
+                        Icons.Default.BatterySaver,
+                        "Background reliability",
+                        if (batteryGranted) "Battery restriction removed" else "Recommended for long tasks",
+                        batteryGranted,
+                    )
+                    if (!batteryGranted) {
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val request = Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:${context.packageName}"),
+                                )
+                                runCatching { batteryLauncher.launch(request) }
+                                    .onFailure {
+                                        context.startActivity(
+                                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+                                        )
+                                    }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Allow reliable background tasks") }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "Both options are optional. Android may still stop extremely heavy tasks if the phone runs low on memory.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                Text(if (notificationGranted && batteryGranted) "Continue" else "Continue anyway")
+            }
+        }
+    }
+}
+
+@Composable
 private fun RuntimeSetupPromptScreen(onDownload: () -> Unit) {
     val context = LocalContext.current
     val activityManager = context.getSystemService(ActivityManager::class.java)
@@ -226,7 +347,7 @@ private fun RuntimeSetupPromptScreen(onDownload: () -> Unit) {
             Text("Set up your phone for coding", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text(
-                "Pocket Dev needs to download and install a private Linux workspace and real Claude Code.",
+                "Pocket Dev installs a private Linux workspace, real Claude Code, Node.js, and Python.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(28.dp))
@@ -234,7 +355,7 @@ private fun RuntimeSetupPromptScreen(onDownload: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             CheckRow(Icons.Default.Code, "Processor", Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", arm64)
             Spacer(Modifier.height(12.dp))
-            CheckRow(Icons.Default.Storage, "Download", "About 350 MB · Wi-Fi recommended", true)
+            CheckRow(Icons.Default.Storage, "Download", "About 500 MB · Wi-Fi recommended", true)
             Spacer(Modifier.height(24.dp))
             Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
                 Text(
@@ -302,7 +423,8 @@ private fun StartupLoadingScreen(state: AppUiState) {
 }
 
 @Composable
-private fun StartupErrorScreen(message: String?, onRetry: () -> Unit) {
+private fun StartupErrorScreen(message: String?, isOffline: Boolean, onRetry: () -> Unit) {
+    val context = LocalContext.current
     Scaffold { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(28.dp),
@@ -312,7 +434,7 @@ private fun StartupErrorScreen(message: String?, onRetry: () -> Unit) {
             Icon(Icons.Default.Warning, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(20.dp))
             Text(
-                "Pocket Dev couldn't finish starting",
+                if (isOffline) "You're offline" else "Pocket Dev couldn't finish starting",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -324,7 +446,27 @@ private fun StartupErrorScreen(message: String?, onRetry: () -> Unit) {
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(24.dp))
-            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("Try again") }
+            if (isOffline) {
+                Button(
+                    onClick = {
+                        val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            Settings.Panel.ACTION_INTERNET_CONNECTIVITY
+                        } else {
+                            Settings.ACTION_WIRELESS_SETTINGS
+                        }
+                        context.startActivity(Intent(action))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Open internet settings")
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                    Text("Try again")
+                }
+            } else {
+                Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("Try again") }
+            }
         }
     }
 }
@@ -334,13 +476,14 @@ private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1_04
 @Composable
 private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 RootScreen.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = screen == tab,
@@ -993,6 +1136,7 @@ private fun WorkspaceScreen(
     onExportProject: (Uri) -> Unit,
 ) {
     BackHandler(onBack = onBack)
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val exportProjectLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
         onResult = { uri -> if (uri != null) onExportProject(uri) },
@@ -1096,7 +1240,7 @@ private fun WorkspaceScreen(
             )
         },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 WorkspaceTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = selectedTab == tab,
@@ -1157,6 +1301,8 @@ private fun WorkspaceScreen(
                     promptPath = state.projectTerminalCwd,
                     onStop = onTerminalStop,
                     showThemeAction = false,
+                    showQuickCommands = false,
+                    compactHeader = true,
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
@@ -1465,9 +1611,10 @@ private fun ChatTab(
                 value = prompt,
                 onValueChange = { prompt = it },
                 placeholder = { Text("What do you want to build?") },
-                modifier = Modifier.weight(1f),
-                maxLines = 4,
-                keyboardActions = KeyboardActions(onSend = { if (!isRunning) { onSend(prompt); prompt = "" } }),
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp, max = 64.dp),
+                minLines = 1,
+                maxLines = 2,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             )
             Spacer(Modifier.width(8.dp))
             if (isRunning) {
@@ -1581,26 +1728,47 @@ private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boole
 
 @Composable
 private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Unit) {
+    val clipboard = LocalClipboardManager.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(18.dp),
             modifier = Modifier.fillMaxWidth(if (message.fromUser) .82f else .92f),
         ) {
-            if (message.fromUser) {
-                Text(
-                    text = message.text,
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            } else {
-                MarkdownText(
-                    markdown = message.text,
-                    modifier = Modifier.padding(14.dp),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    onRunCode = onRunInTerminal,
-                )
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    IconButton(
+                        onClick = { clipboard.setText(AnnotatedString(message.text)) },
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = "Copy message",
+                            modifier = Modifier.size(15.dp),
+                            tint = if (message.fromUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                SelectionContainer {
+                    if (message.fromUser) {
+                        Text(
+                            text = message.text,
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else {
+                        MarkdownText(
+                            markdown = message.text,
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            onRunCode = onRunInTerminal,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1677,7 +1845,19 @@ private fun ChangesTab(
 ) {
     var expandedPath by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Text("Changes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("Review everything the AI changed.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Text("Changes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Review everything the AI changed.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         if (changes.isEmpty()) item { EmptyState(Icons.Default.Code, "No changes yet", "Ask Pocket Dev to update your project.") }
         items(changes, key = { it.path }) { change ->
             val expanded = expandedPath == change.path

@@ -36,6 +36,7 @@ class RuntimeInstaller(private val context: Context) {
     private val downloads = File(context.cacheDir, "runtime-downloads")
     private val marker = File(rootfs, ".pocket-runtime-ready")
     private val rootfsMarker = File(rootfs, ".pocket-rootfs-version")
+    private val languageToolsMarker = File(rootfs, ".pocket-language-tools-version")
 
     fun isInstalled(): Boolean {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
@@ -43,6 +44,9 @@ class RuntimeInstaller(private val context: Context) {
             File(rootfs, "usr/bin/bash").exists() &&
             rootfsMarker.readTextOrNull() == ROOTFS_VERSION &&
             File(rootfs, "usr/local/bin/claude").exists() &&
+            languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION &&
+            File(rootfs, "usr/local/bin/node").exists() &&
+            File(rootfs, "usr/bin/python3").exists() &&
             marker.exists()
     }
 
@@ -105,22 +109,22 @@ class RuntimeInstaller(private val context: Context) {
             archive.delete()
         }
 
-        onProgress(RuntimeInstallProgress("Checking the latest Claude Code release", 0.36f))
+        onProgress(RuntimeInstallProgress("Checking the latest Claude Code release", 0.32f))
         val version = fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")
             .let { JSONObject(it).getString("version") }
             .also { require(it.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) }
         val claude = File(rootfs, "usr/local/bin/claude")
         if (!marker.exists() || marker.readText().trim() != version || !claude.exists()) {
-            onProgress(RuntimeInstallProgress("Downloading Claude Code $version from Anthropic", 0.40f))
+            onProgress(RuntimeInstallProgress("Downloading Claude Code $version from Anthropic", 0.35f))
             val base = "https://downloads.claude.ai/claude-code-releases/$version"
             val manifest = JSONObject(fetchText("$base/manifest.json"))
             val checksum = manifest.getJSONObject("platforms").getJSONObject("linux-arm64").getString("checksum")
             val staged = File(downloads, "claude-$version")
             downloadVerified("$base/linux-arm64/claude", staged, checksum) { downloaded, total ->
                 val ratio = if (total > 0) downloaded.toFloat() / total else 0f
-                onProgress(RuntimeInstallProgress("Downloading Claude Code $version", 0.40f + ratio * 0.54f, downloaded, total.takeIf { it > 0 }))
+                onProgress(RuntimeInstallProgress("Downloading Claude Code $version", 0.35f + ratio * 0.20f, downloaded, total.takeIf { it > 0 }))
             }
-            onProgress(RuntimeInstallProgress("Verifying Claude Code", 0.96f))
+            onProgress(RuntimeInstallProgress("Verifying Claude Code", 0.56f))
             claude.parentFile?.mkdirs()
             if (claude.exists()) claude.delete()
             check(staged.renameTo(claude)) { "Could not activate Claude Code" }
@@ -129,11 +133,111 @@ class RuntimeInstaller(private val context: Context) {
             marker.writeText(version)
         }
 
+        ensureLanguageTools(proot, onProgress)
+
         // The binary and version manifest were already checksum-verified above. Running a
         // separate `claude --version` probe under PRoot can leave inherited output pipes
         // open on some Android kernels, so the real user session is the launch check.
         onProgress(RuntimeInstallProgress("Setup complete", 1f))
         return InstalledRuntime(proot, rootfs, claude, version)
+    }
+
+    private suspend fun ensureLanguageTools(
+        proot: File,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        if (
+            languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION &&
+            File(rootfs, "usr/local/bin/node").exists() &&
+            File(rootfs, "usr/bin/python3").exists()
+        ) return
+
+        onProgress(RuntimeInstallProgress("Downloading Node.js $NODE_VERSION LTS", 0.60f))
+        downloads.mkdirs()
+        val nodeFileName = "node-$NODE_VERSION-linux-arm64.tar.gz"
+        val nodeBaseUrl = "https://nodejs.org/dist/$NODE_VERSION"
+        val checksum = fetchText("$nodeBaseUrl/SHASUMS256.txt")
+            .lineSequence()
+            .map(String::trim)
+            .firstOrNull { it.endsWith("  $nodeFileName") }
+            ?.substringBefore(' ')
+            ?: error("Node.js checksum was not found")
+        val nodeArchive = File(downloads, nodeFileName)
+        downloadVerified("$nodeBaseUrl/$nodeFileName", nodeArchive, checksum) { downloaded, total ->
+            val ratio = if (total > 0) downloaded.toFloat() / total else 0f
+            onProgress(
+                RuntimeInstallProgress(
+                    "Downloading Node.js $NODE_VERSION LTS",
+                    0.60f + ratio * 0.14f,
+                    downloaded,
+                    total.takeIf { it > 0 },
+                ),
+            )
+        }
+        onProgress(RuntimeInstallProgress("Installing Node.js and npm", 0.75f))
+        val nodeStaging = File(runtimeDir, "node.installing")
+        nodeStaging.deleteRecursively()
+        nodeStaging.mkdirs()
+        extractNodeArchive(nodeArchive, nodeStaging)
+        val nodeHome = File(rootfs, "usr/local/lib/nodejs")
+        nodeHome.deleteRecursively()
+        nodeHome.parentFile?.mkdirs()
+        check(nodeStaging.renameTo(nodeHome)) { "Could not activate Node.js" }
+        val localBin = File(rootfs, "usr/local/bin").apply { mkdirs() }
+        listOf("node", "npm", "npx", "corepack").forEach { command ->
+            val link = File(localBin, command)
+            if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
+            Os.symlink("../lib/nodejs/bin/$command", link.absolutePath)
+        }
+        nodeArchive.delete()
+
+        onProgress(RuntimeInstallProgress("Installing Python, Git, and build tools", 0.78f))
+        writeResolver()
+        val install = process(
+            proot = proot,
+            rootfs = rootfs,
+            workspace = File(rootfs, "root"),
+            environment = emptyMap(),
+            guestCommand = listOf(
+                "/usr/bin/env",
+                "bash",
+                "-lc",
+                "export DEBIAN_FRONTEND=noninteractive; " +
+                    "apt-get update && " +
+                    "apt-get install -y --no-install-recommends python3 python3-pip python3-venv git ca-certificates build-essential && " +
+                    "apt-get clean && rm -rf /var/lib/apt/lists/*",
+            ),
+        )
+        withTimeout(12 * 60 * 1_000L) {
+            while (install.isAlive) delay(100)
+        }
+        val installExit = install.waitFor()
+        val installOutput = (install as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
+        check(installExit == 0) {
+            installOutput.takeLast(1_000).ifBlank { "Could not install Python development tools" }
+        }
+
+        onProgress(RuntimeInstallProgress("Checking Node.js and Python", 0.96f))
+        val verify = process(
+            proot = proot,
+            rootfs = rootfs,
+            workspace = File(rootfs, "root"),
+            environment = emptyMap(),
+            guestCommand = listOf(
+                "/usr/bin/env",
+                "bash",
+                "-lc",
+                "node --version && npm --version && python3 --version && pip3 --version && git --version",
+            ),
+        )
+        withTimeout(30_000L) {
+            while (verify.isAlive) delay(50)
+        }
+        val verifyExit = verify.waitFor()
+        val verifyOutput = (verify as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
+        check(verifyExit == 0) { verifyOutput.ifBlank { "Developer tools could not be verified" } }
+        languageToolsMarker.writeText(LANGUAGE_TOOLS_VERSION)
+        onProgress(RuntimeInstallProgress("Developer tools are ready", 0.99f))
     }
 
     suspend fun initializeExisting(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
@@ -336,6 +440,49 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         }
     }
 
+    private fun extractNodeArchive(archive: File, destination: File) {
+        val deferredLinks = mutableListOf<Pair<File, File>>()
+        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
+            var entry: TarArchiveEntry? = tar.nextEntry
+            while (entry != null) {
+                val relative = entry.name.removePrefix("./").substringAfter('/', "")
+                if (relative.isNotBlank()) {
+                    val target = safeChild(destination, relative)
+                    when {
+                        entry.isDirectory -> target.mkdirs()
+                        entry.isSymbolicLink -> {
+                            target.parentFile?.mkdirs()
+                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
+                            Os.symlink(entry.linkName, target.absolutePath)
+                        }
+                        entry.isLink -> {
+                            val relativeLink = entry.linkName.removePrefix("./").substringAfter('/', "")
+                            val linkTarget = safeChild(destination, relativeLink)
+                            target.parentFile?.mkdirs()
+                            if (linkTarget.exists()) {
+                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+                            } else {
+                                deferredLinks += target to linkTarget
+                            }
+                        }
+                        entry.isFile -> {
+                            target.parentFile?.mkdirs()
+                            FileOutputStream(target).use { output -> tar.copyTo(output) }
+                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
+                        }
+                    }
+                }
+                entry = tar.nextEntry
+            }
+        }
+        deferredLinks.forEach { (target, linkTarget) ->
+            require(linkTarget.isFile) { "Node.js archive hard-link target is missing" }
+            target.parentFile?.mkdirs()
+            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
+        }
+    }
+
     private fun safeChild(root: File, relative: String): File {
         require(relative.isNotBlank() && !relative.startsWith('/')) { "Unsafe archive path" }
         val file = File(root, relative)
@@ -411,5 +558,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val ROOTFS_FILE = "ubuntu-base-20.04.5-base-arm64.tar.gz"
         private const val ROOTFS_URL = "https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/$ROOTFS_FILE"
         private const val ROOTFS_SHA256 = "f9b999afb4c4b10193087ea8c11be36d688f19e609b05179b571f29357954b52"
+        private const val NODE_VERSION = "v24.19.0"
+        private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
     }
 }

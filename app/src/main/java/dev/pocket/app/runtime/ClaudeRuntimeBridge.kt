@@ -18,6 +18,7 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -70,14 +71,16 @@ class ClaudeRuntimeBridge(
     private val projectRoots = ConcurrentHashMap<String, String>()
     @Volatile private var activeProcess: Process? = null
     @Volatile private var activeSessionId: String? = null
+    @Volatile private var userStopRequested: Boolean = false
     private val streamedText = StringBuilder()
     private var lastReasoningTokens = 0
     private var lastReasoningUpdateAt = 0L
 
-    override suspend fun startSession(projectId: String, projectSlug: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO) {
+    override suspend fun startSession(projectId: String, projectSlug: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
         activeSessionId = sessionId
+        userStopRequested = false
         toolNames.clear()
         seenToolCalls.clear()
         lastReasoningTokens = 0
@@ -90,7 +93,18 @@ class ClaudeRuntimeBridge(
         }
 
         runCatching {
-            startForegroundRuntime()
+            RuntimeTaskController.stopAction = {
+                userStopRequested = true
+                val running = activeProcess
+                if (running != null) {
+                    Thread {
+                        running.destroy()
+                        Thread.sleep(500)
+                        if (running.isAlive) running.destroyForcibly()
+                    }.start()
+                }
+            }
+            startForegroundRuntime(projectSlug)
             // Setup and release checks happen once in the app-start loading flow.
             // Sending a prompt must never perform network update checks or put setup
             // messages into the conversation.
@@ -130,6 +144,7 @@ class ClaudeRuntimeBridge(
                 guestWorkspacePath = guestWorkspacePath,
             )
             activeProcess = process
+            if (userStopRequested) process.destroy()
             coroutineScope {
                 val permissionWatcher = launch { watchPermissionRequests(sessionId) }
                 var lastDiagnostic = ""
@@ -194,17 +209,33 @@ class ClaudeRuntimeBridge(
                 }
                 if (exit == 0) {
                     emitCompletedOnce(sessionId)
+                    finishForegroundRuntime(
+                        completed = true,
+                        projectName = projectSlug,
+                        detail = "Claude Code finished the task in $projectSlug.",
+                    )
                 } else {
+                    if (userStopRequested) throw ProviderSessionException("Stopped by user")
                     error(lastDiagnostic.ifBlank { "Claude Code stopped with exit code $exit" })
                 }
             }
         }.onFailure { error ->
             Log.e("ClaudeBridge", "Session failed", error)
-            emitFailureOnce(sessionId, friendlyError(error))
+            val message = friendlyError(error)
+            emitFailureOnce(sessionId, message)
+            if (userStopRequested) {
+                cancelForegroundRuntime()
+            } else {
+                finishForegroundRuntime(
+                    completed = false,
+                    projectName = projectSlug,
+                    detail = message,
+                )
+            }
         }
         activeProcess = null
         activeSessionId = null
-        stopForegroundRuntime()
+        RuntimeTaskController.stopAction = null
         sessionId
     }
 
@@ -219,6 +250,7 @@ class ClaudeRuntimeBridge(
 
     override suspend fun stopSession(sessionId: String) = withContext(Dispatchers.IO) {
         if (activeSessionId == sessionId) {
+            userStopRequested = true
             activeProcess?.destroy()
             delay(500)
             if (activeProcess?.isAlive == true) activeProcess?.destroyForcibly()
@@ -490,6 +522,7 @@ class ClaudeRuntimeBridge(
         sb.appendLine("The current working directory $guestWorkspacePath is the project root.")
         sb.appendLine("Create and edit project files directly in this directory. Do not create another outer project folder unless the user explicitly asks for one.")
         sb.appendLine("When giving commands to the user, make them runnable from this project root.")
+        sb.appendLine("For local servers, give a clear start command and never use a kill command that searches its own command text with pgrep, because it can terminate the terminal itself.")
         sb.appendLine("</project_workspace>")
         sb.appendLine()
         if (priorMessages.isEmpty()) {
@@ -763,12 +796,41 @@ class ClaudeRuntimeBridge(
         }
     }
 
-    private fun startForegroundRuntime() {
-        ContextCompat.startForegroundService(context, android.content.Intent(context, RuntimeExecutionService::class.java))
+    private fun startForegroundRuntime(projectName: String) {
+        ContextCompat.startForegroundService(
+            context,
+            android.content.Intent(context, RuntimeExecutionService::class.java)
+                .setAction(RuntimeExecutionService.ACTION_START)
+                .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName),
+        )
     }
 
-    private fun stopForegroundRuntime() {
-        context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
+    private fun finishForegroundRuntime(completed: Boolean, projectName: String, detail: String) {
+        runCatching {
+            context.startService(
+                android.content.Intent(context, RuntimeExecutionService::class.java)
+                    .setAction(
+                        if (completed) RuntimeExecutionService.ACTION_COMPLETE
+                        else RuntimeExecutionService.ACTION_FAILED,
+                    )
+                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName)
+                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
+            )
+        }.onFailure { error ->
+            Log.w("ClaudeBridge", "Could not post task result notification", error)
+            context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
+        }
+    }
+
+    private fun cancelForegroundRuntime() {
+        runCatching {
+            context.startService(
+                android.content.Intent(context, RuntimeExecutionService::class.java)
+                    .setAction(RuntimeExecutionService.ACTION_CANCELLED),
+            )
+        }.onFailure {
+            context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
+        }
     }
 
     private data class PendingPermission(val request: ToolRequest, val response: File)

@@ -1,5 +1,7 @@
 package dev.pocket.app.ui
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -69,6 +71,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -98,6 +101,7 @@ fun SettingsScreen(
     onClearTerminal: () -> Unit,
     getSavedApiKey: (ProviderKind) -> String,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
     var baseUrl by rememberSaveable(state.provider.baseUrl) {
@@ -115,6 +119,7 @@ fun SettingsScreen(
     var validationOk by remember { mutableStateOf(false) }
     var discoveredModels by remember(baseUrl) { mutableStateOf(emptyList<DiscoveredModel>()) }
     var terminalClearedMessage by remember { mutableStateOf(false) }
+    var showChildProcessHelp by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -525,9 +530,9 @@ fun SettingsScreen(
                     ) {
                         InfoRow(icon = Icons.Default.Memory, label = "Architecture", value = "ARM64 (aarch64)")
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        InfoRow(icon = Icons.Default.Terminal, label = "Linux Rootfs", value = "Ubuntu 24.04 PRoot")
+                        InfoRow(icon = Icons.Default.Terminal, label = "Linux Rootfs", value = "Ubuntu 20.04 PRoot")
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        InfoRow(icon = Icons.Default.SmartToy, label = "Agent Engine", value = "Claude Code CLI + Node.js 20")
+                        InfoRow(icon = Icons.Default.SmartToy, label = "Developer tools", value = "Claude Code + Node.js 24 + Python 3")
 
                         Spacer(Modifier.height(4.dp))
                         OutlinedButton(
@@ -541,6 +546,39 @@ fun SettingsScreen(
                             Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(if (terminalClearedMessage) "Terminal Cleared!" else "Clear Terminal History", fontSize = 13.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = { showChildProcessHelp = !showChildProcessHelp },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Advanced runtime reliability", fontSize = 13.sp)
+                        }
+
+                        AnimatedVisibility(showChildProcessHelp) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "Only use this if large npm or build tasks stop unexpectedly. In Developer options, enable “Disable child process restrictions”. The name may differ or be unavailable on some phones.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 17.sp,
+                                )
+                                Button(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                                        }.onFailure {
+                                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Open Developer options")
+                                }
+                            }
                         }
                     }
                 }

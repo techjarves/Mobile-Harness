@@ -27,6 +27,7 @@ import dev.pocket.app.runtime.NativeSpawnProcess
 import dev.pocket.app.runtime.RuntimeInstaller
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.UnknownHostException
 import java.nio.file.Files
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -70,7 +71,9 @@ data class AppUiState(
     val startupMessage: String = "Checking this device…",
     val startupBytes: Pair<Long, Long>? = null,
     val startupError: String? = null,
+    val startupErrorIsOffline: Boolean = false,
     val onboardingComplete: Boolean = false,
+    val backgroundSetupComplete: Boolean = false,
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
     val themeMode: dev.pocket.app.ui.theme.AppThemeMode = dev.pocket.app.ui.theme.AppThemeMode.DARK,
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
@@ -117,6 +120,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(
         AppUiState(
             onboardingComplete = preferences.onboardingComplete,
+            backgroundSetupComplete = preferences.backgroundSetupComplete,
             provider = preferences.loadProvider(vault),
             themeMode = runCatching { dev.pocket.app.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(dev.pocket.app.ui.theme.AppThemeMode.DARK),
@@ -252,12 +256,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val startingCwd = _state.value.projectTerminalCwd
         val existingLines = _state.value.projectTerminalLines
         projectTerminalStopRequested = false
+        val requestedPreviewUrl = detectServerUrl(command)
         _state.update {
             it.copy(
                 projectTerminalRunning = true,
                 projectTerminalLiveOutput = "",
                 projectTerminalCommand = command,
                 pendingTerminalCommand = null,
+                previewReady = it.previewReady || requestedPreviewUrl != null,
+                previewUrl = requestedPreviewUrl ?: it.previewUrl,
             )
         }
         viewModelScope.launch {
@@ -389,7 +396,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val normalized = command.lowercase().replace(Regex("\\s+"), " ")
         return listOf(
             "rm -rf", "rm -fr", "git reset --hard", "git clean -f", "git push --force",
-            "mkfs", "dd if=", "chmod -r 777", "shutdown", "reboot", ":(){",
+            "mkfs", "dd if=", "chmod -r 777", "shutdown", "reboot", ":(){", "kill \$(pgrep", "pkill -f",
         ).any(normalized::contains) || Regex("(curl|wget).*(\\||>)\\s*(sh|bash)").containsMatchIn(normalized)
     }
 
@@ -400,6 +407,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: return null
         val port = match.groupValues[1].toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
         return "http://127.0.0.1:$port/"
+    }
+
+    private fun detectServerUrl(command: String): String? {
+        val match = Regex("""python(?:3)?\s+-m\s+http\.server(?:\s+(\d{2,5}))?""")
+            .find(command)
+            ?: return null
+        val port = match.groupValues.getOrNull(1)?.toIntOrNull() ?: 8000
+        return port.takeIf { it in 1..65535 }?.let { "http://127.0.0.1:$it/" }
     }
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
@@ -509,6 +524,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupMessage = "Preparing your private coding workspace",
                 startupBytes = null,
                 startupError = null,
+                startupErrorIsOffline = false,
             )
         }
         viewModelScope.launch {
@@ -551,25 +567,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupMessage = "Opening your private workspace",
                 startupBytes = null,
                 startupError = null,
+                startupErrorIsOffline = false,
             )
         }
         val result = runCatching {
             withContext(Dispatchers.IO) {
-                installer.ensureInstalled { progress ->
-                    _state.update {
-                        it.copy(
-                            startupProgress = progress.fraction * 0.65f,
-                            startupMessage = progress.message,
-                            startupBytes = progress.totalBytes?.let { total ->
-                                (progress.downloadedBytes ?: 0L) to total
-                            },
-                        )
-                    }
-                }
                 installer.initializeExisting { progress ->
                     _state.update {
                         it.copy(
-                            startupProgress = 0.65f + progress.fraction * 0.35f,
+                            startupProgress = 0.05f + progress.fraction * 0.95f,
                             startupMessage = progress.message,
                             startupBytes = null,
                         )
@@ -590,10 +596,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun showStartupError(error: Throwable) {
+        val isOffline = generateSequence(error as Throwable?) { it.cause }
+            .any { cause ->
+                cause is UnknownHostException ||
+                    cause.message.orEmpty().contains("unable to resolve host", ignoreCase = true) ||
+                    cause.message.orEmpty().contains("no address associated with hostname", ignoreCase = true)
+            }
+        val message = if (isOffline) {
+            "Connect to Wi-Fi or mobile data, then try again. Internet is required to finish the first-time setup."
+        } else {
+            error.message?.take(300) ?: "Something went wrong while preparing Pocket Dev. Please try again."
+        }
         _state.update {
             it.copy(
                 startupStage = StartupStage.ERROR,
-                startupError = error.message?.take(300) ?: "Setup could not be completed",
+                startupError = message,
+                startupErrorIsOffline = isOffline,
             )
         }
     }
@@ -610,6 +628,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateProvider(profile: ProviderProfile, secret: String) = finishOnboarding(profile, secret)
+
+    fun finishBackgroundSetup() {
+        preferences.backgroundSetupComplete = true
+        _state.update { it.copy(backgroundSetupComplete = true) }
+    }
 
     suspend fun discoverModels(profile: ProviderProfile, secret: String): ModelDiscoveryResult {
         val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
