@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Dns
@@ -50,6 +51,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -79,6 +81,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.pocket.app.model.DevStack
 import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.network.ConnectionValidation
@@ -100,6 +103,7 @@ fun SettingsScreen(
     onPing: () -> Unit,
     onClearTerminal: () -> Unit,
     getSavedApiKey: (ProviderKind) -> String,
+    onInstallDevStack: (DevStack) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -187,7 +191,128 @@ fun SettingsScreen(
             }
 
             // -------------------------------------------------------------
-            // 2. AI PROVIDER & CONNECTION
+            // 2. DEVELOPER TOOLS
+            // -------------------------------------------------------------
+            item {
+                SectionHeader(
+                    title = "Developer tools",
+                    subtitle = "Language toolchains inside the Ubuntu runtime",
+                    icon = Icons.Default.Code,
+                )
+                Spacer(Modifier.height(10.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text(
+                            "Node.js, npm, and Git are always installed — Claude Code runs on them.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DevStack.entries.forEachIndexed { index, stack ->
+                            val installed = stack in state.installedDevStacks
+                            val installing = state.devStackInstalling == stack
+                            Column(Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(stack.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                            if (installed) {
+                                                Spacer(Modifier.width(7.dp))
+                                                Icon(
+                                                    Icons.Default.CheckCircle,
+                                                    "Installed",
+                                                    tint = PocketGreen,
+                                                    modifier = Modifier.size(15.dp),
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            stack.installsSummary,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    when {
+                                        installing -> {
+                                            Text(
+                                                "${(state.devStackProgress * 100).toInt().coerceIn(0, 100)}%",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = PocketOrange,
+                                            )
+                                        }
+                                        installed -> Unit // badge already shown next to the name
+                                        else -> {
+                                            OutlinedButton(
+                                                onClick = { onInstallDevStack(stack) },
+                                                enabled = state.devStackInstalling == null,
+                                                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 5.dp),
+                                            ) { Text("Add") }
+                                        }
+                                    }
+                                }
+                                if (installing) {
+                                    Spacer(Modifier.height(9.dp))
+                                    LinearProgressIndicator(
+                                        progress = { state.devStackProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier.fillMaxWidth().height(8.dp),
+                                        color = PocketOrange,
+                                        trackColor = MaterialTheme.colorScheme.surface,
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            state.devStackMessage ?: "Working…",
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        state.devStackBytes?.let { (downloaded, total) ->
+                                            if (total > 0) {
+                                                Text(
+                                                    "${formatBytes(downloaded)} / ${formatBytes(total)}",
+                                                    fontSize = 11.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else if (index != DevStack.entries.lastIndex) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(top = 11.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                                    )
+                                }
+                            }
+                            if (!installing && index != DevStack.entries.lastIndex) {
+                                Spacer(Modifier.height(11.dp))
+                            }
+                        }
+                        if (state.devStackInstalling == null) {
+                            state.devStackMessage?.let { message ->
+                                Spacer(Modifier.height(10.dp))
+                                Text(message, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // -------------------------------------------------------------
+            // 3. AI PROVIDER & CONNECTION
             // -------------------------------------------------------------
             item {
                 SectionHeader(
@@ -709,4 +834,10 @@ private fun InfoRow(icon: ImageVector, label: String, value: String) {
         }
         Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
     }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes < 1_024 -> "$bytes B"
+    bytes < 1_048_576 -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "%.1f MB".format(bytes / 1_048_576.0)
 }

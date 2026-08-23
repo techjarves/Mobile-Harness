@@ -82,6 +82,43 @@ data class WorkspaceEntry(
 
 enum class RiskLevel { SAFE, REVIEW, HIGH }
 
+/**
+ * Optional development toolchains the user can pick during onboarding.
+ * Node.js, npm, Git, and Claude Code itself are always installed because the
+ * agent runtime depends on them; these stacks add heavier extras on demand.
+ */
+enum class DevStack(
+    val label: String,
+    val description: String,
+    val installsSummary: String,
+) {
+    WEB(
+        "Web (JavaScript / TypeScript)",
+        "Websites and web apps with HTML, CSS, and JS frameworks.",
+        "Node.js and npm (already included)",
+    ),
+    PYTHON(
+        "Python",
+        "Scripts, automation, data work, and Python backends.",
+        "python3, pip, venv, and build tools",
+    ),
+    ANDROID(
+        "Android (Java / Kotlin)",
+        "Build Android app projects. Running them on your phone arrives in a later update.",
+        "OpenJDK build tools inside Ubuntu",
+    ),
+    CPP(
+        "C / C++",
+        "Fast compiled programs, algorithms, and systems code.",
+        "gcc, g++, make, cmake, gdb",
+    ),
+    PHP(
+        "PHP",
+        "Websites and apps with PHP — classic sites and Laravel projects.",
+        "php-cli, common extensions, and Composer",
+    ),
+}
+
 data class ToolRequest(
     val approvalId: String = UUID.randomUUID().toString(),
     val sessionId: String,

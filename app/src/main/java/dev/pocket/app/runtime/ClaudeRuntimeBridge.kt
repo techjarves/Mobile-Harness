@@ -72,6 +72,10 @@ class ClaudeRuntimeBridge(
     @Volatile private var activeProcess: Process? = null
     @Volatile private var activeSessionId: String? = null
     @Volatile private var userStopRequested: Boolean = false
+    @Volatile private var activeProjectSlug: String? = null
+    @Volatile private var taskStartedAtElapsedRealtime: Long = 0L
+    @Volatile private var lastForegroundProgressAt: Long = 0L
+    @Volatile private var foregroundResultPosted: Boolean = false
     private val streamedText = StringBuilder()
     private var lastReasoningTokens = 0
     private var lastReasoningUpdateAt = 0L
@@ -81,11 +85,16 @@ class ClaudeRuntimeBridge(
         finishedSessions.remove(sessionId)
         activeSessionId = sessionId
         userStopRequested = false
+        activeProjectSlug = projectSlug
+        taskStartedAtElapsedRealtime = android.os.SystemClock.elapsedRealtime()
+        lastForegroundProgressAt = 0L
+        foregroundResultPosted = false
         toolNames.clear()
         seenToolCalls.clear()
         lastReasoningTokens = 0
         lastReasoningUpdateAt = 0L
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
+        pushForegroundProgress("Starting Claude Code…")
         val secret = secretFor(provider).orEmpty()
         if (provider.kind != ProviderKind.CLAUDE && secret.isBlank()) {
             eventBus.emit(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
@@ -448,7 +457,7 @@ class ClaudeRuntimeBridge(
                 // Update the UI immediately instead of waiting for a PRoot/Node wrapper
                 // that may remain alive after the answer has already completed.
                 emitCompletedOnce(sessionId)
-                activeProcess?.destroy()
+                terminateActiveProcessGracefully()
             }
         }
         return true
@@ -461,6 +470,7 @@ class ClaudeRuntimeBridge(
             lastReasoningTokens = tokens
             lastReasoningUpdateAt = now
             eventBus.emit(RuntimeEvent.ReasoningProgress(sessionId, tokens))
+            pushForegroundProgress("Thinking…")
         }
     }
 
@@ -480,6 +490,7 @@ class ClaudeRuntimeBridge(
             else -> input.optString("description").ifBlank { "Running $name" }
         }
         eventBus.emit(RuntimeEvent.ToolStarted(sessionId, name, sanitizeForDisplay(detail.ifBlank { "Running $name" })))
+        pushForegroundProgress("Running $name · ${detail.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { name }}")
     }
 
     private fun terminalStatus(line: String): Pair<String, String>? = when {
@@ -490,11 +501,32 @@ class ClaudeRuntimeBridge(
     }
 
     private suspend fun emitCompletedOnce(sessionId: String) {
-        if (finishedSessions.add(sessionId)) eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+        if (finishedSessions.add(sessionId)) {
+            eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+            // Post the completion notification immediately. Waiting for process
+            // teardown is unsafe: the PRoot/Node wrapper can hang after the answer
+            // is already done, which would freeze the notification on its last step.
+            finishForegroundRuntime(
+                completed = true,
+                projectName = activeProjectSlug ?: "your project",
+                detail = "Claude Code finished the task.",
+            )
+        }
     }
 
     private suspend fun emitFailureOnce(sessionId: String, reason: String) {
-        if (finishedSessions.add(sessionId)) eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+        if (finishedSessions.add(sessionId)) {
+            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+            if (userStopRequested) {
+                cancelForegroundRuntime()
+            } else {
+                finishForegroundRuntime(
+                    completed = false,
+                    projectName = activeProjectSlug ?: "your project",
+                    detail = reason,
+                )
+            }
+        }
     }
 
     private fun sanitizeForDisplay(value: String): String {
@@ -796,6 +828,53 @@ class ClaudeRuntimeBridge(
         }
     }
 
+    /**
+     * Mirrors what Claude Code is doing right now into the foreground-service
+     * notification, so the notification panel shows the real task progress.
+     * Throttled because each update is a service round-trip.
+     */
+    private fun pushForegroundProgress(detailRaw: String) {
+        if (activeSessionId == null) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastForegroundProgressAt < FOREGROUND_PROGRESS_MIN_INTERVAL_MS) return
+        lastForegroundProgressAt = now
+        val detail = detailRaw.replace(Regex("\\s+"), " ").trim().take(110)
+        val elapsedMs = taskStartedAtElapsedRealtime.takeIf { it > 0 }?.let { now - it } ?: 0L
+        val text = if (elapsedMs > 0L) "$detail · ${formatElapsedShort(elapsedMs)}" else detail
+        runCatching {
+            context.startService(
+                android.content.Intent(context, RuntimeExecutionService::class.java)
+                    .setAction(RuntimeExecutionService.ACTION_PROGRESS)
+                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, activeProjectSlug)
+                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, text),
+            )
+        }
+    }
+
+    private fun formatElapsedShort(milliseconds: Long): String {
+        val totalSeconds = milliseconds / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
+    }
+
+    /**
+     * Destroys the CLI process, escalating to a force kill if the PRoot/Node
+     * wrapper ignores the graceful signal. Without this, a hung wrapper would
+     * block session cleanup forever after the answer was already delivered.
+     */
+    private fun terminateActiveProcessGracefully() {
+        val running = activeProcess ?: return
+        Thread {
+            runCatching {
+                running.destroy()
+                Thread.sleep(3_000)
+                if (running.isAlive) running.destroyForcibly()
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
     private fun startForegroundRuntime(projectName: String) {
         ContextCompat.startForegroundService(
             context,
@@ -806,6 +885,9 @@ class ClaudeRuntimeBridge(
     }
 
     private fun finishForegroundRuntime(completed: Boolean, projectName: String, detail: String) {
+        // The first completion/failure post wins; later cleanup must not duplicate it.
+        if (foregroundResultPosted) return
+        foregroundResultPosted = true
         runCatching {
             context.startService(
                 android.content.Intent(context, RuntimeExecutionService::class.java)
@@ -823,6 +905,8 @@ class ClaudeRuntimeBridge(
     }
 
     private fun cancelForegroundRuntime() {
+        if (foregroundResultPosted) return
+        foregroundResultPosted = true
         runCatching {
             context.startService(
                 android.content.Intent(context, RuntimeExecutionService::class.java)
@@ -840,5 +924,6 @@ class ClaudeRuntimeBridge(
         private const val MAX_DIFF_LINES = 2_000
         private const val MAX_RENDERED_DIFF_LINES = 600
         private const val DIFF_CONTEXT_LINES = 3
+        private const val FOREGROUND_PROGRESS_MIN_INTERVAL_MS = 750L
     }
 }

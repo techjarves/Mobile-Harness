@@ -11,6 +11,7 @@ import dev.pocket.app.data.AppPreferences
 import dev.pocket.app.model.ActivityItem
 import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.DevStack
 import dev.pocket.app.model.Project
 import dev.pocket.app.model.ProjectChat
 import dev.pocket.app.model.ProviderKind
@@ -109,6 +110,12 @@ data class AppUiState(
     val projectTerminalDraft: String? = null,
     val pendingTerminalCommand: String? = null,
     val suggestedProjectRoot: String? = null,
+    val selectedDevStacks: Set<DevStack> = emptySet(),
+    val installedDevStacks: Set<DevStack> = emptySet(),
+    val devStackInstalling: DevStack? = null,
+    val devStackMessage: String? = null,
+    val devStackProgress: Float = 0f,
+    val devStackBytes: Pair<Long, Long>? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -128,6 +135,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             themeMode = runCatching { dev.pocket.app.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(dev.pocket.app.ui.theme.AppThemeMode.DARK),
             projects = preferences.loadProjects(),
+            selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
+                runCatching { DevStack.valueOf(name) }.getOrNull()
+            }.toSet(),
         ),
     )
 
@@ -504,9 +514,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun bootstrap() {
         val installed = withContext(Dispatchers.IO) {
+            // Upgrades from the old single-bundle layout keep every already-installed tool.
+            installer.migrateLegacyToolMarkers()
             installer.isInstalled().also { ready ->
                 if (ready) installer.cleanupLegacyWorkspaceScaffolding()
             }
+        }
+        _state.update { current ->
+            current.copy(installedDevStacks = if (installed) installer.installedStacks() else current.installedDevStacks)
         }
         when {
             !installed -> _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupProgress = 0f) }
@@ -531,9 +546,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
+            val stacks = _state.value.selectedDevStacks
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    installer.ensureInstalled { progress ->
+                    installer.ensureInstalled(stacks) { progress ->
                         _state.update {
                             it.copy(
                                 startupProgress = progress.fraction.coerceIn(0f, 1f),
@@ -635,6 +651,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun finishBackgroundSetup() {
         preferences.backgroundSetupComplete = true
         _state.update { it.copy(backgroundSetupComplete = true) }
+    }
+
+    /** Called from the first-launch tool picker; persists the choice for setup and Settings. */
+    fun toggleDevStack(stack: DevStack) {
+        val updated = _state.value.selectedDevStacks.toMutableSet().apply {
+            if (!add(stack)) remove(stack)
+        }
+        preferences.selectedDevStacks = updated.map { it.name }.toSet()
+        _state.update { it.copy(selectedDevStacks = updated) }
+    }
+
+    /** Installs one development stack on demand (Settings) with live progress. */
+    fun installDevStack(stack: DevStack) {
+        if (_state.value.devStackInstalling != null) return
+        _state.update {
+            it.copy(
+                devStackInstalling = stack,
+                devStackMessage = "Preparing ${stack.label}…",
+                devStackProgress = 0f,
+                devStackBytes = null,
+            )
+        }
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    installer.ensureStackInstalled(stack) { progress ->
+                        _state.update { current ->
+                            current.copy(
+                                devStackMessage = progress.message,
+                                devStackProgress = progress.fraction.coerceIn(0f, 1f),
+                                devStackBytes = progress.totalBytes?.let { total ->
+                                    (progress.downloadedBytes ?: 0L) to total
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            _state.update { current ->
+                current.copy(
+                    devStackInstalling = null,
+                    installedDevStacks = if (result.isSuccess) current.installedDevStacks + stack else current.installedDevStacks,
+                    devStackProgress = 0f,
+                    devStackBytes = null,
+                    devStackMessage = result.fold(
+                        onSuccess = { "${stack.label} tools are ready" },
+                        onFailure = { _ -> result.exceptionOrNull()?.message?.take(200) ?: "Could not install ${stack.label}" },
+                    ),
+                )
+            }
+        }
     }
 
     suspend fun discoverModels(profile: ProviderProfile, secret: String): ModelDiscoveryResult {

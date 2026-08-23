@@ -11,6 +11,7 @@ import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import dev.pocket.app.model.DevStack
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -37,16 +38,22 @@ class RuntimeInstaller(private val context: Context) {
     private val marker = File(rootfs, ".pocket-runtime-ready")
     private val rootfsMarker = File(rootfs, ".pocket-rootfs-version")
     private val languageToolsMarker = File(rootfs, ".pocket-language-tools-version")
+    private val coreToolsMarker = File(rootfs, ".pocket-core-tools-version")
+    private val devStacksFile = File(rootfs, ".pocket-dev-stacks.json")
 
     fun isInstalled(): Boolean {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
+        // Devices set up before staged toolchains keep working through the legacy marker;
+        // fresh installs require the new core-tools marker instead.
+        val legacyLanguageTools = languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION
+        val coreToolsReady = File(rootfs, "usr/bin/git").exists() &&
+            coreToolsMarker.readTextOrNull() == CORE_TOOLS_VERSION
         return proot.canExecute() &&
             File(rootfs, "usr/bin/bash").exists() &&
             rootfsMarker.readTextOrNull() == ROOTFS_VERSION &&
             File(rootfs, "usr/local/bin/claude").exists() &&
-            languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION &&
             File(rootfs, "usr/local/bin/node").exists() &&
-            File(rootfs, "usr/bin/python3").exists() &&
+            (legacyLanguageTools || coreToolsReady) &&
             marker.exists()
     }
 
@@ -84,7 +91,10 @@ class RuntimeInstaller(private val context: Context) {
         if (isFile && runCatching { readText() }.getOrNull() == expected) delete()
     }
 
-    suspend fun ensureInstalled(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
+    suspend fun ensureInstalled(
+        selectedStacks: Set<DevStack> = emptySet(),
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ): InstalledRuntime {
         require(android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")) { "Pocket runtime requires an ARM64 device" }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
@@ -133,7 +143,24 @@ class RuntimeInstaller(private val context: Context) {
             marker.writeText(version)
         }
 
-        ensureLanguageTools(proot, onProgress)
+        // Stage developer tools one group at a time so first setup only downloads
+        // what the user actually picked. Node.js + Git are the always-needed core
+        // because Claude Code itself runs on Node.
+        val coreNeeded = !File(rootfs, "usr/bin/git").exists() || coreToolsMarker.readTextOrNull() != CORE_TOOLS_VERSION
+        if (coreNeeded) {
+            installNodeIfNeeded(proot, 0.58f, 0.70f, onProgress)
+            aptInstall(proot, listOf("git", "ca-certificates"), "Installing Git and base tools", 0.70f, onProgress)
+            writeResolver()
+            verifyGuest(proot, "git --version", "Base tools could not be verified")
+            coreToolsMarker.writeText(CORE_TOOLS_VERSION)
+        }
+
+        val missingStacks = selectedStacks.filterNot(::isStackInstalled)
+        missingStacks.forEachIndexed { index, stack ->
+            val slice = 0.26f / maxOf(1, missingStacks.size)
+            val from = 0.72f + index * slice
+            applyStack(proot, stack, from, from + slice, onProgress)
+        }
 
         // The binary and version manifest were already checksum-verified above. Running a
         // separate `claude --version` probe under PRoot can leave inherited output pipes
@@ -142,17 +169,161 @@ class RuntimeInstaller(private val context: Context) {
         return InstalledRuntime(proot, rootfs, claude, version)
     }
 
-    private suspend fun ensureLanguageTools(
-        proot: File,
+    /**
+     * Installs one optional development stack inside Ubuntu. Safe to call again:
+     * already-installed stacks return immediately without network access.
+     */
+    suspend fun ensureStackInstalled(
+        stack: DevStack,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        if (
-            languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION &&
-            File(rootfs, "usr/local/bin/node").exists() &&
-            File(rootfs, "usr/bin/python3").exists()
-        ) return
+        val runtime = installedRuntime()
+        if (isStackInstalled(stack)) return
+        applyStack(runtime.proot, stack, 0.05f, 0.95f, onProgress)
+        onProgress(RuntimeInstallProgress("${stack.label} tools are ready", 1f))
+    }
 
-        onProgress(RuntimeInstallProgress("Downloading Node.js $NODE_VERSION LTS", 0.60f))
+    private suspend fun applyStack(
+        proot: File,
+        stack: DevStack,
+        from: Float,
+        to: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        when (stack) {
+            DevStack.WEB -> {
+                onProgress(RuntimeInstallProgress("Checking Node.js and npm", from))
+                verifyGuest(proot, "node --version && npm --version", "Node.js tools could not be verified")
+            }
+            DevStack.PYTHON -> {
+                aptInstall(proot, listOf("python3", "python3-pip", "python3-venv", "build-essential"), "Installing Python, pip, and build tools", from, onProgress)
+                verifyGuest(proot, "python3 --version && pip3 --version", "Python tools could not be verified")
+            }
+            DevStack.ANDROID -> {
+                onProgress(RuntimeInstallProgress("Installing the Java development kit", from))
+                val jdk17 = runCatching {
+                    aptInstallInternal(proot, listOf("openjdk-17-jdk-headless"))
+                }
+                if (jdk17.isFailure) {
+                    // Older Ubuntu mirrors may not carry JDK 17; JDK 11 still builds
+                    // classic Android projects and keeps setup from hard-failing.
+                    aptInstallInternal(proot, listOf("openjdk-11-jdk-headless"))
+                }
+                verifyGuest(proot, "java -version", "Java could not be verified")
+            }
+            DevStack.CPP -> {
+                aptInstall(
+                    proot,
+                    listOf("build-essential", "cmake", "gdb"),
+                    "Installing C/C++ compilers and build tools",
+                    from,
+                    onProgress,
+                )
+                verifyGuest(
+                    proot,
+                    "gcc --version && g++ --version && make --version && cmake --version",
+                    "C/C++ tools could not be verified",
+                )
+            }
+            DevStack.PHP -> {
+                aptInstall(
+                    proot,
+                    listOf("php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip", "unzip"),
+                    "Installing PHP and common extensions",
+                    from,
+                    onProgress,
+                )
+                installComposer(proot, from, onProgress)
+                verifyGuest(proot, "php --version && composer --version", "PHP tools could not be verified")
+            }
+        }
+        writeDevStackState(readDevStackState().apply { put(stack.name, true) })
+        onProgress(RuntimeInstallProgress("${stack.label} installed", to))
+    }
+
+    /**
+     * Installs Composer into Ubuntu from the official latest-stable release,
+     * verified against getcomposer.org's published SHA-256 checksum.
+     */
+    private suspend fun installComposer(
+        proot: File,
+        fraction: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        val composer = File(rootfs, "usr/local/bin/composer")
+        if (composer.isFile) return
+        onProgress(RuntimeInstallProgress("Downloading Composer", fraction))
+        downloads.mkdirs()
+        val staged = File(downloads, "composer.phar")
+        val checksum = fetchText("https://getcomposer.org/download/latest-stable/composer.phar.sha256sum")
+            .lineSequence()
+            .firstOrNull()
+            ?.trim()
+            ?.substringBefore(' ')
+            ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+            ?: error("Composer checksum was not found")
+        downloadVerified(
+            "https://getcomposer.org/download/latest-stable/composer.phar",
+            staged,
+            checksum,
+        ) { _, _ -> }
+        composer.parentFile?.mkdirs()
+        if (composer.exists()) composer.delete()
+        // cacheDir and filesDir can live on different mounts: copy instead of rename.
+        staged.inputStream().use { input -> FileOutputStream(composer).use { input.copyTo(it) } }
+        staged.delete()
+        Os.chmod(composer.absolutePath, 0b111101101)
+        onProgress(RuntimeInstallProgress("Installing Composer", fraction))
+    }
+
+    /**
+     * One-time upgrade path from the old single-bundle layout: devices that already
+     * installed every tool keep all stacks without re-downloading anything.
+     */
+    fun migrateLegacyToolMarkers() {
+        if (!File(rootfs, "usr/bin/bash").isFile) return
+        if (languageToolsMarker.readTextOrNull() != LANGUAGE_TOOLS_VERSION) return
+        if (coreToolsMarker.readTextOrNull() != CORE_TOOLS_VERSION) coreToolsMarker.writeText(CORE_TOOLS_VERSION)
+        val state = readDevStackState()
+        DevStack.entries.forEach { stack -> if (!state.containsKey(stack.name)) state[stack.name] = true }
+        writeDevStackState(state)
+    }
+
+    fun installedStacks(): Set<DevStack> = readDevStackState()
+        .filterValues { it }
+        .keys
+        .mapNotNull { name -> runCatching { DevStack.valueOf(name) }.getOrNull() }
+        .toSet()
+
+    fun isStackInstalled(stack: DevStack): Boolean = readDevStackState()[stack.name] == true
+
+    private fun readDevStackState(): MutableMap<String, Boolean> {
+        if (!devStacksFile.isFile) return mutableMapOf()
+        return runCatching {
+            val obj = JSONObject(devStacksFile.readText())
+            mutableMapOf<String, Boolean>().apply {
+                DevStack.entries.forEach { stack ->
+                    if (obj.has(stack.name)) put(stack.name, obj.optBoolean(stack.name))
+                }
+            }
+        }.getOrDefault(mutableMapOf())
+    }
+
+    private fun writeDevStackState(state: Map<String, Boolean>) {
+        devStacksFile.parentFile?.mkdirs()
+        val obj = JSONObject()
+        state.forEach { (name, value) -> obj.put(name, value) }
+        devStacksFile.writeText(obj.toString())
+    }
+
+    private suspend fun installNodeIfNeeded(
+        proot: File,
+        from: Float,
+        to: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        if (File(rootfs, "usr/local/bin/node").exists()) return
+        onProgress(RuntimeInstallProgress("Downloading Node.js $NODE_VERSION LTS", from))
         downloads.mkdirs()
         val nodeFileName = "node-$NODE_VERSION-linux-arm64.tar.gz"
         val nodeBaseUrl = "https://nodejs.org/dist/$NODE_VERSION"
@@ -168,13 +339,13 @@ class RuntimeInstaller(private val context: Context) {
             onProgress(
                 RuntimeInstallProgress(
                     "Downloading Node.js $NODE_VERSION LTS",
-                    0.60f + ratio * 0.14f,
+                    from + ratio * (to - from),
                     downloaded,
                     total.takeIf { it > 0 },
                 ),
             )
         }
-        onProgress(RuntimeInstallProgress("Installing Node.js and npm", 0.75f))
+        onProgress(RuntimeInstallProgress("Installing Node.js and npm", to))
         val nodeStaging = File(runtimeDir, "node.installing")
         nodeStaging.deleteRecursively()
         nodeStaging.mkdirs()
@@ -190,8 +361,21 @@ class RuntimeInstaller(private val context: Context) {
             Os.symlink("../lib/nodejs/bin/$command", link.absolutePath)
         }
         nodeArchive.delete()
+    }
 
-        onProgress(RuntimeInstallProgress("Installing Python, Git, and build tools", 0.78f))
+    private suspend fun aptInstall(
+        proot: File,
+        packages: List<String>,
+        message: String,
+        fraction: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        onProgress(RuntimeInstallProgress(message, fraction))
+        aptInstallInternal(proot, packages)
+    }
+
+    private suspend fun aptInstallInternal(proot: File, packages: List<String>) {
+        require(packages.isNotEmpty()) { "No packages selected" }
         writeResolver()
         val install = process(
             proot = proot,
@@ -204,40 +388,34 @@ class RuntimeInstaller(private val context: Context) {
                 "-lc",
                 "export DEBIAN_FRONTEND=noninteractive; " +
                     "apt-get update && " +
-                    "apt-get install -y --no-install-recommends python3 python3-pip python3-venv git ca-certificates build-essential && " +
+                    "apt-get install -y --no-install-recommends ${packages.joinToString(" ")} && " +
                     "apt-get clean && rm -rf /var/lib/apt/lists/*",
             ),
         )
-        withTimeout(12 * 60 * 1_000L) {
+        withTimeout(15 * 60 * 1_000L) {
             while (install.isAlive) delay(100)
         }
         val installExit = install.waitFor()
         val installOutput = (install as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
         check(installExit == 0) {
-            installOutput.takeLast(1_000).ifBlank { "Could not install Python development tools" }
+            installOutput.takeLast(1_000).ifBlank { "Could not install: ${packages.joinToString(" ")}" }
         }
+    }
 
-        onProgress(RuntimeInstallProgress("Checking Node.js and Python", 0.96f))
+    private suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
         val verify = process(
             proot = proot,
             rootfs = rootfs,
             workspace = File(rootfs, "root"),
             environment = emptyMap(),
-            guestCommand = listOf(
-                "/usr/bin/env",
-                "bash",
-                "-lc",
-                "node --version && npm --version && python3 --version && pip3 --version && git --version",
-            ),
+            guestCommand = listOf("/usr/bin/env", "bash", "-lc", command),
         )
-        withTimeout(30_000L) {
+        withTimeout(60_000L) {
             while (verify.isAlive) delay(50)
         }
-        val verifyExit = verify.waitFor()
-        val verifyOutput = (verify as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
-        check(verifyExit == 0) { verifyOutput.ifBlank { "Developer tools could not be verified" } }
-        languageToolsMarker.writeText(LANGUAGE_TOOLS_VERSION)
-        onProgress(RuntimeInstallProgress("Developer tools are ready", 0.99f))
+        val exit = verify.waitFor()
+        val output = (verify as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
+        check(exit == 0) { output.ifBlank { failureMessage } }
     }
 
     suspend fun initializeExisting(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
@@ -560,5 +738,6 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val ROOTFS_SHA256 = "f9b999afb4c4b10193087ea8c11be36d688f19e609b05179b571f29357954b52"
         private const val NODE_VERSION = "v24.19.0"
         private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
+        private const val CORE_TOOLS_VERSION = "core-v1"
     }
 }

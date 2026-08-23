@@ -22,6 +22,7 @@ internal object RuntimeTaskController {
 class RuntimeExecutionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var projectName: String = "your project"
+    private var taskRunning: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -29,13 +30,23 @@ class RuntimeExecutionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        projectName = intent?.getStringExtra(EXTRA_PROJECT_NAME)?.takeIf(String::isNotBlank) ?: projectName
+        intent?.getStringExtra(EXTRA_PROJECT_NAME)?.takeIf(String::isNotBlank)?.let { projectName = it }
         when (intent?.action ?: ACTION_START) {
             ACTION_STOP -> {
                 RuntimeTaskController.requestStop()
                 getSystemService(NotificationManager::class.java).notify(
                     RUNNING_NOTIFICATION_ID,
                     runningNotification("Stopping safely…", includeStop = false),
+                )
+            }
+            ACTION_PROGRESS -> {
+                // Live step updates only matter while a task is actually running.
+                if (!taskRunning) return START_NOT_STICKY
+                val detail = intent?.getStringExtra(EXTRA_DETAIL)?.takeIf { it.isNotBlank() }
+                    ?: "Claude Code is working in $projectName"
+                getSystemService(NotificationManager::class.java).notify(
+                    RUNNING_NOTIFICATION_ID,
+                    runningNotification(detail, includeStop = true),
                 )
             }
             ACTION_COMPLETE -> finishTask(
@@ -49,11 +60,13 @@ class RuntimeExecutionService : Service() {
                 failed = true,
             )
             ACTION_CANCELLED -> {
+                taskRunning = false
                 releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
             else -> {
+                taskRunning = true
                 acquireWakeLock()
                 startForeground(
                     RUNNING_NOTIFICATION_ID,
@@ -87,6 +100,7 @@ class RuntimeExecutionService : Service() {
     }
 
     private fun finishTask(title: String, detail: String, failed: Boolean) {
+        taskRunning = false
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         val notification = NotificationCompat.Builder(this, RESULT_CHANNEL_ID)
@@ -134,6 +148,7 @@ class RuntimeExecutionService : Service() {
     companion object {
         const val ACTION_START = "dev.pocket.app.START_RUNTIME"
         const val ACTION_STOP = "dev.pocket.app.STOP_RUNTIME"
+        const val ACTION_PROGRESS = "dev.pocket.app.PROGRESS_RUNTIME"
         const val ACTION_COMPLETE = "dev.pocket.app.COMPLETE_RUNTIME"
         const val ACTION_FAILED = "dev.pocket.app.FAIL_RUNTIME"
         const val ACTION_CANCELLED = "dev.pocket.app.CANCEL_RUNTIME"

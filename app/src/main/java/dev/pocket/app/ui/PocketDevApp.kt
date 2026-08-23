@@ -126,6 +126,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.pocket.app.model.ActivityItem
 import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.DevStack
 import dev.pocket.app.model.DiffLine
 import dev.pocket.app.model.DiffLineType
 import dev.pocket.app.model.Project
@@ -137,6 +138,7 @@ import dev.pocket.app.model.WorkspaceEntry
 import dev.pocket.app.model.projectSlug
 import dev.pocket.app.runtime.RuntimeExecutionService
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
@@ -179,7 +181,11 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         }
     }
     when {
-        state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(viewModel::startRuntimeSetup)
+        state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(
+            selectedStacks = state.selectedDevStacks,
+            onToggleStack = viewModel::toggleDevStack,
+            onDownload = viewModel::startRuntimeSetup,
+        )
         state.startupStage == StartupStage.INSTALLING ||
             state.startupStage == StartupStage.INITIALIZING ||
             state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(state)
@@ -332,7 +338,11 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
 }
 
 @Composable
-private fun RuntimeSetupPromptScreen(onDownload: () -> Unit) {
+private fun RuntimeSetupPromptScreen(
+    selectedStacks: Set<DevStack>,
+    onToggleStack: (DevStack) -> Unit,
+    onDownload: () -> Unit,
+) {
     val context = LocalContext.current
     val activityManager = context.getSystemService(ActivityManager::class.java)
     val memoryInfo = remember { ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo) }
@@ -341,24 +351,81 @@ private fun RuntimeSetupPromptScreen(onDownload: () -> Unit) {
     val compatible = arm64 && totalRamGb >= 4
     Scaffold { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.Center,
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 24.dp)
+                .verticalScroll(rememberScrollState()),
         ) {
-            BrandMark()
             Spacer(Modifier.height(24.dp))
+            BrandMark()
+            Spacer(Modifier.height(20.dp))
             Text("Set up your phone for coding", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text(
-                "Pocket Dev installs a private Linux workspace, real Claude Code, Node.js, and Python.",
+                "Pocket Dev installs a private Linux workspace with real Claude Code, Node.js, and Git. Pick any extra tools you want.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(18.dp))
+            Text("What do you want to build?", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Multi-select — pick as many as you like. You can add or remove these anytime in Settings → Developer tools.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            DevStack.entries.forEach { stack ->
+                val selected = stack in selectedStacks
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .clickable { onToggleStack(stack) },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        },
+                    ),
+                    border = CardDefaults.outlinedCardBorder().takeIf { !selected },
+                ) {
+                    Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (selected) Icons.Default.Check else Icons.Default.Code,
+                            null,
+                            tint = if (selected) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(stack.label, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                stack.description,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                "Adds: ${stack.installsSummary}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "More coming soon: Rust · Ruby · Go · .NET",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
             CheckRow(Icons.Default.Memory, "Memory", "$totalRamGb GB · ${if (totalRamGb >= 8) "Full mode" else "Lite mode"}", totalRamGb >= 4)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             CheckRow(Icons.Default.Code, "Processor", Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", arm64)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             CheckRow(Icons.Default.Storage, "Download", "About 500 MB · Wi-Fi recommended", true)
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
             Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
                 Text(
                     "Everything is installed in Pocket Dev's private storage. You do not need Termux or root access.",
@@ -366,10 +433,11 @@ private fun RuntimeSetupPromptScreen(onDownload: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
             Button(onClick = onDownload, enabled = compatible, modifier = Modifier.fillMaxWidth().height(54.dp)) {
                 Text(if (compatible) "Download and install" else "This device is not supported")
             }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -529,6 +597,7 @@ private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
                     onPing = viewModel::pingApi,
                     onClearTerminal = viewModel::clearTerminal,
                     getSavedApiKey = viewModel::getSavedApiKey,
+                    onInstallDevStack = viewModel::installDevStack,
                 )
             }
         }

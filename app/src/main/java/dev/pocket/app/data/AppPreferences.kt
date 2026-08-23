@@ -39,6 +39,21 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getInt("test_provider_defaults_version", 0)
         set(value) { preferences.edit().putInt("test_provider_defaults_version", value).apply() }
 
+    /** Development stacks the user picked during onboarding (names of DevStack). */
+    var selectedDevStacks: Set<String>
+        get() {
+            val raw = preferences.getString("selected_dev_stacks", null) ?: return emptySet()
+            return runCatching {
+                val arr = JSONArray(raw)
+                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) }.toSet()
+            }.getOrDefault(emptySet())
+        }
+        set(value) {
+            val arr = JSONArray()
+            value.sorted().forEach(arr::put)
+            preferences.edit().putString("selected_dev_stacks", arr.toString()).apply()
+        }
+
 
     fun saveProvider(profile: ProviderProfile) {
         preferences.edit()
