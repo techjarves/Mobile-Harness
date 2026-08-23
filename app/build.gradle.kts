@@ -10,6 +10,7 @@ val testSecrets = Properties().apply {
     val secretsFile = rootProject.file("test-secrets.properties")
     if (secretsFile.isFile) secretsFile.inputStream().use(::load)
 }
+val playFeasibility = providers.gradleProperty("playFeasibility").orNull?.toBoolean() == true
 
 fun buildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -23,7 +24,7 @@ android {
         minSdk = 28
         // Direct-APK compatibility: Android blocks PRoot guest exec for targets 29+.
         // This matches the proven Termux execution policy; reassess before public distribution.
-        targetSdk = 28
+        targetSdk = if (playFeasibility) 36 else 28
         versionCode = 1
         versionName = "0.1.0-alpha"
 
@@ -33,11 +34,18 @@ android {
         buildConfigField(
             "String",
             "TEST_OPENROUTER_API_KEY",
-            buildConfigString(testSecrets.getProperty("openrouter.apiKey", "")),
+            "\"\"",
         )
     }
 
     buildTypes {
+        debug {
+            buildConfigField(
+                "String",
+                "TEST_OPENROUTER_API_KEY",
+                buildConfigString(testSecrets.getProperty("openrouter.apiKey", "")),
+            )
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -56,6 +64,13 @@ android {
         compose = true
         buildConfig = true
     }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+    sourceSets.getByName("main").jniLibs.exclude("**/libpocketspawn.so")
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true
 }

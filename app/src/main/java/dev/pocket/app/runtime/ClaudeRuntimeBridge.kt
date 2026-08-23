@@ -8,6 +8,7 @@ import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.DiffLine
 import dev.pocket.app.model.DiffLineType
 import dev.pocket.app.model.ProviderKind
+import dev.pocket.app.model.ProjectKind
 import dev.pocket.app.model.ProviderProfile
 import dev.pocket.app.model.RiskLevel
 import dev.pocket.app.model.RuntimeEvent
@@ -80,7 +81,7 @@ class ClaudeRuntimeBridge(
     private var lastReasoningTokens = 0
     private var lastReasoningUpdateAt = 0L
 
-    override suspend fun startSession(projectId: String, projectSlug: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
+    override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
         activeSessionId = sessionId
@@ -128,7 +129,7 @@ class ClaudeRuntimeBridge(
 
             // Build a context-aware prompt that includes conversation history
             val guestWorkspacePath = "/workspace/$projectSlug"
-            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath)
+            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind)
 
             val command = buildList {
                 add(launch.executable)
@@ -373,13 +374,7 @@ class ClaudeRuntimeBridge(
         val json = runCatching { JSONObject(line) }.getOrNull() ?: return false
         when (json.optString("type")) {
             "system" -> when (json.optString("subtype")) {
-                "init" -> eventBus.emit(
-                    RuntimeEvent.RuntimeLog(
-                        sessionId,
-                        "Claude Code connected",
-                        "${json.optString("model", "Selected model")} · ${json.optString("permissionMode", "default")} mode",
-                    ),
-                )
+                "init" -> Unit
                 "thinking_tokens" -> emitReasoningProgress(sessionId, json.optInt("estimated_tokens"))
                 "permission_denied" -> eventBus.emit(
                     RuntimeEvent.RuntimeLog(
@@ -438,21 +433,6 @@ class ClaudeRuntimeBridge(
                     val message = json.optString("result").ifBlank { "Claude Code reported an error" }
                     throw IllegalStateException(message)
                 }
-                val turns = json.optInt("num_turns")
-                val durationMs = json.optLong("duration_ms")
-                eventBus.emit(
-                    RuntimeEvent.RuntimeLog(
-                        sessionId,
-                        "Claude Code finished",
-                        buildString {
-                            if (turns > 0) append("$turns agent turn${if (turns == 1) "" else "s"}")
-                            if (durationMs > 0) {
-                                if (isNotEmpty()) append(" · ")
-                                append("%.1f seconds".format(durationMs / 1_000.0))
-                            }
-                        }.ifBlank { "Task completed" },
-                    ),
-                )
                 // The structured result is Claude Code's authoritative terminal event.
                 // Update the UI immediately instead of waiting for a PRoot/Node wrapper
                 // that may remain alive after the answer has already completed.
@@ -493,12 +473,7 @@ class ClaudeRuntimeBridge(
         pushForegroundProgress("Running $name · ${detail.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { name }}")
     }
 
-    private fun terminalStatus(line: String): Pair<String, String>? = when {
-        line.startsWith("Warning:") -> "Runtime warning" to sanitizeForDisplay(line.removePrefix("Warning:").trim())
-        line.startsWith("Ignoring ") -> "Runtime configuration" to sanitizeForDisplay(line)
-        line.startsWith("[claude-code:") -> "Claude Code" to sanitizeForDisplay(line)
-        else -> null
-    }
+    private fun terminalStatus(line: String): Pair<String, String>? = null
 
     private suspend fun emitCompletedOnce(sessionId: String) {
         if (finishedSessions.add(sessionId)) {
@@ -538,7 +513,7 @@ class ClaudeRuntimeBridge(
             .take(600)
     }
 
-    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>, guestWorkspacePath: String): String {
+    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>, guestWorkspacePath: String, projectKind: ProjectKind): String {
         // Filter out the current prompt (last user message), system greeting, and any error messages
         val priorMessages = history
             .filter { msg ->
@@ -551,9 +526,15 @@ class ClaudeRuntimeBridge(
 
         val sb = StringBuilder()
         sb.appendLine("<project_workspace>")
-        sb.appendLine("The current working directory $guestWorkspacePath is the project root.")
-        sb.appendLine("Create and edit project files directly in this directory. Do not create another outer project folder unless the user explicitly asks for one.")
-        sb.appendLine("When giving commands to the user, make them runnable from this project root.")
+        if (projectKind == ProjectKind.QUICK_CHAT) {
+            sb.appendLine("This is a Quick Chat with an optional private scratch workspace at $guestWorkspacePath.")
+            sb.appendLine("Respond conversationally by default. Use terminal or file tools only when the user asks or when they are genuinely needed for the request.")
+            sb.appendLine("When tools are needed, keep every file and command inside this workspace.")
+        } else {
+            sb.appendLine("The current working directory $guestWorkspacePath is the project root.")
+            sb.appendLine("Create and edit project files directly in this directory. Do not create another outer project folder unless the user explicitly asks for one.")
+            sb.appendLine("When giving commands to the user, make them runnable from this project root.")
+        }
         sb.appendLine("For local servers, give a clear start command and never use a kill command that searches its own command text with pgrep, because it can terminate the terminal itself.")
         sb.appendLine("</project_workspace>")
         sb.appendLine()
@@ -567,6 +548,12 @@ class ClaudeRuntimeBridge(
         for (msg in priorMessages) {
             val role = if (msg.fromUser) "User" else "Assistant"
             sb.appendLine("$role: ${msg.text}")
+            if (msg.attachments.isNotEmpty()) {
+                sb.appendLine("Attached files:")
+                msg.attachments.forEach { attachment ->
+                    sb.appendLine("- ${attachment.displayName}: $guestWorkspacePath/${attachment.relativePath} (${attachment.mimeType})")
+                }
+            }
             sb.appendLine()
         }
         sb.appendLine("</conversation_history>")

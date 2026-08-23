@@ -4,6 +4,7 @@ import java.time.Instant
 import java.text.Normalizer
 import java.util.Locale
 import java.util.UUID
+import kotlin.random.Random
 
 enum class ProviderProtocol { CLAUDE_LOGIN, ANTHROPIC, ANTHROPIC_GATEWAY, OPENAI_RESPONSES, OPENAI_CHAT }
 
@@ -30,6 +31,8 @@ data class ProviderProfile(
     val hasSecret: Boolean = false,
 )
 
+enum class ProjectKind { PROJECT, QUICK_CHAT }
+
 data class Project(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
@@ -38,6 +41,7 @@ data class Project(
     val slug: String = projectSlug(name),
     val rootPath: String = "",
     val updatedAtMillis: Long = System.currentTimeMillis(),
+    val kind: ProjectKind = ProjectKind.PROJECT,
 ) {
     val formattedUpdatedAt: String
         get() {
@@ -70,6 +74,24 @@ fun projectSlug(name: String): String {
         .take(48)
         .trimEnd('-')
     return ascii.ifBlank { "project" }
+}
+
+data class QuickChatIdentity(val displayName: String, val slug: String)
+
+fun generateQuickChatIdentity(usedSlugs: Set<String>, random: Random = Random.Default): QuickChatIdentity {
+    val adjectives = listOf("bright", "calm", "clever", "curious", "gentle", "nimble", "quiet", "swift", "wise", "bold")
+    val pioneers = listOf("turing", "lovelace", "hopper", "tesla", "curie", "ramanujan", "bose", "kalam", "faraday", "darwin")
+    repeat(20) {
+        val base = "${adjectives.random(random)}-${pioneers.random(random)}"
+        if (base !in usedSlugs) return QuickChatIdentity(base.toDisplayName(), base)
+    }
+    val base = "${adjectives.random(random)}-${pioneers.random(random)}"
+    val slug = generateSequence(2) { it + 1 }.map { "$base-$it" }.first { it !in usedSlugs }
+    return QuickChatIdentity(slug.toDisplayName(), slug)
+}
+
+private fun String.toDisplayName(): String = split('-').joinToString(" ") { word ->
+    word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
 }
 
 data class WorkspaceEntry(
@@ -162,6 +184,17 @@ data class ChatMessage(
     val fromUser: Boolean,
     val text: String,
     val createdAt: Instant = Instant.now(),
+    val attachments: List<ChatAttachment> = emptyList(),
+    val workItems: List<ActivityItem> = emptyList(),
+    val workedMillis: Long = 0L,
+)
+
+data class ChatAttachment(
+    val id: String = UUID.randomUUID().toString(),
+    val displayName: String,
+    val relativePath: String,
+    val mimeType: String,
+    val sizeBytes: Long,
 )
 
 data class ProjectChat(

@@ -1,18 +1,24 @@
 package dev.pocket.app.ui
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import dev.pocket.app.BuildConfig
 import dev.pocket.app.data.ApiKeyVault
 import dev.pocket.app.data.AppPreferences
 import dev.pocket.app.model.ActivityItem
 import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.ChatAttachment
 import dev.pocket.app.model.DevStack
 import dev.pocket.app.model.Project
+import dev.pocket.app.model.ProjectKind
 import dev.pocket.app.model.ProjectChat
 import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
@@ -20,6 +26,7 @@ import dev.pocket.app.model.RuntimeEvent
 import dev.pocket.app.model.ToolRequest
 import dev.pocket.app.model.WorkspaceEntry
 import dev.pocket.app.model.projectSlug
+import dev.pocket.app.model.generateQuickChatIdentity
 import dev.pocket.app.network.ConnectionValidation
 import dev.pocket.app.network.ModelDiscoveryResult
 import dev.pocket.app.network.ProviderApiClient
@@ -27,6 +34,10 @@ import dev.pocket.app.runtime.ClaudeRuntimeBridge
 import dev.pocket.app.runtime.NativeSpawnProcess
 import dev.pocket.app.runtime.RuntimeInstallProgress
 import dev.pocket.app.runtime.RuntimeInstaller
+import dev.pocket.app.runtime.RuntimeSetupController
+import dev.pocket.app.runtime.RuntimeSetupService
+import dev.pocket.app.runtime.RuntimeSetupSnapshot
+import dev.pocket.app.runtime.RuntimeSetupStatus
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.UnknownHostException
@@ -73,6 +84,7 @@ data class AppUiState(
     val startupMessage: String = "Checking this device…",
     val startupBytes: Pair<Long, Long>? = null,
     val startupLogs: List<String> = emptyList(),
+    val startupIndeterminate: Boolean = false,
     val startupError: String? = null,
     val startupErrorIsOffline: Boolean = false,
     val onboardingComplete: Boolean = false,
@@ -92,6 +104,7 @@ data class AppUiState(
     val messages: List<ChatMessage> = listOf(
         ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change."),
     ),
+    val pendingAttachments: List<ChatAttachment> = emptyList(),
     val pendingApproval: ToolRequest? = null,
     val changes: List<ChangeItem> = emptyList(),
     val activity: List<ActivityItem> = emptyList(),
@@ -99,6 +112,7 @@ data class AppUiState(
     val liveThinking: Boolean = false,
     val taskStartedAtMillis: Long? = null,
     val taskFinishedAtMillis: Long? = null,
+    val workSegmentStartedAtMillis: Long? = null,
     val previewReady: Boolean = false,
     val previewUrl: String? = null,
     val isRunning: Boolean = false,
@@ -129,6 +143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var projectTerminalProcess: Process? = null
     @Volatile private var projectTerminalProjectId: String? = null
     @Volatile private var projectTerminalStopRequested: Boolean = false
+    @Volatile private var setupCompletionHandled: Boolean = false
     private val _state = MutableStateFlow(
         AppUiState(
             onboardingComplete = preferences.onboardingComplete,
@@ -144,6 +159,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        RuntimeSetupController.restore(application)
         if (!preferences.legacySeededCredentialRemoved) {
             vault.remove(ProviderKind.CUSTOM.name)
             preferences.legacySeededCredentialRemoved = true
@@ -186,6 +202,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isTerminalRunning = MutableStateFlow(false)
     val isTerminalRunning: StateFlow<Boolean> = _isTerminalRunning.asStateFlow()
 
+    private val _terminalLiveOutput = MutableStateFlow("")
+    val terminalLiveOutput: StateFlow<String> = _terminalLiveOutput.asStateFlow()
+
+    private val _terminalCurrentCommand = MutableStateFlow<String?>(null)
+    val terminalCurrentCommand: StateFlow<String?> = _terminalCurrentCommand.asStateFlow()
+
     fun runTerminalCommand(cmd: String) {
         val command = cmd.trim()
         if (command.isBlank() || _isTerminalRunning.value) return
@@ -194,6 +216,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _isTerminalRunning.value = true
+        _terminalCurrentCommand.value = command
+        _terminalLiveOutput.value = ""
         viewModelScope.launch {
             val (output, exitCode) = withContext(Dispatchers.IO) {
                 runCatching {
@@ -209,13 +233,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         environment = emptyMap(),
                         guestCommand = listOf("/usr/bin/bash", "-c", command),
                     )
+                    // Terminal commands are one-shot for now. Closing stdin prevents
+                    // interactive programs from waiting forever for input the UI cannot send.
+                    proc.outputStream.close()
+                    val native = proc as? NativeSpawnProcess
+                    var offset = 0L
+                    val streamed = StringBuilder()
+                    while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
+                        val file = native?.outputFile
+                        val available = (file?.length() ?: 0L) - offset
+                        if (file == null || available <= 0) {
+                            Thread.sleep(50)
+                            continue
+                        }
+                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+                        val count = RandomAccessFile(file, "r").use { input ->
+                            input.seek(offset)
+                            input.read(bytes)
+                        }
+                        if (count > 0) {
+                            offset += count
+                            streamed.append(bytes.decodeToString(0, count))
+                            _terminalLiveOutput.value = streamed.toString().trimEnd().takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                        }
+                    }
                     val exit = proc.waitFor()
-                    val out = (proc as? dev.pocket.app.runtime.NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
-                    val finalOut = if (out.isNotEmpty()) out else if (exit == 0) "[Process completed with exit code 0]" else "[Process exited with code $exit]"
+                    val out = streamed.toString().trim()
+                    val finalOut = if (out.isNotEmpty() || exit == 0) out else "Process exited with code $exit"
                     finalOut to exit
                 }.getOrElse { "Error: ${it.message}" to 1 }
             }
             _terminalLines.update { it + TerminalOutputLine(command = command, output = output, exitCode = exitCode) }
+            _terminalLiveOutput.value = ""
+            _terminalCurrentCommand.value = null
             _isTerminalRunning.value = false
         }
     }
@@ -296,7 +346,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val completedLine = TerminalOutputLine(
                 command = command,
                 output = result.output.ifBlank {
-                    if (result.exitCode == 0) "[Process completed with exit code 0]" else "[Process exited with code ${result.exitCode}]"
+                    if (result.exitCode == 0) "" else "Process exited with code ${result.exitCode}"
                 },
                 exitCode = result.exitCode,
             )
@@ -361,6 +411,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             guestCommand = listOf("/usr/bin/bash", "-lc", script),
             guestWorkspacePath = guestWorkspacePath,
         )
+        // Commands are one-shot. Servers keep running normally, while programs
+        // waiting for terminal input receive EOF instead of hanging the session.
+        process.outputStream.close()
         projectTerminalProcess = process
         projectTerminalProjectId = projectId
         if (projectTerminalStopRequested) process.destroy()
@@ -510,11 +563,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun getSavedApiKey(kind: ProviderKind): String = vault.get(kind.name).orEmpty()
 
     init {
+        viewModelScope.launch { RuntimeSetupController.snapshot.collect(::onSetupSnapshot) }
         viewModelScope.launch { runtime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch { bootstrap() }
     }
 
     private suspend fun bootstrap() {
+        val setupSnapshot = RuntimeSetupController.snapshot.value
+        if (setupSnapshot.status == RuntimeSetupStatus.RUNNING) {
+            onSetupSnapshot(setupSnapshot)
+            resumeRuntimeSetupService()
+            return
+        }
         val installed = withContext(Dispatchers.IO) {
             // Upgrades from the old single-bundle layout keep every already-installed tool.
             installer.migrateLegacyToolMarkers()
@@ -526,6 +586,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(installedDevStacks = if (installed) installer.installedStacks() else current.installedDevStacks)
         }
         when {
+            !installed && setupSnapshot.status == RuntimeSetupStatus.ERROR -> onSetupSnapshot(setupSnapshot)
             !installed -> _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupProgress = 0f) }
             !preferences.onboardingComplete -> {
                 preferences.runtimeSetupComplete = true
@@ -537,6 +598,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startRuntimeSetup() {
         if (state.value.startupStage == StartupStage.INSTALLING) return
+        setupCompletionHandled = false
         _state.update {
             it.copy(
                 startupStage = StartupStage.INSTALLING,
@@ -544,41 +606,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupMessage = "Preparing your private coding workspace",
                 startupBytes = null,
                 startupLogs = listOf("\$ Preparing your private coding workspace"),
+                startupIndeterminate = false,
                 startupError = null,
                 startupErrorIsOffline = false,
             )
         }
-        viewModelScope.launch {
-            val stacks = _state.value.selectedDevStacks
-            val result = runCatching {
-                withContext(Dispatchers.IO) {
-                    installer.ensureInstalled(stacks) { progress ->
-                        _state.update { current ->
-                            current.copy(
-                                startupProgress = progress.fraction.coerceIn(0f, 1f),
-                                startupMessage = progress.message,
-                                startupBytes = progress.totalBytes?.let { total -> (progress.downloadedBytes ?: 0L) to total },
-                                startupLogs = mergeStartupLog(current.startupLogs, progress),
-                            )
-                        }
-                    }
-                }
-            }
-            if (result.isSuccess) {
-                preferences.runtimeSetupComplete = true
-                if (preferences.onboardingComplete) {
-                    initializeRuntime()
-                } else {
-                    _state.update { it.copy(startupStage = StartupStage.MODEL_SETUP, startupProgress = 1f, startupBytes = null) }
-                }
-            } else {
-                showStartupError(result.exceptionOrNull() ?: IllegalStateException("Setup could not be completed"))
-            }
-        }
+        resumeRuntimeSetupService()
     }
 
     fun retryStartup() {
-        if (installer.isInstalled()) viewModelScope.launch { initializeRuntime() } else startRuntimeSetup()
+        if (installer.isInstalled()) viewModelScope.launch { initializeRuntime() } else {
+            _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupError = null) }
+            startRuntimeSetup()
+        }
+    }
+
+    private fun resumeRuntimeSetupService() {
+        val stacks = _state.value.selectedDevStacks.joinToString(",") { it.name }
+        ContextCompat.startForegroundService(
+            getApplication(),
+            Intent(getApplication(), RuntimeSetupService::class.java)
+                .setAction(RuntimeSetupService.ACTION_START)
+                .putExtra(RuntimeSetupService.EXTRA_STACKS, stacks),
+        )
+    }
+
+    private fun onSetupSnapshot(snapshot: RuntimeSetupSnapshot) {
+        when (snapshot.status) {
+            RuntimeSetupStatus.RUNNING -> _state.update {
+                it.copy(
+                    startupStage = StartupStage.INSTALLING,
+                    startupProgress = snapshot.progress,
+                    startupMessage = snapshot.message,
+                    startupBytes = snapshot.totalBytes?.let { total -> (snapshot.downloadedBytes ?: 0L) to total },
+                    startupLogs = snapshot.logs,
+                    startupIndeterminate = snapshot.indeterminate,
+                    startupError = null,
+                    startupErrorIsOffline = false,
+                )
+            }
+            RuntimeSetupStatus.COMPLETE -> {
+                if (setupCompletionHandled) return
+                setupCompletionHandled = true
+                preferences.runtimeSetupComplete = true
+                if (preferences.onboardingComplete) {
+                    viewModelScope.launch { initializeRuntime() }
+                } else {
+                    _state.update {
+                        it.copy(
+                            startupStage = StartupStage.MODEL_SETUP,
+                            startupProgress = 1f,
+                            startupBytes = null,
+                            startupIndeterminate = false,
+                        )
+                    }
+                }
+            }
+            RuntimeSetupStatus.ERROR -> _state.update {
+                it.copy(
+                    startupStage = StartupStage.ERROR,
+                    startupMessage = snapshot.message,
+                    startupProgress = snapshot.progress,
+                    startupLogs = snapshot.logs,
+                    startupIndeterminate = false,
+                    startupError = snapshot.errorMessage,
+                    startupErrorIsOffline = snapshot.offline,
+                )
+            }
+            RuntimeSetupStatus.CANCELLED -> _state.update {
+                it.copy(
+                    startupStage = StartupStage.SETUP_REQUIRED,
+                    startupMessage = "Setup paused",
+                    startupProgress = snapshot.progress,
+                    startupLogs = snapshot.logs,
+                    startupIndeterminate = false,
+                )
+            }
+            RuntimeSetupStatus.IDLE -> Unit
+        }
     }
 
     private suspend fun initializeRuntime() {
@@ -590,6 +695,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupMessage = "Opening your private workspace",
                 startupBytes = null,
                 startupLogs = listOf("\$ Opening your private workspace"),
+                startupIndeterminate = false,
                 startupError = null,
                 startupErrorIsOffline = false,
             )
@@ -797,6 +903,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 suggestedProjectRoot = suggestedRoot,
                 previewReady = false,
                 previewUrl = null,
+                pendingAttachments = emptyList(),
             )
         }
         refreshProjectFiles()
@@ -833,6 +940,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 suggestedProjectRoot = null,
                 previewReady = false,
                 previewUrl = null,
+                pendingAttachments = emptyList(),
             )
         }
     }
@@ -884,6 +992,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProjectChats(project.id, listOf(firstChat))
         _state.update { it.copy(projectChats = listOf(firstChat), activeChatId = firstChat.id) }
         refreshProjectFiles()
+    }
+
+    fun createQuickChat() {
+        val identity = generateQuickChatIdentity(_state.value.projects.mapTo(mutableSetOf()) { it.slug })
+        val project = Project(
+            name = identity.displayName,
+            description = "Private quick-chat workspace",
+            language = "General",
+            slug = identity.slug,
+            kind = ProjectKind.QUICK_CHAT,
+        )
+        val firstChat = ProjectChat(title = "New chat")
+        File(getApplication<Application>().filesDir, "workspaces/${project.id}").mkdirs()
+        preferences.saveProjectChats(project.id, listOf(firstChat))
+        _state.update { it.copy(projects = listOf(project) + it.projects) }
+        preferences.saveProjects(_state.value.projects)
+        openProject(project)
+    }
+
+    fun renameQuickChat(projectId: String, newName: String) {
+        val clean = newName.replace(Regex("\\s+"), " ").trim().take(60)
+        if (clean.isBlank()) return
+        _state.update { current ->
+            val projects = current.projects.map { project ->
+                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) project.copy(name = clean) else project
+            }
+            val active = current.activeProject?.let { project ->
+                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) project.copy(name = clean) else project
+            }
+            current.copy(projects = projects, activeProject = active)
+        }
+        preferences.saveProjects(_state.value.projects)
+    }
+
+    fun convertQuickChat(projectId: String) {
+        _state.update { current ->
+            val projects = current.projects.map { project ->
+                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) {
+                    project.copy(kind = ProjectKind.PROJECT, description = "Project created from Quick Chat")
+                } else project
+            }
+            val active = current.activeProject?.let { project ->
+                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) {
+                    project.copy(kind = ProjectKind.PROJECT, description = "Project created from Quick Chat")
+                } else project
+            }
+            current.copy(projects = projects, activeProject = active)
+        }
+        preferences.saveProjects(_state.value.projects)
+    }
+
+    fun deleteQuickChat(projectId: String) {
+        val project = _state.value.projects.firstOrNull { it.id == projectId && it.kind == ProjectKind.QUICK_CHAT } ?: return
+        if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning) return
+        _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
+        preferences.saveProjects(_state.value.projects)
+        viewModelScope.launch(Dispatchers.IO) {
+            val filesDir = getApplication<Application>().filesDir
+            File(filesDir, "workspaces/${project.id}").deleteRecursively()
+            terminalHistoryFile(project.id).delete()
+            preferences.deleteProjectChats(project.id)
+        }
     }
 
     private fun detectNestedProjectRoot(project: Project): String? {
@@ -997,6 +1167,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
                 pendingApproval = null,
+                pendingAttachments = emptyList(),
             )
         }
     }
@@ -1017,6 +1188,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
                 pendingApproval = null,
+                pendingAttachments = emptyList(),
             )
         }
     }
@@ -1117,26 +1289,166 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return relativePath.split('/').any { it in excludedNames } || isClaudeRuntimeMetadata(relativePath)
     }
 
+    fun addChatAttachments(uris: List<Uri>) {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        val chatId = current.activeChatId ?: return
+        if (current.isRunning || uris.isEmpty()) return
+        val remaining = (MAX_ATTACHMENTS_PER_MESSAGE - current.pendingAttachments.size).coerceAtLeast(0)
+        if (remaining == 0) {
+            _state.update { it.copy(toastMessage = "You can attach up to $MAX_ATTACHMENTS_PER_MESSAGE files per message") }
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val added = mutableListOf<ChatAttachment>()
+                val errors = mutableListOf<String>()
+                uris.take(remaining).forEach { uri ->
+                    runCatching { copyChatAttachment(project, chatId, uri) }
+                        .onSuccess(added::add)
+                        .onFailure { errors += (it.message ?: "Could not attach file") }
+                }
+                added to errors
+            }
+            val (added, errors) = result
+            _state.update { state ->
+                state.copy(
+                    pendingAttachments = state.pendingAttachments + added,
+                    toastMessage = errors.firstOrNull() ?: if (uris.size > remaining) "Only $remaining more file${if (remaining == 1) "" else "s"} could be added" else null,
+                )
+            }
+            if (added.isNotEmpty()) refreshProjectFiles()
+        }
+    }
+
+    fun removePendingAttachment(attachmentId: String) {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        val attachment = current.pendingAttachments.firstOrNull { it.id == attachmentId } ?: return
+        _state.update { it.copy(pendingAttachments = it.pendingAttachments.filterNot { item -> item.id == attachmentId }) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val root = projectWorkspaceRoot(project)
+            val file = File(root, attachment.relativePath).canonicalFile
+            if (file.toPath().startsWith(root.canonicalFile.toPath())) file.delete()
+        }
+    }
+
+    fun openChatAttachment(attachment: ChatAttachment) {
+        val project = _state.value.activeProject ?: return
+        runCatching {
+            val root = projectWorkspaceRoot(project).canonicalFile
+            val file = File(root, attachment.relativePath).canonicalFile
+            require(file.isFile && file.toPath().startsWith(root.toPath())) { "Attachment is unavailable" }
+            val app = getApplication<Application>()
+            val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, attachment.mimeType.ifBlank { "application/octet-stream" })
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            app.startActivity(intent)
+        }.onFailure { error ->
+            _state.update { it.copy(toastMessage = error.message ?: "No app can open this attachment") }
+        }
+    }
+
+    private fun copyChatAttachment(project: Project, chatId: String, uri: Uri): ChatAttachment {
+        val resolver = getApplication<Application>().contentResolver
+        var displayName = "attachment"
+        var declaredSize = -1L
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { displayName = cursor.getString(it) ?: displayName }
+                cursor.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { declaredSize = cursor.getLong(it) }
+            }
+        }
+        val mimeType = resolver.getType(uri).orEmpty().ifBlank { "application/octet-stream" }
+        val extension = displayName.substringAfterLast('.', "").lowercase()
+        val supportedTextExtensions = setOf(
+            "txt", "md", "markdown", "json", "jsonl", "csv", "tsv", "xml", "yaml", "yml", "log",
+            "kt", "kts", "java", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm",
+            "css", "scss", "sass", "less", "c", "cc", "cpp", "h", "hpp", "sh", "bash", "zsh",
+            "gradle", "properties", "toml", "ini", "conf", "sql",
+        )
+        val supported = mimeType.startsWith("image/") ||
+            mimeType.startsWith("text/") || mimeType == "application/json" || mimeType == "application/xml" ||
+            mimeType.endsWith("+json") || mimeType.endsWith("+xml") || extension in supportedTextExtensions
+        require(supported) { "Only images and text files are supported" }
+        require(declaredSize <= MAX_ATTACHMENT_BYTES || declaredSize < 0) { "$displayName is larger than 25 MB" }
+        val safeName = sanitizeAttachmentName(displayName)
+        val root = projectWorkspaceRoot(project).canonicalFile
+        val folder = File(root, "attachments/$chatId").apply { mkdirs() }.canonicalFile
+        require(folder.toPath().startsWith(root.toPath())) { "Unsafe attachment folder" }
+        val stem = safeName.substringBeforeLast('.', safeName)
+        val safeExtension = safeName.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$it" }
+        var destination = File(folder, safeName)
+        var suffix = 2
+        while (destination.exists()) destination = File(folder, "$stem-${suffix++}$safeExtension")
+        var copied = 0L
+        try {
+            resolver.openInputStream(uri)?.buffered()?.use { input ->
+                destination.outputStream().buffered().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        copied += count
+                        require(copied <= MAX_ATTACHMENT_BYTES) { "$displayName is larger than 25 MB" }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            } ?: error("Could not read $displayName")
+        } catch (error: Throwable) {
+            destination.delete()
+            throw error
+        }
+        return ChatAttachment(
+            displayName = displayName.take(120),
+            relativePath = destination.relativeTo(root).invariantSeparatorsPath,
+            mimeType = mimeType,
+            sizeBytes = copied,
+        )
+    }
+
+    private fun sanitizeAttachmentName(name: String): String {
+        val clean = name.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._ -]"), "_").trim().trim('.').take(100)
+        return clean.ifBlank { "attachment-${UUID.randomUUID().toString().take(8)}" }
+    }
+
     fun sendPrompt(prompt: String) {
         val project = state.value.activeProject ?: return
-        if (prompt.isBlank() || state.value.isRunning) return
-        updateActiveChatTitle(prompt)
+        val attachments = state.value.pendingAttachments
+        if ((prompt.isBlank() && attachments.isEmpty()) || state.value.isRunning) return
+        val requestText = prompt.trim().ifBlank { "Please review the attached files." }
+        updateActiveChatTitle(requestText)
         _state.update {
+            val startedAt = System.currentTimeMillis()
             it.copy(
-                messages = it.messages + ChatMessage(fromUser = true, text = prompt.trim()),
+                messages = it.messages + ChatMessage(fromUser = true, text = prompt.trim(), attachments = attachments),
+                pendingAttachments = emptyList(),
                 isRunning = true,
                 activity = listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity,
-                liveProcess = listOf(ActivityItem("Starting Claude Code", "Launching the project agent…", false)),
+                liveProcess = emptyList(),
                 liveThinking = false,
-                taskStartedAtMillis = System.currentTimeMillis(),
+                taskStartedAtMillis = startedAt,
                 taskFinishedAtMillis = null,
+                workSegmentStartedAtMillis = startedAt,
             )
         }
         touchProject(project.id)
         persistMessages()
         val history = state.value.messages // includes all messages up to now
+        val runtimePrompt = if (attachments.isEmpty()) requestText else buildString {
+            appendLine(requestText)
+            appendLine()
+            appendLine("<attached_files>")
+            attachments.forEach { attachment ->
+                appendLine("- ${attachment.displayName}: ${projectGuestRoot(project)}/${attachment.relativePath} (${attachment.mimeType})")
+            }
+            appendLine("These files were explicitly attached by the user. Inspect them only as needed for the request.")
+            appendLine("</attached_files>")
+        }
         viewModelScope.launch {
-            runtime.startSession(project.id, project.slug, prompt.trim(), history, state.value.provider)
+            runtime.startSession(project.id, project.slug, project.kind, runtimePrompt, history, state.value.provider)
         }
     }
 
@@ -1201,87 +1513,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun isNoisyRuntimeItem(item: ActivityItem): Boolean {
+        val combined = "${item.title} ${item.detail}"
+        return combined.contains("Starting Claude Code", true) ||
+            combined.contains("Agent process started", true) ||
+            combined.contains("Claude Code connected", true) ||
+            combined.contains("Runtime warning", true) ||
+            combined.contains("unrecognized_model", true) ||
+            combined.contains("Writing response", true) ||
+            combined.contains("Claude Code finished", true) ||
+            combined.contains("Task completed", true)
+    }
+
+    private fun finishWorkSegment(current: AppUiState, finishedAt: Long = System.currentTimeMillis()): AppUiState {
+        val meaningfulItems = current.liveProcess.filterNot(::isNoisyRuntimeItem)
+            .map { if (it.isComplete) it else it.copy(isComplete = true) }
+        if (!current.liveThinking && meaningfulItems.isEmpty()) {
+            return current.copy(liveProcess = emptyList(), workSegmentStartedAtMillis = null)
+        }
+        val startedAt = current.workSegmentStartedAtMillis ?: current.taskStartedAtMillis ?: finishedAt
+        val block = ChatMessage(
+            fromUser = false,
+            text = "",
+            workItems = meaningfulItems,
+            workedMillis = (finishedAt - startedAt).coerceAtLeast(0L),
+        )
+        return current.copy(
+            messages = current.messages + block,
+            liveProcess = emptyList(),
+            liveThinking = false,
+            workSegmentStartedAtMillis = null,
+        )
+    }
+
+    private fun appendWorkItem(current: AppUiState, item: ActivityItem): AppUiState {
+        if (isNoisyRuntimeItem(item)) return current
+        return current.copy(
+            liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } + item,
+            liveThinking = false,
+            workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
+        )
+    }
+
     private fun onRuntimeEvent(event: RuntimeEvent) {
         _state.update { current ->
             when (event) {
                 is RuntimeEvent.SessionStarted -> current.copy(
                     activeSessionId = event.sessionId,
                     activity = current.activity.mapIndexed { index, item -> if (index == 0) item.copy(isComplete = true) else item },
-                    liveProcess = current.liveProcess.map { item ->
-                        if (item.title == "Starting Claude Code") item.copy(detail = "Agent process started", isComplete = true) else item
-                    },
                 )
                 is RuntimeEvent.AssistantDelta -> {
-                    val lastMsg = current.messages.lastOrNull()
-                    val process = if (current.liveProcess.any { it.title == "Writing response" }) {
-                        current.liveProcess
+                    val timeline = if (current.liveThinking || current.liveProcess.any { !isNoisyRuntimeItem(it) }) {
+                        finishWorkSegment(current)
                     } else {
-                        current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                            ActivityItem("Writing response", "Streaming Claude's response into chat…", false)
+                        current
                     }
-                    if (lastMsg != null && !lastMsg.fromUser) {
-                        // Append to existing assistant message (streaming)
-                        current.copy(
-                            messages = current.messages.dropLast(1) + lastMsg.copy(text = lastMsg.text + event.text),
-                            liveProcess = process,
-                            liveThinking = false,
-                        )
+                    val lastMessage = timeline.messages.lastOrNull()
+                    if (lastMessage != null && !lastMessage.fromUser && lastMessage.workItems.isEmpty() && lastMessage.workedMillis == 0L) {
+                        timeline.copy(messages = timeline.messages.dropLast(1) + lastMessage.copy(text = lastMessage.text + event.text))
                     } else {
-                        // Start a new assistant message
-                        current.copy(
-                            messages = current.messages + ChatMessage(fromUser = false, text = event.text),
-                            liveProcess = process,
-                            liveThinking = false,
-                        )
+                        timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = event.text))
                     }
                 }
-                // The CLI reports that Claude is actively thinking. Show a simple
-                // "Thinking…" status instead of private reasoning or token counters.
-                is RuntimeEvent.ReasoningProgress -> current.copy(liveThinking = true)
-                is RuntimeEvent.ToolStarted -> current.copy(
-                    activity = listOf(
-                        ActivityItem(
-                            "Running ${event.toolName}",
-                            event.detail,
-                            false,
-                            isCommand = event.toolName == "Bash",
-                        ),
-                    ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem(
-                            "Running ${event.toolName}",
-                            event.detail,
-                            false,
-                            isCommand = event.toolName == "Bash",
-                        ),
-                    liveThinking = false,
+                is RuntimeEvent.ReasoningProgress -> current.copy(
+                    liveThinking = true,
+                    workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                 )
-                is RuntimeEvent.RuntimeLog -> current.copy(
-                    activity = listOf(ActivityItem(event.title, event.detail)) + current.activity,
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem(event.title, event.detail),
-                    liveThinking = false,
+                is RuntimeEvent.ToolStarted -> appendWorkItem(
+                    current.copy(
+                        activity = listOf(
+                            ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
+                        ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
+                    ),
+                    ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
                 )
-                is RuntimeEvent.ToolRequested -> current.copy(
+                is RuntimeEvent.RuntimeLog -> appendWorkItem(
+                    current.copy(activity = listOf(ActivityItem(event.title, event.detail)) + current.activity),
+                    ActivityItem(event.title, event.detail),
+                )
+                is RuntimeEvent.ToolRequested -> appendWorkItem(current.copy(
                     pendingApproval = event.request,
                     activity = listOf(ActivityItem("Waiting for approval", event.request.explanation, false)) + current.activity,
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem("Waiting for approval", event.request.explanation, false),
-                    liveThinking = false,
-                )
-                is RuntimeEvent.ToolApproved -> current.copy(
+                ), ActivityItem("Waiting for approval", event.request.explanation, false))
+                is RuntimeEvent.ToolApproved -> appendWorkItem(current.copy(
                     pendingApproval = null,
                     activity = listOf(ActivityItem("Applying approved changes", "Editing project files", false)) + current.activity,
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem("Action approved", "Claude is continuing the task", false),
-                    liveThinking = false,
-                )
-                is RuntimeEvent.ToolRejected -> current.copy(
+                ), ActivityItem("Action approved", "Claude is continuing the task", false))
+                is RuntimeEvent.ToolRejected -> appendWorkItem(current.copy(
                     pendingApproval = null,
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem("Action rejected", "Claude will continue without this action"),
-                    liveThinking = false,
-                )
+                ), ActivityItem("Action rejected", "Claude will continue without this action"))
                 is RuntimeEvent.ToolCompleted -> {
                     val runningIndex = current.liveProcess.indexOfLast {
                         !it.isComplete && it.title == "Running ${event.toolName}"
@@ -1305,6 +1625,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         activity = listOf(ActivityItem(event.summary, event.toolName)) + current.activity,
                         liveProcess = process,
                         liveThinking = false,
+                        workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                     )
                 }
                 is RuntimeEvent.FilesChanged -> current.copy(
@@ -1315,6 +1636,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "Files changed",
                             event.paths.take(4).joinToString(", ") + if (event.paths.size > 4) " +${event.paths.size - 4} more" else "",
                         ),
+                    workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                 )
                 is RuntimeEvent.PreviewStarted -> current.copy(
                     previewReady = true,
@@ -1322,18 +1644,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activity = listOf(ActivityItem("Preview ready", event.url)) + current.activity,
                     liveProcess = current.liveProcess + ActivityItem("Preview ready", event.url),
                     liveThinking = false,
+                    workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                 )
-                is RuntimeEvent.SessionCompleted -> current.copy(
+                is RuntimeEvent.SessionCompleted -> finishWorkSegment(current).copy(
                     isRunning = false,
                     activeSessionId = null,
                     activity = listOf(ActivityItem("Task completed", "Claude Code finished successfully")) +
                         current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem("Task completed", "Claude Code finished successfully"),
-                    liveThinking = false,
                     taskFinishedAtMillis = System.currentTimeMillis(),
                 )
-                is RuntimeEvent.SessionFailed -> current.copy(
+                is RuntimeEvent.SessionFailed -> finishWorkSegment(
+                    appendWorkItem(current, ActivityItem("Task stopped", event.reason)),
+                ).copy(
                     isRunning = false,
                     activeSessionId = null,
                     pendingApproval = null,
@@ -1343,9 +1665,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             reason.contains("authentication", true)
                     },
                     activity = listOf(ActivityItem("Task stopped", event.reason)) + current.activity,
-                    liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem("Task stopped", event.reason),
-                    liveThinking = false,
                     taskFinishedAtMillis = System.currentTimeMillis(),
                 )
             }
@@ -1354,7 +1673,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.activeProject?.id?.let { touchProject(it) }
             refreshProjectFiles()
         }
-        if (event is RuntimeEvent.AssistantDelta || event is RuntimeEvent.SessionCompleted) {
+        if (event is RuntimeEvent.AssistantDelta || event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) {
             persistMessages()
         }
     }
@@ -1388,6 +1707,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (it.length <= 42) it else it.take(39).trimEnd() + "…"
         }
         _state.update { current ->
+            val activeChatWasUntitled = current.projectChats.firstOrNull { it.id == chatId }?.title == "New chat"
             val chats = current.projectChats.map { chat ->
                 if (chat.id == chatId) {
                     chat.copy(
@@ -1396,9 +1716,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 } else chat
             }.sortedByDescending { it.updatedAtMillis }
-            current.copy(projectChats = chats)
+            val projects = if (project.kind == ProjectKind.QUICK_CHAT && activeChatWasUntitled) {
+                current.projects.map { saved -> if (saved.id == project.id) saved.copy(name = title, updatedAtMillis = now) else saved }
+            } else current.projects
+            val activeProject = if (project.kind == ProjectKind.QUICK_CHAT && activeChatWasUntitled) {
+                project.copy(name = title, updatedAtMillis = now)
+            } else current.activeProject
+            current.copy(projectChats = chats, projects = projects, activeProject = activeProject)
         }
         preferences.saveProjectChats(project.id, _state.value.projectChats)
+        preferences.saveProjects(_state.value.projects)
     }
 
     companion object {
@@ -1406,6 +1733,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
+        private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
+        private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
         private const val TEST_PROVIDER_DEFAULTS_VERSION = 1
         private const val TEST_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
         private const val TEST_OPENROUTER_MODEL = "stealth/ox-alpha"

@@ -22,8 +22,8 @@ val PocketOutline = Color(0xFF2A3240)
 private val DarkColors = darkColorScheme(
     primary = PocketOrange,
     onPrimary = Color(0xFF241107),
-    primaryContainer = Color(0xFF3E2D54),
-    onPrimaryContainer = Color(0xFFE9DDFF),
+    primaryContainer = Color(0xFF42281D),
+    onPrimaryContainer = Color(0xFFFFDDCC),
     secondary = PocketBlue,
     onSecondary = Color(0xFF001F58),
     tertiary = PocketGreen,
@@ -41,8 +41,8 @@ private val DarkColors = darkColorScheme(
 private val LightColors = lightColorScheme(
     primary = Color(0xFFD85A20),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFEADBFF),
-    onPrimaryContainer = Color(0xFF2A154D),
+    primaryContainer = Color(0xFFFFE0D2),
+    onPrimaryContainer = Color(0xFF451A08),
     secondary = Color(0xFF3366CC),
     onSecondary = Color(0xFFFFFFFF),
     tertiary = Color(0xFF1B8A5A),
@@ -82,4 +82,3 @@ fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.SYSTEM, content: @Composa
         content = content,
     )
 }
-

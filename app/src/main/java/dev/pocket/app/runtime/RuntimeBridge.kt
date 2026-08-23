@@ -3,6 +3,7 @@ package dev.pocket.app.runtime
 import dev.pocket.app.model.ChatMessage
 import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ProviderProfile
+import dev.pocket.app.model.ProjectKind
 import dev.pocket.app.model.RuntimeEvent
 import dev.pocket.app.model.ToolRequest
 import kotlinx.coroutines.flow.Flow
@@ -15,7 +16,7 @@ data class RuntimeLaunchConfig(
 
 interface RuntimeBridge {
     val events: Flow<RuntimeEvent>
-    suspend fun startSession(projectId: String, projectSlug: String, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String
+    suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)
     suspend fun stopSession(sessionId: String)
     suspend fun stopActiveSession()

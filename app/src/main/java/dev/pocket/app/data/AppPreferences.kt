@@ -2,7 +2,9 @@ package dev.pocket.app.data
 
 import android.content.Context
 import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.ChatAttachment
 import dev.pocket.app.model.Project
+import dev.pocket.app.model.ProjectKind
 import dev.pocket.app.model.ProjectChat
 import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
@@ -85,6 +87,7 @@ class AppPreferences(private val context: Context) {
                 put("slug", p.slug)
                 put("rootPath", p.rootPath)
                 put("updatedAtMillis", p.updatedAtMillis)
+                put("kind", p.kind.name)
             })
         }
         preferences.edit().putString("projects_json", arr.toString()).apply()
@@ -100,6 +103,7 @@ class AppPreferences(private val context: Context) {
                 val obj = arr.getJSONObject(i)
                 val id = obj.getString("id")
                 val name = obj.getString("name")
+                if (!obj.has("kind")) needsSave = true
                 val requestedSlug = obj.optString("slug").ifBlank { projectSlug(name) }
                 var slug = requestedSlug
                 if (!usedSlugs.add(slug)) {
@@ -128,6 +132,8 @@ class AppPreferences(private val context: Context) {
                         root.isBlank() || (!root.startsWith('/') && !root.contains(".."))
                     } ?: "",
                     updatedAtMillis = millis,
+                    kind = runCatching { ProjectKind.valueOf(obj.optString("kind", ProjectKind.PROJECT.name)) }
+                        .getOrDefault(ProjectKind.PROJECT),
                 )
             }
         }.getOrDefault(emptyList())
@@ -195,6 +201,28 @@ class AppPreferences(private val context: Context) {
                 put("fromUser", m.fromUser)
                 put("text", m.text)
                 put("createdAt", m.createdAt.toString())
+                put("attachments", JSONArray().apply {
+                    m.attachments.forEach { attachment ->
+                        put(JSONObject().apply {
+                            put("id", attachment.id)
+                            put("displayName", attachment.displayName)
+                            put("relativePath", attachment.relativePath)
+                            put("mimeType", attachment.mimeType)
+                            put("sizeBytes", attachment.sizeBytes)
+                        })
+                    }
+                })
+                put("workedMillis", m.workedMillis)
+                put("workItems", JSONArray().apply {
+                    m.workItems.forEach { item ->
+                        put(JSONObject().apply {
+                            put("title", item.title)
+                            put("detail", item.detail)
+                            put("isComplete", item.isComplete)
+                            put("isCommand", item.isCommand)
+                        })
+                    }
+                })
             })
         }
         val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
@@ -204,6 +232,11 @@ class AppPreferences(private val context: Context) {
     fun loadMessages(projectId: String, chatId: String): List<ChatMessage> {
         val file = File(File(chatsDir, projectId), "$chatId.json")
         return loadLegacyMessages(file)
+    }
+
+    fun deleteProjectChats(projectId: String) {
+        File(chatsDir, projectId).deleteRecursively()
+        File(chatsDir, "$projectId.json").delete()
     }
 
     private fun loadLegacyMessages(file: File): List<ChatMessage> {
@@ -218,6 +251,36 @@ class AppPreferences(private val context: Context) {
                     text = obj.getString("text"),
                     createdAt = runCatching { Instant.parse(obj.getString("createdAt")) }
                         .getOrDefault(Instant.now()),
+                    attachments = obj.optJSONArray("attachments")?.let { attachments ->
+                        (0 until attachments.length()).mapNotNull { index ->
+                            runCatching {
+                                attachments.getJSONObject(index).let { attachment ->
+                                    ChatAttachment(
+                                        id = attachment.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+                                        displayName = attachment.getString("displayName"),
+                                        relativePath = attachment.getString("relativePath"),
+                                        mimeType = attachment.optString("mimeType", "application/octet-stream"),
+                                        sizeBytes = attachment.optLong("sizeBytes", 0L),
+                                    )
+                                }
+                            }.getOrNull()
+                        }
+                    }.orEmpty(),
+                    workedMillis = obj.optLong("workedMillis", 0L),
+                    workItems = obj.optJSONArray("workItems")?.let { workItems ->
+                        (0 until workItems.length()).mapNotNull { index ->
+                            runCatching {
+                                workItems.getJSONObject(index).let { item ->
+                                    dev.pocket.app.model.ActivityItem(
+                                        title = item.optString("title"),
+                                        detail = item.optString("detail"),
+                                        isComplete = item.optBoolean("isComplete", true),
+                                        isCommand = item.optBoolean("isCommand", false),
+                                    )
+                                }
+                            }.getOrNull()
+                        }
+                    }.orEmpty(),
                 )
             }
         }.getOrDefault(emptyList())

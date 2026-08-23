@@ -300,21 +300,13 @@ fun TerminalScreen(
                                 )
                             }
 
-                            if (isRunning) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp,
-                                        color = PocketOrange,
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        "Executing…",
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 12.sp,
-                                        color = PocketOrange,
-                                    )
-                                }
+                            if (isRunning && cursorVisible) {
+                                Text(
+                                    "▌",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = PocketOrange,
+                                )
                             }
                         }
                     }

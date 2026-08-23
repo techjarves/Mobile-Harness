@@ -6,11 +6,14 @@ import android.system.Os
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.coroutineContext
 import dev.pocket.app.model.DevStack
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -29,7 +32,12 @@ data class RuntimeInstallProgress(
     val fraction: Float,
     val downloadedBytes: Long? = null,
     val totalBytes: Long? = null,
+    val terminalLine: String? = null,
+    val indeterminate: Boolean = false,
+    val event: RuntimeInstallEvent = RuntimeInstallEvent.STAGE,
 )
+
+enum class RuntimeInstallEvent { STAGE, COMMAND, OUTPUT, DOWNLOAD, COMMAND_COMPLETED, COMPLETED }
 
 class RuntimeInstaller(private val context: Context) {
     private val runtimeDir = File(context.filesDir, "runtime")
@@ -39,6 +47,7 @@ class RuntimeInstaller(private val context: Context) {
     private val rootfsMarker = File(rootfs, ".pocket-rootfs-version")
     private val languageToolsMarker = File(rootfs, ".pocket-language-tools-version")
     private val coreToolsMarker = File(rootfs, ".pocket-core-tools-version")
+    private val systemUpgradeMarker = File(rootfs, ".pocket-system-upgrade-version")
     private val devStacksFile = File(rootfs, ".pocket-dev-stacks.json")
 
     fun isInstalled(): Boolean {
@@ -148,7 +157,13 @@ class RuntimeInstaller(private val context: Context) {
         // because Claude Code itself runs on Node.
         val coreNeeded = !File(rootfs, "usr/bin/git").exists() || coreToolsMarker.readTextOrNull() != CORE_TOOLS_VERSION
         if (coreNeeded) {
-            installNodeIfNeeded(proot, 0.58f, 0.70f, onProgress)
+            installNodeIfNeeded(proot, 0.58f, 0.66f, onProgress)
+        }
+        if (systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
+            runSystemMaintenance(proot, onProgress)
+            systemUpgradeMarker.writeText(SYSTEM_UPGRADE_VERSION)
+        }
+        if (coreNeeded) {
             aptInstall(proot, listOf("git", "ca-certificates"), "Installing Git and base tools", 0.70f, onProgress)
             writeResolver()
             verifyGuest(proot, "git --version", "Base tools could not be verified")
@@ -202,12 +217,12 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.ANDROID -> {
                 onProgress(RuntimeInstallProgress("Installing the Java development kit", from))
                 val jdk17 = runCatching {
-                    aptInstallInternal(proot, listOf("openjdk-17-jdk-headless"))
+                    aptInstallInternal(proot, listOf("openjdk-17-jdk-headless"), from, onProgress)
                 }
                 if (jdk17.isFailure) {
                     // Older Ubuntu mirrors may not carry JDK 17; JDK 11 still builds
                     // classic Android projects and keeps setup from hard-failing.
-                    aptInstallInternal(proot, listOf("openjdk-11-jdk-headless"))
+                    aptInstallInternal(proot, listOf("openjdk-11-jdk-headless"), from, onProgress)
                 }
                 verifyGuest(proot, "java -version", "Java could not be verified")
             }
@@ -371,36 +386,152 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         onProgress(RuntimeInstallProgress(message, fraction))
-        aptInstallInternal(proot, packages)
+        aptInstallInternal(proot, packages, fraction, onProgress)
     }
 
-    private suspend fun aptInstallInternal(proot: File, packages: List<String>) {
+    private suspend fun runSystemMaintenance(
+        proot: File,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        onProgress(
+            RuntimeInstallProgress(
+                message = "Updating the private Ubuntu environment",
+                fraction = 0.69f,
+                indeterminate = true,
+            ),
+        )
+        writeResolver()
+        val command = "export DEBIAN_FRONTEND=noninteractive; " +
+            "dpkg --configure -a && " +
+            "apt-get -o DPkg::Lock::Timeout=120 -f install -y && " +
+            "apt-get -o DPkg::Lock::Timeout=120 update && " +
+            "apt-get -o DPkg::Lock::Timeout=120 upgrade -y"
+        runGuestCommand(
+            proot = proot,
+            command = command,
+            displayCommand = "dpkg --configure -a && apt-get -f install -y && apt-get update && apt-get upgrade -y",
+            fraction = 0.69f,
+            timeoutMs = 35 * 60 * 1_000L,
+            onProgress = onProgress,
+            failureMessage = "Ubuntu maintenance could not be completed",
+        )
+    }
+
+    private suspend fun aptInstallInternal(
+        proot: File,
+        packages: List<String>,
+        fraction: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
         require(packages.isNotEmpty()) { "No packages selected" }
         writeResolver()
-        val install = process(
+        val packageNames = packages.joinToString(" ")
+        val command = "export DEBIAN_FRONTEND=noninteractive; " +
+            "dpkg --configure -a && " +
+            "apt-get -o DPkg::Lock::Timeout=120 -f install -y && " +
+            "apt-get -o DPkg::Lock::Timeout=120 update && " +
+            "apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends $packageNames && " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+        runGuestCommand(
+            proot = proot,
+            command = command,
+            displayCommand = "dpkg --configure -a && apt-get -f install -y && apt-get install -y $packageNames",
+            fraction = fraction,
+            timeoutMs = 30 * 60 * 1_000L,
+            onProgress = onProgress,
+            failureMessage = "Could not install: $packageNames",
+        )
+    }
+
+    private suspend fun runGuestCommand(
+        proot: File,
+        command: String,
+        displayCommand: String,
+        fraction: Float,
+        timeoutMs: Long,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+        failureMessage: String,
+    ) {
+        onProgress(
+            RuntimeInstallProgress(
+                message = displayCommand,
+                fraction = fraction,
+                terminalLine = "root@pocket:~# $displayCommand",
+                indeterminate = true,
+                event = RuntimeInstallEvent.COMMAND,
+            ),
+        )
+        val running = process(
             proot = proot,
             rootfs = rootfs,
             workspace = File(rootfs, "root"),
             environment = emptyMap(),
-            guestCommand = listOf(
-                "/usr/bin/env",
-                "bash",
-                "-lc",
-                "export DEBIAN_FRONTEND=noninteractive; " +
-                    "apt-get update && " +
-                    "apt-get install -y --no-install-recommends ${packages.joinToString(" ")} && " +
-                    "apt-get clean && rm -rf /var/lib/apt/lists/*",
+            guestCommand = listOf("/usr/bin/env", "bash", "-lc", command),
+        )
+        val native = running as? NativeSpawnProcess
+        val collected = StringBuilder()
+        try {
+            withTimeout(timeoutMs) {
+                var offset = 0L
+                var pending = ""
+                while (running.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
+                    coroutineContext.ensureActive()
+                    val file = native?.outputFile
+                    if (file != null && file.length() > offset) {
+                        RandomAccessFile(file, "r").use { input ->
+                            input.seek(offset)
+                            val available = (input.length() - offset).coerceAtMost(256 * 1024).toInt()
+                            val bytes = ByteArray(available)
+                            input.readFully(bytes)
+                            offset += available
+                            pending += bytes.toString(Charsets.UTF_8).replace('\r', '\n')
+                        }
+                        val parts = pending.split('\n')
+                        pending = parts.last()
+                        for (raw in parts.dropLast(1)) {
+                            val line = sanitizeTerminalLine(raw)
+                            if (line.isNotBlank()) {
+                                collected.appendLine(line)
+                                if (collected.length > MAX_COLLECTED_OUTPUT) collected.delete(0, collected.length - MAX_COLLECTED_OUTPUT)
+                                onProgress(
+                                    RuntimeInstallProgress(
+                                        message = line,
+                                        fraction = fraction,
+                                        terminalLine = line,
+                                        indeterminate = true,
+                                        event = RuntimeInstallEvent.OUTPUT,
+                                    ),
+                                )
+                            }
+                        }
+                    } else {
+                        delay(80)
+                    }
+                }
+                sanitizeTerminalLine(pending).takeIf(String::isNotBlank)?.let { line ->
+                    collected.appendLine(line)
+                    onProgress(RuntimeInstallProgress(line, fraction, terminalLine = line, indeterminate = true, event = RuntimeInstallEvent.OUTPUT))
+                }
+            }
+        } finally {
+            if (running.isAlive) running.destroy()
+        }
+        val exit = running.waitFor()
+        onProgress(
+            RuntimeInstallProgress(
+                message = if (exit == 0) "Command completed" else "Command failed (exit $exit)",
+                fraction = fraction,
+                terminalLine = "[exit $exit] $displayCommand",
+                event = RuntimeInstallEvent.COMMAND_COMPLETED,
             ),
         )
-        withTimeout(15 * 60 * 1_000L) {
-            while (install.isAlive) delay(100)
-        }
-        val installExit = install.waitFor()
-        val installOutput = (install as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
-        check(installExit == 0) {
-            installOutput.takeLast(1_000).ifBlank { "Could not install: ${packages.joinToString(" ")}" }
-        }
+        check(exit == 0) { collected.toString().trim().takeLast(1_000).ifBlank { failureMessage } }
     }
+
+    private fun sanitizeTerminalLine(raw: String): String = raw
+        .replace(ANSI_ESCAPE, "")
+        .filter { it == '\t' || it.code >= 32 }
+        .take(MAX_TERMINAL_LINE)
 
     private suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
         val verify = process(
@@ -481,7 +612,7 @@ class RuntimeInstaller(private val context: Context) {
             argv = args,
             environment = buildMap {
                 put("HOME", "/root")
-                put("PATH", "/usr/local/bin:/usr/bin:/bin")
+                put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
                 put("LANG", "C.UTF-8")
                 put("TERM", "xterm-256color")
                 put("LD_LIBRARY_PATH", context.applicationInfo.nativeLibraryDir)
@@ -678,17 +809,23 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     ) {
         destination.parentFile?.mkdirs()
         val temporary = File(destination.parentFile, "${destination.name}.part")
-        temporary.delete()
+        var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 20_000
         connection.readTimeout = 120_000
         connection.instanceFollowRedirects = true
+        if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
         check(connection.responseCode in 200..299) { "Download failed with HTTP ${connection.responseCode}" }
-        val total = connection.contentLengthLong
+        val resumed = connection.responseCode == HttpURLConnection.HTTP_PARTIAL && existing > 0L
+        if (!resumed) {
+            temporary.delete()
+            existing = 0L
+        }
+        val total = connection.contentLengthLong.takeIf { it >= 0L }?.plus(existing) ?: -1L
         connection.inputStream.use { input ->
-            FileOutputStream(temporary).use { output ->
+            FileOutputStream(temporary, resumed).use { output ->
                 val buffer = ByteArray(128 * 1024)
-                var downloaded = 0L
+                var downloaded = existing
                 while (true) {
                     val count = input.read(buffer)
                     if (count < 0) break
@@ -700,7 +837,10 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         }
         connection.disconnect()
         val actual = sha256(temporary)
-        check(actual.equals(expectedSha256, ignoreCase = true)) { "Downloaded file checksum did not match" }
+        if (!actual.equals(expectedSha256, ignoreCase = true)) {
+            temporary.delete()
+            error("Downloaded file checksum did not match")
+        }
         destination.delete()
         check(temporary.renameTo(destination)) { "Could not finish download" }
     }
@@ -739,5 +879,9 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val NODE_VERSION = "v24.19.0"
         private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
         private const val CORE_TOOLS_VERSION = "core-v1"
+        private const val SYSTEM_UPGRADE_VERSION = "ubuntu-maintenance-v1"
+        private const val MAX_TERMINAL_LINE = 500
+        private const val MAX_COLLECTED_OUTPUT = 24_000
+        private val ANSI_ESCAPE = Regex("\\u001B(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001B\\\\))")
     }
 }

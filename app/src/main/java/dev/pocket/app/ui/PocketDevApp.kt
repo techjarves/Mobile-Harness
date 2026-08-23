@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -55,27 +56,35 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
@@ -91,11 +100,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -107,6 +119,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -138,10 +151,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.pocket.app.model.ActivityItem
 import dev.pocket.app.model.ChangeItem
 import dev.pocket.app.model.ChatMessage
+import dev.pocket.app.model.ChatAttachment
 import dev.pocket.app.model.DevStack
 import dev.pocket.app.model.DiffLine
 import dev.pocket.app.model.DiffLineType
 import dev.pocket.app.model.Project
+import dev.pocket.app.model.ProjectKind
 import dev.pocket.app.model.ProjectChat
 import dev.pocket.app.model.ProviderKind
 import dev.pocket.app.model.ProviderProfile
@@ -149,6 +164,7 @@ import dev.pocket.app.model.ToolRequest
 import dev.pocket.app.model.WorkspaceEntry
 import dev.pocket.app.model.projectSlug
 import dev.pocket.app.runtime.RuntimeExecutionService
+import dev.pocket.app.runtime.RuntimeSetupService
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -163,6 +179,8 @@ import dev.pocket.app.ui.theme.PocketBlue
 import dev.pocket.app.ui.theme.PocketGreen
 import dev.pocket.app.ui.theme.PocketOrange
 import java.io.ByteArrayInputStream
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -194,17 +212,20 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         }
     }
     when {
+        state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(state)
+        !state.backgroundSetupComplete && state.startupStage == StartupStage.SETUP_REQUIRED ->
+            BackgroundTaskSetupScreen(onContinue = viewModel::finishBackgroundSetup)
         state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(
             selectedStacks = state.selectedDevStacks,
             onToggleStack = viewModel::toggleDevStack,
             onDownload = viewModel::startRuntimeSetup,
         )
         state.startupStage == StartupStage.INSTALLING ||
-            state.startupStage == StartupStage.INITIALIZING ||
-            state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(state)
+            state.startupStage == StartupStage.INITIALIZING -> StartupLoadingScreen(state)
         state.startupStage == StartupStage.ERROR -> StartupErrorScreen(
             message = state.startupError,
             isOffline = state.startupErrorIsOffline,
+            logs = state.startupLogs,
             onRetry = viewModel::retryStartup,
         )
         state.startupStage == StartupStage.MODEL_SETUP -> ProviderSetupScreen(
@@ -242,6 +263,9 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onTerminalCancel = viewModel::cancelProjectTerminalCommand,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
             onExportProject = viewModel::exportActiveProject,
+            onAddAttachments = viewModel::addChatAttachments,
+            onRemoveAttachment = viewModel::removePendingAttachment,
+            onOpenAttachment = viewModel::openChatAttachment,
         )
         else -> RootScreenHost(state, viewModel)
     }
@@ -282,7 +306,6 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        RuntimeExecutionService.ensureNotificationChannels(context)
         notificationGranted = notificationsAllowed()
         batteryGranted = batteryUnrestricted()
     }
@@ -324,10 +347,10 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
             Spacer(Modifier.height(28.dp))
             BrandMark()
             Spacer(Modifier.height(20.dp))
-            Text("Ready for background work", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Prepare for reliable setup", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Complete these safeguards so long coding tasks remain visible, reliable, and under your control.",
+                "Initial setup usually takes 10–12 minutes. You may leave Pocket Dev in the background while it works.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -387,8 +410,13 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
                             when (currentStep) {
                                 0 -> when {
                                     notificationGranted -> currentStep = 1
-                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationDenied ->
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationDenied -> {
+                                        // Targets below API 33 can have notification prompts tied to
+                                        // channel creation. Create channels only after this explicit tap.
+                                        RuntimeExecutionService.ensureNotificationChannels(context)
+                                        RuntimeSetupService.ensureNotificationChannel(context)
                                         notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
                                     else -> notificationSettingsLauncher.launch(
                                         Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(
                                             Settings.EXTRA_APP_PACKAGE,
@@ -434,12 +462,20 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
                         Spacer(Modifier.width(8.dp))
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp))
                     }
+                    if (currentStep < 2 && !currentGranted) {
+                        TextButton(
+                            onClick = { currentStep += 1 },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (currentStep == 0) "Continue without notifications" else "Continue without battery exemption")
+                        }
+                    }
                 }
             }
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "Required for background coding tasks. Android can still stop exceptionally heavy work when the device is low on memory.",
+                "You can change these settings later. Android may still stop exceptionally heavy work when the device is low on memory.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 10.5.sp,
                 lineHeight = 15.sp,
@@ -942,53 +978,116 @@ private fun SpecRow(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun StartupLoadingScreen(state: AppUiState) {
     val installing = state.startupStage == StartupStage.INSTALLING
-    Scaffold { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (installing) "Set up Pocket Dev" else "Pocket Dev") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        },
+    ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(28.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.Top,
         ) {
-            BrandMark()
-            Spacer(Modifier.height(28.dp))
+            if (installing) {
+                StepDots(0)
+                Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "STEP 1 OF 3",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PocketOrange,
+                        letterSpacing = 1.1.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(50),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Default.Shield, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Local setup", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             Text(
-                if (installing) "Building your pocket workspace" else "Opening Pocket Dev",
+                if (installing) "Build your workspace" else "Opening Pocket Dev",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                state.startupMessage,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(28.dp))
-            LinearProgressIndicator(
-                progress = { state.startupProgress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(10.dp),
-                color = PocketOrange,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${(state.startupProgress * 100).toInt()}%", fontWeight = FontWeight.Bold)
-                state.startupBytes?.let { (downloaded, total) ->
-                    Text("${formatMegabytes(downloaded)} / ${formatMegabytes(total)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Box(Modifier.fillMaxWidth().height(42.dp), contentAlignment = Alignment.CenterStart) {
+                Text(
+                    state.startupMessage,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF101722),
+                border = BorderStroke(1.dp, Color(0xFF263247)),
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Installation progress", color = Color(0xFFE6EDF3), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        Text("${(state.startupProgress * 100).toInt()}%", color = Color(0xFFE6EDF3), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { state.startupProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
+                        color = PocketOrange,
+                        trackColor = Color(0xFF202A3A),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth().height(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (installing) "Usually 10–12 minutes" else "Starting local tools",
+                            color = Color(0xFF8F9AAA),
+                            fontSize = 11.sp,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        state.startupBytes?.let { (downloaded, total) ->
+                            Text(
+                                "${formatMegabytes(downloaded)} / ${formatMegabytes(total)}",
+                                color = Color(0xFF8F9AAA),
+                                fontSize = 11.sp,
+                            )
+                        }
+                    }
                 }
             }
             if (installing) {
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    "Keep Pocket Dev open during the first setup.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
                 SetupLogPanel(
                     logs = state.startupLogs.ifEmpty { listOf("\$ ${state.startupMessage}") },
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "You can leave Pocket Dev in the background and follow setup from the notification.",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
@@ -998,12 +1097,19 @@ private fun StartupLoadingScreen(state: AppUiState) {
 @Composable
 private fun SetupLogPanel(logs: List<String>) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var followLatest by rememberSaveable { mutableStateOf(true) }
     val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(logs.size, logs.lastOrNull()) {
-        if (expanded) {
+        if (expanded && followLatest) {
             delay(20)
             scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
+    LaunchedEffect(scrollState.isScrollInProgress) {
+        if (!scrollState.isScrollInProgress && expanded) {
+            followLatest = scrollState.maxValue - scrollState.value < 32
         }
     }
 
@@ -1011,9 +1117,9 @@ private fun SetupLogPanel(logs: List<String>) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded },
-        color = Color(0xFF090D14),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, Color(0xFF273244)),
+        color = Color(0xFF101722),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, Color(0xFF263247)),
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1052,13 +1158,13 @@ private fun SetupLogPanel(logs: List<String>) {
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    logs.forEachIndexed { index, line ->
+                    logs.forEach { line ->
                         Text(
                             text = line,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
-                            color = if (index == logs.lastIndex) PocketGreen else Color(0xFFC9D1D9),
+                            color = Color(0xFFC9D1D9),
                         )
                     }
                     Text(
@@ -1068,14 +1174,24 @@ private fun SetupLogPanel(logs: List<String>) {
                         color = PocketOrange,
                     )
                 }
+                if (!followLatest) {
+                    TextButton(
+                        onClick = {
+                            followLatest = true
+                            scope.launch { scrollState.animateScrollTo(scrollState.maxValue) }
+                        },
+                        modifier = Modifier.align(Alignment.End),
+                    ) { Text("Jump to latest") }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun StartupErrorScreen(message: String?, isOffline: Boolean, onRetry: () -> Unit) {
+private fun StartupErrorScreen(message: String?, isOffline: Boolean, logs: List<String>, onRetry: () -> Unit) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     Scaffold { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(28.dp),
@@ -1096,6 +1212,20 @@ private fun StartupErrorScreen(message: String?, isOffline: Boolean, onRetry: ()
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
+            if (logs.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(logs.joinToString("\n")))
+                        Toast.makeText(context, "Setup log copied", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Copy setup logs")
+                }
+            }
             Spacer(Modifier.height(24.dp))
             if (isOffline) {
                 Button(
@@ -1130,6 +1260,8 @@ private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
+    val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
+    val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -1142,7 +1274,9 @@ private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
                         icon = { Icon(tab.icon, contentDescription = tab.label) },
                         label = { Text(tab.label, fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
                         ),
                     )
                 }
@@ -1155,6 +1289,10 @@ private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
                     state = state,
                     onOpen = viewModel::openProject,
                     onCreate = viewModel::createProject,
+                    onCreateQuickChat = viewModel::createQuickChat,
+                    onRenameQuickChat = viewModel::renameQuickChat,
+                    onDeleteQuickChat = viewModel::deleteQuickChat,
+                    onConvertQuickChat = viewModel::convertQuickChat,
                     onSettings = { screen = RootScreen.SETTINGS },
                     onPing = viewModel::pingApi,
                     onToggleTheme = viewModel::toggleTheme,
@@ -1166,6 +1304,8 @@ private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
                     onClear = viewModel::clearTerminal,
                     onToggleTheme = viewModel::toggleTheme,
                     themeMode = state.themeMode,
+                    liveOutput = terminalLiveOutput,
+                    currentCommand = terminalCurrentCommand,
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
@@ -1275,7 +1415,6 @@ private fun ProviderSetupScreen(
                     onBaseUrl = { baseUrl = it },
                     onModel = { model = it },
                     onApiKey = { apiKey = it },
-                    onBack = { step = 1 },
                     hasStoredSecret = initial.kind == selected && initial.hasSecret,
                     onDiscover = { onDiscover(ProviderProfile(selected, baseUrl.trim(), model.trim()), apiKey) },
                     onValidate = { models -> onValidate(ProviderProfile(selected, baseUrl.trim(), model.trim()), apiKey, models) },
@@ -1517,6 +1656,7 @@ private fun ProviderChoiceRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProviderCredentialsStep(
     provider: ProviderKind,
@@ -1526,7 +1666,6 @@ private fun ProviderCredentialsStep(
     onBaseUrl: (String) -> Unit,
     onModel: (String) -> Unit,
     onApiKey: (String) -> Unit,
-    onBack: () -> Unit,
     hasStoredSecret: Boolean,
     onDiscover: suspend () -> ModelDiscoveryResult,
     onValidate: suspend (List<DiscoveredModel>) -> ConnectionValidation,
@@ -1538,7 +1677,120 @@ private fun ProviderCredentialsStep(
     var isValidating by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
+    var showModels by rememberSaveable { mutableStateOf(false) }
+    var modelSearch by rememberSaveable { mutableStateOf("") }
+    val modelSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val hasKey = apiKey.isNotBlank() || hasStoredSecret
+    val filteredModels = remember(models, modelSearch) {
+        val query = modelSearch.trim()
+        if (query.isEmpty()) models else models.filter {
+            it.id.contains(query, ignoreCase = true) || it.displayName.contains(query, ignoreCase = true)
+        }
+    }
+
+    fun discoverModels(openWhenReady: Boolean = true) {
+        scope.launch {
+            isDiscovering = true
+            status = null
+            when (val result = onDiscover()) {
+                is ModelDiscoveryResult.Success -> {
+                    models = result.models
+                    statusOk = true
+                    status = "Found ${result.models.size} available model${if (result.models.size == 1) "" else "s"}."
+                    if (model.isBlank() && result.models.isNotEmpty()) onModel(result.models.first().id)
+                    if (openWhenReady && result.models.isNotEmpty()) showModels = true
+                }
+                is ModelDiscoveryResult.Failure -> {
+                    statusOk = false
+                    status = result.message
+                }
+            }
+            isDiscovering = false
+        }
+    }
+
+    if (showModels) {
+        ModalBottomSheet(
+            onDismissRequest = { showModels = false },
+            sheetState = modelSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f).padding(horizontal = 20.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Available models", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            "${filteredModels.size} of ${models.size} models",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                        )
+                    }
+                    IconButton(
+                        onClick = { discoverModels(openWhenReady = false) },
+                        enabled = !isDiscovering,
+                    ) {
+                        if (isDiscovering) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Refresh, "Refresh models")
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = modelSearch,
+                    onValueChange = { modelSearch = it },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    placeholder = { Text("Search model name or ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                if (filteredModels.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No matching models", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                    ) {
+                        items(filteredModels, key = { it.id }) { option ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onModel(option.id)
+                                        status = null
+                                        modelSearch = ""
+                                        showModels = false
+                                    }
+                                    .padding(vertical = 14.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(option.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (option.displayName != option.id) {
+                                        Text(option.id, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                Box(
+                                    Modifier.size(20.dp).border(
+                                        if (model == option.id) 2.dp else 1.dp,
+                                        if (model == option.id) PocketOrange else MaterialTheme.colorScheme.outline,
+                                        CircleShape,
+                                    ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (model == option.id) Box(Modifier.size(9.dp).background(PocketOrange, CircleShape))
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().imePadding(),
@@ -1546,7 +1798,20 @@ private fun ProviderCredentialsStep(
         verticalArrangement = Arrangement.spacedBy(13.dp),
     ) {
         item {
-            Text(provider.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("STEP 3 OF 3", color = PocketOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(Modifier.weight(1f))
+                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = CircleShape) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Key, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Encrypted locally", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(provider.title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(5.dp))
             Text(
                 if (provider.protocol.name.startsWith("OPENAI")) "Pocket Dev will translate Claude Code requests for this provider."
                 else "Claude Code will connect through this API endpoint.",
@@ -1554,108 +1819,71 @@ private fun ProviderCredentialsStep(
             )
         }
         item {
-            OutlinedTextField(
-                baseUrl,
-                { onBaseUrl(it); status = null },
-                label = { Text("Base URL") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            OutlinedTextField(
-                apiKey,
-                { onApiKey(it); status = null },
-                label = { Text(if (hasStoredSecret && apiKey.isBlank()) "API key (saved securely)" else "API key") },
-                placeholder = { if (hasStoredSecret) Text("Leave blank to keep saved key") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    OutlinedTextField(
+                        baseUrl,
+                        { onBaseUrl(it); status = null; models = emptyList() },
+                        label = { Text("Base URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        apiKey,
+                        { onApiKey(it); status = null },
+                        label = { Text("API key") },
+                        placeholder = { Text(if (hasStoredSecret) "Saved securely — leave blank to keep it" else "Enter your API key") },
+                        supportingText = {
+                            if (hasStoredSecret && apiKey.isBlank()) Text("A saved key is ready to use")
+                        },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        model,
+                        { onModel(it); status = null },
+                        label = { Text("Model name") },
+                        supportingText = { Text("Select an available model or enter an exact model ID.") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
         item {
             OutlinedButton(
                 onClick = {
-                    scope.launch {
-                        isDiscovering = true
-                        status = null
-                        when (val result = onDiscover()) {
-                            is ModelDiscoveryResult.Success -> {
-                                models = result.models
-                                statusOk = true
-                                status = "Found ${result.models.size} available model${if (result.models.size == 1) "" else "s"}."
-                                if (model.isBlank() && result.models.isNotEmpty()) onModel(result.models.first().id)
-                            }
-                            is ModelDiscoveryResult.Failure -> {
-                                statusOk = false
-                                status = result.message
-                            }
-                        }
-                        isDiscovering = false
-                    }
+                    if (models.isEmpty()) discoverModels() else showModels = true
                 },
                 enabled = baseUrl.isNotBlank() && hasKey && !isDiscovering && !isValidating,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
                 if (isDiscovering) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (models.isEmpty()) "Get available models" else "Refresh model list")
-            }
-        }
-        if (models.isNotEmpty()) {
-            item { Text("Select a model", fontWeight = FontWeight.SemiBold) }
-            items(models, key = { it.id }) { option ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        onModel(option.id)
-                        status = null
-                    },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (model == option.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                    ),
-                    border = CardDefaults.outlinedCardBorder().takeIf { model != option.id },
-                ) {
-                    Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(option.displayName, fontWeight = FontWeight.SemiBold)
-                            if (option.displayName != option.id) Text(option.id, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (model == option.id) Icon(Icons.Default.Check, null)
-                    }
-                }
-            }
-        }
-        item {
-            OutlinedTextField(
-                model,
-                { onModel(it); status = null },
-                label = { Text("Custom model name") },
-                supportingText = { Text("You can type an exact model ID even if it is not listed.") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp)) {
-                Text("The key is encrypted with Android Keystore and never shown again.", Modifier.padding(14.dp), fontSize = 13.sp)
+                Icon(if (models.isEmpty()) Icons.Default.Search else Icons.Default.KeyboardArrowDown, null, Modifier.size(19.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (models.isEmpty()) "Find available models" else "Available models (${models.size})")
             }
         }
         if (status != null) {
             item {
                 Text(
                     status.orEmpty(),
-                    color = if (statusOk) PocketGreen else MaterialTheme.colorScheme.error,
+                    color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                     fontSize = 13.sp,
                 )
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onBack, enabled = !isValidating, modifier = Modifier.weight(1f)) { Text("Back") }
-                Button(
+            Button(
                     onClick = {
                         scope.launch {
                             isValidating = true
@@ -1676,14 +1904,13 @@ private fun ProviderCredentialsStep(
                         }
                     },
                     enabled = baseUrl.isNotBlank() && model.isNotBlank() && hasKey && !isDiscovering && !isValidating,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
                     if (isValidating) {
                         CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(7.dp))
                     }
                     Text(if (isValidating) "Checking" else "Continue")
-                }
             }
         }
     }
@@ -1695,12 +1922,18 @@ private fun ProjectsScreen(
     state: AppUiState,
     onOpen: (Project) -> Unit,
     onCreate: (String) -> Unit,
+    onCreateQuickChat: () -> Unit,
+    onRenameQuickChat: (String, String) -> Unit,
+    onDeleteQuickChat: (String) -> Unit,
+    onConvertQuickChat: (String) -> Unit,
     onSettings: () -> Unit,
     onPing: () -> Unit,
     onToggleTheme: () -> Unit,
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
+    val quickChats = state.projects.filter { it.kind == ProjectKind.QUICK_CHAT }
+    val projects = state.projects.filter { it.kind == ProjectKind.PROJECT }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1728,19 +1961,41 @@ private fun ProjectsScreen(
                 Spacer(Modifier.height(12.dp))
                 ApiStatusChip(state = state, onSettings = onSettings, onPing = onPing)
                 Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = { showCreate = true },
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
-                    shape = RoundedCornerShape(14.dp),
-                ) {
-                    Icon(Icons.Default.Add, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("New project", fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = onCreateQuickChat,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Icon(Icons.Default.Chat, null)
+                        Spacer(Modifier.width(7.dp))
+                        Text("Quick chat", fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(
+                        onClick = { showCreate = true },
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Icon(Icons.Default.Add, null)
+                        Spacer(Modifier.width(7.dp))
+                        Text("New project", fontWeight = FontWeight.SemiBold)
+                    }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text("Your projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
-            if (state.projects.isEmpty()) {
+            if (quickChats.isNotEmpty()) {
+                item { Text("Recent chats", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+                items(quickChats, key = { it.id }) { chat ->
+                    QuickChatCard(
+                        project = chat,
+                        onOpen = { onOpen(chat) },
+                        onRename = { onRenameQuickChat(chat.id, it) },
+                        onDelete = { onDeleteQuickChat(chat.id) },
+                        onConvert = { onConvertQuickChat(chat.id) },
+                    )
+                }
+            }
+            item { Text("Your projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            if (projects.isEmpty()) {
                 item {
                     Card(
                         modifier = Modifier
@@ -1778,7 +2033,7 @@ private fun ProjectsScreen(
                                 textAlign = TextAlign.Center,
                             )
                             Text(
-                                "Tap \"New project\" below to create a starter workspace and begin coding with AI.",
+                                "Create a named project for longer coding work, or start instantly with Quick Chat.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
@@ -1788,7 +2043,7 @@ private fun ProjectsScreen(
                     }
                 }
             } else {
-                items(state.projects, key = { it.id }) { project -> ProjectCard(project) { onOpen(project) } }
+                items(projects, key = { it.id }) { project -> ProjectCard(project) { onOpen(project) } }
             }
         }
     }
@@ -1895,6 +2150,81 @@ private fun ProjectCard(project: Project, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun QuickChatCard(
+    project: Project,
+    onOpen: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+    onConvert: () -> Unit,
+) {
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var showRename by rememberSaveable { mutableStateOf(false) }
+    var showDelete by rememberSaveable { mutableStateOf(false) }
+    var renameText by rememberSaveable(project.id) { mutableStateOf(project.name) }
+    Card(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(Modifier.padding(start = 14.dp, top = 14.dp, bottom = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = RoundedCornerShape(14.dp), color = PocketOrange.copy(alpha = 0.12f)) {
+                Icon(Icons.Default.Chat, null, Modifier.padding(13.dp), tint = PocketOrange)
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(project.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${project.slug} · ${project.formattedUpdatedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
+                Text("Private scratch workspace", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "Quick chat options") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        leadingIcon = { Icon(Icons.Default.Edit, null) },
+                        onClick = { menuOpen = false; renameText = project.name; showRename = true },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Convert to project") },
+                        leadingIcon = { Icon(Icons.Default.Folder, null) },
+                        onClick = { menuOpen = false; onConvert() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete") },
+                        leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = { menuOpen = false; showDelete = true },
+                    )
+                }
+            }
+        }
+    }
+    if (showRename) {
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title = { Text("Rename Quick Chat") },
+            text = { OutlinedTextField(renameText, { renameText = it }, label = { Text("Chat title") }, singleLine = true) },
+            confirmButton = {
+                TextButton(onClick = { onRename(renameText); showRename = false }, enabled = renameText.isNotBlank()) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel") } },
+        )
+    }
+    if (showDelete) {
+        AlertDialog(
+            onDismissRequest = { showDelete = false },
+            title = { Text("Delete this Quick Chat?") },
+            text = { Text("Its messages, attachments, terminal history, and private workspace will be permanently removed.") },
+            confirmButton = {
+                TextButton(onClick = { onDelete(); showDelete = false }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel") } },
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspaceScreen(
@@ -1922,6 +2252,9 @@ private fun WorkspaceScreen(
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
     onExportProject: (Uri) -> Unit,
+    onAddAttachments: (List<Uri>) -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -1929,9 +2262,13 @@ private fun WorkspaceScreen(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
         onResult = { uri -> if (uri != null) onExportProject(uri) },
     )
+    val attachmentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = onAddAttachments,
+    )
     val chatListState = rememberLazyListState()
     val chatItemCount = state.messages.size +
-        (if (state.liveProcess.isNotEmpty()) 1 else 0) +
+        (if (state.liveProcess.isNotEmpty() || state.liveThinking) 1 else 0) +
         (if (state.pendingApproval != null) 1 else 0)
 
     LaunchedEffect(state.activeChatId) {
@@ -2045,7 +2382,11 @@ private fun WorkspaceScreen(
                         },
                         icon = { Icon(tab.icon, tab.label) },
                         label = { Text(tab.label, fontSize = 10.sp) },
-                        colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer),
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                        ),
                     )
                 }
             }
@@ -2062,9 +2403,15 @@ private fun WorkspaceScreen(
                     onStop,
                     onApproval,
                     listState = chatListState,
-                    taskStartedAtMillis = state.taskStartedAtMillis,
+                    taskStartedAtMillis = state.workSegmentStartedAtMillis ?: state.taskStartedAtMillis,
                     taskFinishedAtMillis = state.taskFinishedAtMillis,
                     thinkingActive = state.liveThinking,
+                    pendingAttachments = state.pendingAttachments,
+                    onAttach = {
+                        attachmentLauncher.launch(arrayOf("image/*", "text/*", "application/json", "application/xml"))
+                    },
+                    onRemoveAttachment = onRemoveAttachment,
+                    onOpenAttachment = onOpenAttachment,
                     onRunInTerminal = { command ->
                         selectedTab = WorkspaceTab.TERMINAL
                         onTerminalOpened()
@@ -2089,7 +2436,7 @@ private fun WorkspaceScreen(
                     onClear = onTerminalClear,
                     onToggleTheme = {},
                     themeMode = state.themeMode,
-                    title = "Project Terminal",
+                    title = if (state.activeProject?.kind == ProjectKind.QUICK_CHAT) "Quick Chat Terminal" else "Project Terminal",
                     subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
                     liveOutput = state.projectTerminalLiveOutput,
                     currentCommand = state.projectTerminalCommand,
@@ -2389,6 +2736,10 @@ private fun ChatTab(
     taskStartedAtMillis: Long?,
     taskFinishedAtMillis: Long?,
     thinkingActive: Boolean,
+    pendingAttachments: List<ChatAttachment>,
+    onAttach: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
     onRunInTerminal: (String) -> Unit,
 ) {
     var prompt by rememberSaveable { mutableStateOf("") }
@@ -2409,8 +2760,14 @@ private fun ChatTab(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(messages, key = { it.id }) { message -> MessageBubble(message, onRunInTerminal) }
-                if (liveProcess.isNotEmpty()) {
+                items(messages, key = { it.id }) { message ->
+                    if (message.workItems.isNotEmpty() || message.workedMillis > 0L) {
+                        WorkBlockCard(message)
+                    } else {
+                        MessageBubble(message, onRunInTerminal, onOpenAttachment)
+                    }
+                }
+                if (liveProcess.isNotEmpty() || thinkingActive) {
                     item(key = "live-claude-process") {
                         LiveClaudeProcess(
                             processItems = liveProcess,
@@ -2461,31 +2818,46 @@ private fun ChatTab(
             }
         }
         HorizontalDivider()
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Bottom) {
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = { prompt = it },
-                placeholder = { Text("What do you want to build?") },
-                modifier = Modifier.weight(1f).heightIn(min = 56.dp, max = 64.dp),
-                minLines = 1,
-                maxLines = 2,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-            )
-            Spacer(Modifier.width(8.dp))
-            if (isRunning) {
-                IconButton(
-                    onClick = onStop,
-                    modifier = Modifier.background(MaterialTheme.colorScheme.error, CircleShape),
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            if (pendingAttachments.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
-                    Icon(Icons.Default.Stop, "Stop AI task", tint = MaterialTheme.colorScheme.onError)
+                    pendingAttachments.forEach { attachment ->
+                        AttachmentChip(attachment = attachment, onOpen = null, onRemove = { onRemoveAttachment(attachment.id) })
+                    }
                 }
-            } else {
-                IconButton(
-                    onClick = { onSend(prompt); prompt = "" },
-                    enabled = prompt.isNotBlank(),
-                    modifier = Modifier.background(PocketOrange, CircleShape),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Color.Black)
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                IconButton(onClick = onAttach, enabled = !isRunning && pendingAttachments.size < 5) {
+                    Icon(Icons.Default.AttachFile, "Attach files", tint = MaterialTheme.colorScheme.primary)
+                }
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    placeholder = { Text("Message Claude…") },
+                    modifier = Modifier.weight(1f).heightIn(min = 56.dp, max = 160.dp),
+                    minLines = 1,
+                    maxLines = 6,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                )
+                Spacer(Modifier.width(8.dp))
+                if (isRunning) {
+                    IconButton(
+                        onClick = onStop,
+                        modifier = Modifier.background(MaterialTheme.colorScheme.error, CircleShape),
+                    ) {
+                        Icon(Icons.Default.Stop, "Stop AI task", tint = MaterialTheme.colorScheme.onError)
+                    }
+                } else {
+                    IconButton(
+                        onClick = { onSend(prompt); prompt = "" },
+                        enabled = prompt.isNotBlank() || pendingAttachments.isNotEmpty(),
+                        modifier = Modifier.background(PocketOrange, CircleShape),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Color.Black)
+                    }
                 }
             }
         }
@@ -2500,9 +2872,8 @@ private fun LiveClaudeProcess(
     finishedAtMillis: Long?,
     thinkingActive: Boolean,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(true) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val processListState = rememberLazyListState()
-    LaunchedEffect(isRunning) { expanded = isRunning }
     // Jump straight to the newest step whenever the panel opens…
     LaunchedEffect(expanded) {
         if (expanded && processItems.isNotEmpty()) processListState.scrollToItem(processItems.lastIndex)
@@ -2531,34 +2902,29 @@ private fun LiveClaudeProcess(
                 Icon(Icons.Default.Terminal, null, tint = PocketOrange, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Live Claude Code", fontWeight = FontWeight.SemiBold)
+                    val elapsedSeconds = startedAtMillis?.let { rememberLiveElapsedSeconds(it).toLong() } ?: 0L
                     Text(
-                        if (isRunning) {
-                            when {
-                                thinkingActive -> "Thinking…"
-                                else -> processItems.lastOrNull { !it.isComplete }?.title ?: "Working in real time"
-                            }
-                        } else {
-                            completedProcessSummary(processItems, startedAtMillis, finishedAtMillis)
-                        },
+                        if (thinkingActive && processItems.isEmpty()) "Thinking for ${formatDuration(elapsedSeconds)}"
+                        else "Working for ${formatDuration(elapsedSeconds)}",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        processItems.lastOrNull()?.title ?: "Claude is considering the request",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                }
-                if (isRunning && startedAtMillis != null) {
-                    Text(
-                        formatDuration(rememberLiveElapsedSeconds(startedAtMillis).toLong()),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = PocketOrange,
-                    )
-                    Spacer(Modifier.width(8.dp))
                 }
                 if (isRunning) {
                     CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = PocketOrange)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (expanded) "Hide" else "Show", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    if (expanded) "Collapse work" else "Expand work",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
 
             if (expanded) {
@@ -2600,12 +2966,54 @@ private fun LiveClaudeProcess(
                         }
                     }
                 }
-                Text(
-                    "Shows what Claude Code is really doing — tools, commands, and file edits. Private reasoning and credentials are never displayed.",
-                    fontSize = 10.sp,
-                    lineHeight = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (processItems.isEmpty()) {
+                    Text("Claude is considering the request. Private reasoning is not displayed.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkBlockCard(message: ChatMessage) {
+    var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
+    val title = if (message.workItems.isEmpty()) "Thought for" else "Worked for"
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(horizontal = 13.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(9.dp))
+                Text("$title ${formatDuration((message.workedMillis / 1_000L).coerceAtLeast(1L))}", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(formatMessageTime(message), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(5.dp))
+                Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, if (expanded) "Collapse" else "Expand", Modifier.size(18.dp))
+            }
+            if (expanded) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    if (message.workItems.isEmpty()) {
+                        Text("Claude considered the request. Private reasoning is not displayed.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        message.workItems.forEach { item ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Default.Check, null, Modifier.padding(top = 2.dp).size(15.dp), tint = PocketGreen)
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(item.title, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                    if (item.detail.isNotBlank()) Text(item.detail, fontSize = 11.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = if (item.isCommand) FontFamily.Monospace else FontFamily.Default)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2647,47 +3055,83 @@ private fun formatDuration(totalSeconds: Long): String = when {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Unit) {
-    val clipboard = LocalClipboardManager.current
+private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Unit, onOpenAttachment: (ChatAttachment) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(18.dp),
             modifier = Modifier.fillMaxWidth(if (message.fromUser) .82f else .92f),
         ) {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 4.dp),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    IconButton(
-                        onClick = { clipboard.setText(AnnotatedString(message.text)) },
-                        modifier = Modifier.size(28.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.ContentCopy,
-                            contentDescription = "Copy message",
-                            modifier = Modifier.size(15.dp),
-                            tint = if (message.fromUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+            Column(Modifier.padding(top = 12.dp)) {
                 SelectionContainer {
                     if (message.fromUser) {
                         Text(
                             text = message.text,
-                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 8.dp),
                             style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                     } else {
                         MarkdownText(
                             markdown = message.text,
-                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 8.dp),
                             color = MaterialTheme.colorScheme.onSurface,
                             onRunCode = onRunInTerminal,
                         )
                     }
+                }
+                if (message.attachments.isNotEmpty()) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        message.attachments.forEach { attachment ->
+                            AttachmentChip(attachment = attachment, onOpen = { onOpenAttachment(attachment) }, onRemove = null)
+                        }
+                    }
+                }
+                Text(
+                    formatMessageTime(message),
+                    modifier = Modifier.align(Alignment.End).padding(start = 14.dp, end = 14.dp, bottom = 9.dp),
+                    fontSize = 10.sp,
+                    color = if (message.fromUser) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+private val messageTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a")
+    .withZone(ZoneId.systemDefault())
+
+private fun formatMessageTime(message: ChatMessage): String = messageTimeFormatter.format(message.createdAt)
+
+@Composable
+private fun AttachmentChip(
+    attachment: ChatAttachment,
+    onOpen: (() -> Unit)?,
+    onRemove: (() -> Unit)?,
+) {
+    val icon = when {
+        attachment.mimeType.startsWith("image/") -> Icons.Default.Image
+        else -> Icons.Default.Description
+    }
+    Surface(
+        modifier = Modifier.then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(Modifier.padding(start = 9.dp, end = if (onRemove == null) 10.dp else 3.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(17.dp), tint = PocketOrange)
+            Spacer(Modifier.width(7.dp))
+            Column(Modifier.widthIn(max = 180.dp)) {
+                Text(attachment.displayName, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(formatFileSize(attachment.sizeBytes), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (onRemove != null) {
+                IconButton(onClick = onRemove, modifier = Modifier.size(30.dp)) {
+                    Icon(Icons.Default.Close, "Remove attachment", Modifier.size(15.dp))
                 }
             }
         }
