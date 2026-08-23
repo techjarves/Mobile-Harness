@@ -93,6 +93,9 @@ data class AppUiState(
     val changes: List<ChangeItem> = emptyList(),
     val activity: List<ActivityItem> = emptyList(),
     val liveProcess: List<ActivityItem> = emptyList(),
+    val liveThinking: Boolean = false,
+    val taskStartedAtMillis: Long? = null,
+    val taskFinishedAtMillis: Long? = null,
     val previewReady: Boolean = false,
     val previewUrl: String? = null,
     val isRunning: Boolean = false,
@@ -687,6 +690,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeChatId = activeChat.id,
                 messages = msgs,
                 liveProcess = emptyList(),
+                liveThinking = false,
+                taskStartedAtMillis = null,
+                taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
                 filesLoading = true,
@@ -763,6 +769,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeProject = project,
                 messages = listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")),
                 liveProcess = emptyList(),
+                liveThinking = false,
+                taskStartedAtMillis = null,
+                taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
                 filesLoading = true,
@@ -893,6 +902,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeChatId = chat.id,
                 messages = listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")),
                 liveProcess = emptyList(),
+                liveThinking = false,
+                taskStartedAtMillis = null,
+                taskFinishedAtMillis = null,
                 pendingApproval = null,
             )
         }
@@ -910,6 +922,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeChatId = chat.id,
                 messages = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) },
                 liveProcess = emptyList(),
+                liveThinking = false,
+                taskStartedAtMillis = null,
+                taskFinishedAtMillis = null,
                 pendingApproval = null,
             )
         }
@@ -1021,6 +1036,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isRunning = true,
                 activity = listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity,
                 liveProcess = listOf(ActivityItem("Starting Claude Code", "Launching the project agent…", false)),
+                liveThinking = false,
+                taskStartedAtMillis = System.currentTimeMillis(),
+                taskFinishedAtMillis = null,
             )
         }
         touchProject(project.id)
@@ -1115,66 +1133,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         current.copy(
                             messages = current.messages.dropLast(1) + lastMsg.copy(text = lastMsg.text + event.text),
                             liveProcess = process,
+                            liveThinking = false,
                         )
                     } else {
                         // Start a new assistant message
                         current.copy(
                             messages = current.messages + ChatMessage(fromUser = false, text = event.text),
                             liveProcess = process,
+                            liveThinking = false,
                         )
                     }
                 }
-                is RuntimeEvent.ReasoningProgress -> {
-                    val withoutPrevious = current.activity.filterNot { it.title == "Claude is reasoning" && !it.isComplete }
-                    val liveReasoning = current.liveProcess.indexOfLast { it.title == "Claude is reasoning" && !it.isComplete }
-                    val process = if (liveReasoning >= 0) {
-                        current.liveProcess.toMutableList().also { items ->
-                            items[liveReasoning] = items[liveReasoning].copy(
-                                detail = "${event.estimatedTokens} reasoning tokens processed",
-                            )
-                        }
-                    } else {
-                        current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                            ActivityItem("Claude is reasoning", "${event.estimatedTokens} reasoning tokens processed", false)
-                    }
-                    current.copy(
-                        activity = listOf(
-                            ActivityItem(
-                                "Claude is reasoning",
-                                "${event.estimatedTokens} reasoning tokens processed",
-                                false,
-                            ),
-                        ) + withoutPrevious,
-                        liveProcess = process,
-                    )
-                }
+                // The CLI reports that Claude is actively thinking. Show a simple
+                // "Thinking…" status instead of private reasoning or token counters.
+                is RuntimeEvent.ReasoningProgress -> current.copy(liveThinking = true)
                 is RuntimeEvent.ToolStarted -> current.copy(
-                    activity = listOf(ActivityItem("Running ${event.toolName}", event.detail, false)) +
-                        current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
+                    activity = listOf(
+                        ActivityItem(
+                            "Running ${event.toolName}",
+                            event.detail,
+                            false,
+                            isCommand = event.toolName == "Bash",
+                        ),
+                    ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
-                        ActivityItem("Running ${event.toolName}", event.detail, false),
+                        ActivityItem(
+                            "Running ${event.toolName}",
+                            event.detail,
+                            false,
+                            isCommand = event.toolName == "Bash",
+                        ),
+                    liveThinking = false,
                 )
                 is RuntimeEvent.RuntimeLog -> current.copy(
                     activity = listOf(ActivityItem(event.title, event.detail)) + current.activity,
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
                         ActivityItem(event.title, event.detail),
+                    liveThinking = false,
                 )
                 is RuntimeEvent.ToolRequested -> current.copy(
                     pendingApproval = event.request,
                     activity = listOf(ActivityItem("Waiting for approval", event.request.explanation, false)) + current.activity,
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
                         ActivityItem("Waiting for approval", event.request.explanation, false),
+                    liveThinking = false,
                 )
                 is RuntimeEvent.ToolApproved -> current.copy(
                     pendingApproval = null,
                     activity = listOf(ActivityItem("Applying approved changes", "Editing project files", false)) + current.activity,
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
                         ActivityItem("Action approved", "Claude is continuing the task", false),
+                    liveThinking = false,
                 )
                 is RuntimeEvent.ToolRejected -> current.copy(
                     pendingApproval = null,
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
                         ActivityItem("Action rejected", "Claude will continue without this action"),
+                    liveThinking = false,
                 )
                 is RuntimeEvent.ToolCompleted -> {
                     val runningIndex = current.liveProcess.indexOfLast {
@@ -1182,18 +1197,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val process = if (runningIndex >= 0) {
                         current.liveProcess.toMutableList().also { items ->
-                            items[runningIndex] = ActivityItem("${event.toolName} completed", event.summary)
+                            items[runningIndex] = ActivityItem(
+                                "${event.toolName} completed",
+                                event.summary,
+                                isCommand = event.toolName == "Bash",
+                            )
                         }
                     } else {
-                        current.liveProcess + ActivityItem("${event.toolName} completed", event.summary)
+                        current.liveProcess + ActivityItem(
+                            "${event.toolName} completed",
+                            event.summary,
+                            isCommand = event.toolName == "Bash",
+                        )
                     }
                     current.copy(
                         activity = listOf(ActivityItem(event.summary, event.toolName)) + current.activity,
                         liveProcess = process,
+                        liveThinking = false,
                     )
                 }
                 is RuntimeEvent.FilesChanged -> current.copy(
                     changes = event.changes,
+                    liveThinking = false,
                     liveProcess = if (event.paths.isEmpty()) current.liveProcess else current.liveProcess +
                         ActivityItem(
                             "Files changed",
@@ -1205,6 +1230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     previewUrl = event.url,
                     activity = listOf(ActivityItem("Preview ready", event.url)) + current.activity,
                     liveProcess = current.liveProcess + ActivityItem("Preview ready", event.url),
+                    liveThinking = false,
                 )
                 is RuntimeEvent.SessionCompleted -> current.copy(
                     isRunning = false,
@@ -1213,6 +1239,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
                         ActivityItem("Task completed", "Claude Code finished successfully"),
+                    liveThinking = false,
+                    taskFinishedAtMillis = System.currentTimeMillis(),
                 )
                 is RuntimeEvent.SessionFailed -> current.copy(
                     isRunning = false,
@@ -1226,6 +1254,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activity = listOf(ActivityItem("Task stopped", event.reason)) + current.activity,
                     liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } +
                         ActivityItem("Task stopped", event.reason),
+                    liveThinking = false,
+                    taskFinishedAtMillis = System.currentTimeMillis(),
                 )
             }
         }

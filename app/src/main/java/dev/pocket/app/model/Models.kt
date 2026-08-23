@@ -152,4 +152,9 @@ data class ChangeItem(
     val accepted: Boolean? = null,
 )
 
-data class ActivityItem(val title: String, val detail: String, val isComplete: Boolean = true)
+data class ActivityItem(
+    val title: String,
+    val detail: String,
+    val isComplete: Boolean = true,
+    val isCommand: Boolean = false,
+)

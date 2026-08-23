@@ -51,3 +51,7 @@ captures/
 .AppleDouble
 .LSSharedFileList
 ._*
+
+
+
+.gradle-home/

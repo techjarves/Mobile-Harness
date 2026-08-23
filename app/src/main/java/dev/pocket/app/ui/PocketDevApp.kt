@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
@@ -97,6 +98,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -1149,6 +1151,9 @@ private fun WorkspaceScreen(
     LaunchedEffect(state.activeChatId) {
         if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
     }
+    // Follow new output only while the reader is already looking at the latest
+    // messages. If the user scrolls up to read history, streaming must never
+    // drag them back down; the "Latest" chip lets them jump back when ready.
     LaunchedEffect(
         state.messages.size,
         state.messages.lastOrNull()?.text?.length,
@@ -1156,7 +1161,10 @@ private fun WorkspaceScreen(
         state.liveProcess.lastOrNull()?.detail,
         state.pendingApproval,
     ) {
-        if (state.isRunning && chatItemCount > 0) {
+        if (!state.isRunning || chatItemCount <= 0) return@LaunchedEffect
+        val lastVisibleIndex = chatListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        val readerIsNearBottom = lastVisibleIndex >= chatItemCount - 3
+        if (readerIsNearBottom) {
             chatListState.animateScrollToItem(chatItemCount - 1)
         }
     }
@@ -1268,6 +1276,9 @@ private fun WorkspaceScreen(
                     onStop,
                     onApproval,
                     listState = chatListState,
+                    taskStartedAtMillis = state.taskStartedAtMillis,
+                    taskFinishedAtMillis = state.taskFinishedAtMillis,
+                    thinkingActive = state.liveThinking,
                     onRunInTerminal = { command ->
                         selectedTab = WorkspaceTab.TERMINAL
                         onTerminalOpened()
@@ -1589,21 +1600,79 @@ private fun ChatTab(
     onStop: () -> Unit,
     onApproval: (Boolean) -> Unit,
     listState: LazyListState,
+    taskStartedAtMillis: Long?,
+    taskFinishedAtMillis: Long?,
+    thinkingActive: Boolean,
     onRunInTerminal: (String) -> Unit,
 ) {
     var prompt by rememberSaveable { mutableStateOf("") }
+    val chatScope = rememberCoroutineScope()
+    // True while the newest item (message, live panel, or approval card) is on screen.
+    val readerAtBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf true
+            lastVisible >= info.totalItemsCount - 3
+        }
+    }
     Column(Modifier.fillMaxSize().imePadding()) {
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            state = listState,
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(messages, key = { it.id }) { message -> MessageBubble(message, onRunInTerminal) }
-            if (liveProcess.isNotEmpty()) {
-                item(key = "live-claude-process") { LiveClaudeProcess(liveProcess, isRunning) }
+        Box(Modifier.weight(1f)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(messages, key = { it.id }) { message -> MessageBubble(message, onRunInTerminal) }
+                if (liveProcess.isNotEmpty()) {
+                    item(key = "live-claude-process") {
+                        LiveClaudeProcess(
+                            processItems = liveProcess,
+                            isRunning = isRunning,
+                            startedAtMillis = taskStartedAtMillis,
+                            finishedAtMillis = taskFinishedAtMillis,
+                            thinkingActive = thinkingActive,
+                        )
+                    }
+                }
+                approval?.let { request -> item { ApprovalCard(request, onApproval) } }
             }
-            approval?.let { request -> item { ApprovalCard(request, onApproval) } }
+            if (isRunning && !readerAtBottom) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 10.dp)
+                        .clickable {
+                            chatScope.launch {
+                                listState.animateScrollToItem(
+                                    (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0),
+                                )
+                            }
+                        },
+                    shape = CircleShape,
+                    shadowElevation = 4.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(
+                        Modifier.padding(start = 13.dp, end = 15.dp, top = 7.dp, bottom = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "Latest",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
         }
         HorizontalDivider()
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Bottom) {
@@ -1638,12 +1707,29 @@ private fun ChatTab(
 }
 
 @Composable
-private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boolean) {
+private fun LiveClaudeProcess(
+    processItems: List<ActivityItem>,
+    isRunning: Boolean,
+    startedAtMillis: Long?,
+    finishedAtMillis: Long?,
+    thinkingActive: Boolean,
+) {
     var expanded by rememberSaveable { mutableStateOf(true) }
     val processListState = rememberLazyListState()
     LaunchedEffect(isRunning) { expanded = isRunning }
-    LaunchedEffect(processItems.size, processItems.lastOrNull()?.detail, expanded) {
-        if (expanded && processItems.isNotEmpty()) processListState.animateScrollToItem(processItems.lastIndex)
+    // Jump straight to the newest step whenever the panel opens…
+    LaunchedEffect(expanded) {
+        if (expanded && processItems.isNotEmpty()) processListState.scrollToItem(processItems.lastIndex)
+    }
+    // …then follow new steps only while the reader is already at the bottom,
+    // so scrolling up inside the panel to inspect earlier steps is never fought.
+    LaunchedEffect(processItems.size, processItems.lastOrNull()?.detail) {
+        if (!expanded || processItems.isEmpty()) return@LaunchedEffect
+        val lastVisibleIndex = processListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        val readerIsNearBottom = lastVisibleIndex >= processItems.size - 2
+        if (readerIsNearBottom) {
+            processListState.animateScrollToItem(processItems.lastIndex)
+        }
     }
 
     Card(
@@ -1662,13 +1748,25 @@ private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boole
                     Text("Live Claude Code", fontWeight = FontWeight.SemiBold)
                     Text(
                         if (isRunning) {
-                            processItems.lastOrNull { !it.isComplete }?.title ?: "Working in real time"
+                            when {
+                                thinkingActive -> "Thinking…"
+                                else -> processItems.lastOrNull { !it.isComplete }?.title ?: "Working in real time"
+                            }
                         } else {
-                            "Task completed · ${processItems.size} process steps"
+                            completedProcessSummary(processItems, startedAtMillis, finishedAtMillis)
                         },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                if (isRunning && startedAtMillis != null) {
+                    Text(
+                        formatDuration(rememberLiveElapsedSeconds(startedAtMillis).toLong()),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = PocketOrange,
+                    )
+                    Spacer(Modifier.width(8.dp))
                 }
                 if (isRunning) {
                     CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = PocketOrange)
@@ -1698,9 +1796,10 @@ private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boole
                                     Text(item.title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                     if (item.detail.isNotBlank()) {
                                         Text(
-                                            item.detail,
+                                            if (item.isCommand && !item.isComplete) "$ ${item.detail}" else item.detail,
                                             fontSize = 12.sp,
                                             lineHeight = 17.sp,
+                                            fontFamily = if (item.isCommand) FontFamily.Monospace else FontFamily.Default,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
@@ -1716,7 +1815,7 @@ private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boole
                     }
                 }
                 Text(
-                    "Shows structured progress from Claude Code. Private chain-of-thought and credentials are never displayed.",
+                    "Shows what Claude Code is really doing — tools, commands, and file edits. Private reasoning and credentials are never displayed.",
                     fontSize = 10.sp,
                     lineHeight = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1724,6 +1823,41 @@ private fun LiveClaudeProcess(processItems: List<ActivityItem>, isRunning: Boole
             }
         }
     }
+}
+
+private fun completedProcessSummary(
+    processItems: List<ActivityItem>,
+    startedAtMillis: Long?,
+    finishedAtMillis: Long?,
+): String {
+    val stopped = processItems.lastOrNull()?.title?.startsWith("Task stopped") == true
+    val outcome = if (stopped) "Task stopped" else "Task completed"
+    val steps = "${processItems.size} step${if (processItems.size == 1) "" else "s"}"
+    val duration = startedAtMillis?.let { start ->
+        val end = finishedAtMillis ?: System.currentTimeMillis()
+        formatDuration(((end - start) / 1000L).coerceAtLeast(0))
+    }
+    return if (duration != null) "$outcome · $duration · $steps" else "$outcome · $steps"
+}
+
+@Composable
+private fun rememberLiveElapsedSeconds(startedAtMillis: Long): Int {
+    var seconds by remember(startedAtMillis) {
+        mutableIntStateOf(((System.currentTimeMillis() - startedAtMillis) / 1000L).toInt().coerceAtLeast(0))
+    }
+    LaunchedEffect(startedAtMillis) {
+        while (true) {
+            delay(1_000)
+            seconds = ((System.currentTimeMillis() - startedAtMillis) / 1000L).toInt().coerceAtLeast(0)
+        }
+    }
+    return seconds
+}
+
+private fun formatDuration(totalSeconds: Long): String = when {
+    totalSeconds >= 3_600 -> "${totalSeconds / 3_600}h ${(totalSeconds % 3_600) / 60}m"
+    totalSeconds >= 60 -> "${totalSeconds / 60}m ${totalSeconds % 60}s"
+    else -> "${totalSeconds}s"
 }
 
 @Composable
