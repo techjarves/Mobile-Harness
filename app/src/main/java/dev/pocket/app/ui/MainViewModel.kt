@@ -25,6 +25,7 @@ import dev.pocket.app.network.ModelDiscoveryResult
 import dev.pocket.app.network.ProviderApiClient
 import dev.pocket.app.runtime.ClaudeRuntimeBridge
 import dev.pocket.app.runtime.NativeSpawnProcess
+import dev.pocket.app.runtime.RuntimeInstallProgress
 import dev.pocket.app.runtime.RuntimeInstaller
 import java.io.File
 import java.io.RandomAccessFile
@@ -71,6 +72,7 @@ data class AppUiState(
     val startupProgress: Float = 0f,
     val startupMessage: String = "Checking this device…",
     val startupBytes: Pair<Long, Long>? = null,
+    val startupLogs: List<String> = emptyList(),
     val startupError: String? = null,
     val startupErrorIsOffline: Boolean = false,
     val onboardingComplete: Boolean = false,
@@ -541,6 +543,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupProgress = 0.01f,
                 startupMessage = "Preparing your private coding workspace",
                 startupBytes = null,
+                startupLogs = listOf("\$ Preparing your private coding workspace"),
                 startupError = null,
                 startupErrorIsOffline = false,
             )
@@ -550,11 +553,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     installer.ensureInstalled(stacks) { progress ->
-                        _state.update {
-                            it.copy(
+                        _state.update { current ->
+                            current.copy(
                                 startupProgress = progress.fraction.coerceIn(0f, 1f),
                                 startupMessage = progress.message,
                                 startupBytes = progress.totalBytes?.let { total -> (progress.downloadedBytes ?: 0L) to total },
+                                startupLogs = mergeStartupLog(current.startupLogs, progress),
                             )
                         }
                     }
@@ -585,6 +589,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupProgress = 0.05f,
                 startupMessage = "Opening your private workspace",
                 startupBytes = null,
+                startupLogs = listOf("\$ Opening your private workspace"),
                 startupError = null,
                 startupErrorIsOffline = false,
             )
@@ -592,11 +597,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val result = runCatching {
             withContext(Dispatchers.IO) {
                 installer.initializeExisting { progress ->
-                    _state.update {
-                        it.copy(
+                    _state.update { current ->
+                        current.copy(
                             startupProgress = 0.05f + progress.fraction * 0.95f,
                             startupMessage = progress.message,
                             startupBytes = null,
+                            startupLogs = mergeStartupLog(current.startupLogs, progress),
                         )
                     }
                 }
@@ -612,6 +618,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             showStartupError(result.exceptionOrNull() ?: IllegalStateException("Claude Code initialization failed"))
         }
+    }
+
+    private fun mergeStartupLog(
+        existing: List<String>,
+        progress: RuntimeInstallProgress,
+    ): List<String> {
+        val prefix = "\$ ${progress.message}"
+        val bytes = progress.totalBytes?.let { total ->
+            val downloaded = progress.downloadedBytes ?: 0L
+            " — %.1f / %.1f MB".format(downloaded / 1_048_576.0, total / 1_048_576.0)
+        }.orEmpty()
+        val nextLine = prefix + bytes
+        val updated = if (existing.lastOrNull()?.startsWith(prefix) == true) {
+            existing.dropLast(1) + nextLine
+        } else {
+            existing + nextLine
+        }
+        return updated.takeLast(80)
     }
 
     private fun showStartupError(error: Throwable) {

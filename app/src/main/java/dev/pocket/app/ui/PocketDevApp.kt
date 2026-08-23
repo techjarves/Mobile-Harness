@@ -18,7 +18,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +43,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,18 +52,23 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Notifications
@@ -69,8 +77,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -118,6 +129,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -147,6 +159,7 @@ import androidx.compose.ui.text.AnnotatedString
 import dev.pocket.app.network.ConnectionValidation
 import dev.pocket.app.network.DiscoveredModel
 import dev.pocket.app.network.ModelDiscoveryResult
+import dev.pocket.app.ui.theme.PocketBlue
 import dev.pocket.app.ui.theme.PocketGreen
 import dev.pocket.app.ui.theme.PocketOrange
 import java.io.ByteArrayInputStream
@@ -238,103 +251,268 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
 private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
     val context = LocalContext.current
     val powerManager = context.getSystemService(PowerManager::class.java)
-    fun notificationsAllowed(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+    fun notificationsAllowed(): Boolean {
+        val runtimeGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             androidx.core.content.ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
+        return runtimeGranted && androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
     fun batteryUnrestricted(): Boolean = powerManager.isIgnoringBatteryOptimizations(context.packageName)
 
+    var currentStep by rememberSaveable { mutableIntStateOf(0) }
     var notificationGranted by remember { mutableStateOf(notificationsAllowed()) }
     var batteryGranted by remember { mutableStateOf(batteryUnrestricted()) }
-    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+    var notificationDenied by rememberSaveable { mutableStateOf(false) }
+    var taskProtectionConfirmed by rememberSaveable { mutableStateOf(false) }
+
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notificationGranted = notificationsAllowed()
+        notificationDenied = !granted
+        if (notificationGranted) currentStep = 1
+    }
+    val notificationSettingsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        notificationGranted = notificationsAllowed()
+        if (notificationGranted) currentStep = 1
     }
     val batteryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         batteryGranted = batteryUnrestricted()
+        if (batteryGranted) currentStep = 2
     }
 
     LaunchedEffect(Unit) {
         RuntimeExecutionService.ensureNotificationChannels(context)
         notificationGranted = notificationsAllowed()
+        batteryGranted = batteryUnrestricted()
     }
 
-    Scaffold { padding ->
+    val currentIcon = when (currentStep) {
+        0 -> Icons.Default.Notifications
+        1 -> Icons.Default.BatterySaver
+        else -> Icons.Default.Shield
+    }
+    val currentTitle = when (currentStep) {
+        0 -> "Task notifications"
+        1 -> "Background reliability"
+        else -> "Task protection"
+    }
+    val currentDescription = when (currentStep) {
+        0 -> "See live progress and receive an alert when Claude finishes or needs your attention."
+        1 -> "Allow Pocket Dev to continue a task when you lock the phone or switch to another app."
+        else -> "Keep the CPU awake only while a visible coding task is running, then release it automatically."
+    }
+    val currentPrivacyNote = when (currentStep) {
+        0 -> "Only task progress, completion, and error notifications are sent."
+        1 -> "You remain in control and can stop every task from its notification."
+        else -> "The screen stays off. Protection is capped at 90 minutes and stops with the task."
+    }
+    val currentGranted = when (currentStep) {
+        0 -> notificationGranted
+        1 -> batteryGranted
+        else -> taskProtectionConfirmed
+    }
+
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.Center,
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 24.dp)
+                .verticalScroll(rememberScrollState()),
         ) {
+            Spacer(Modifier.height(28.dp))
             BrandMark()
-            Spacer(Modifier.height(24.dp))
-            Text("Let tasks finish in the background", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(20.dp))
+            Text("Ready for background work", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
             Text(
-                "You can lock your phone or use another app while Pocket Dev keeps working.",
+                "Complete these safeguards so long coding tasks remain visible, reliable, and under your control.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(18.dp))
+            StepDots(currentStep)
+            Spacer(Modifier.height(18.dp))
 
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))) {
-                Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    CheckRow(
-                        Icons.Default.Notifications,
-                        "Task notifications",
-                        if (notificationGranted) "Allowed" else "Get completion and error alerts",
-                        notificationGranted,
-                    )
-                    if (!notificationGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(
-                            onClick = { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Allow notifications") }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))) {
-                Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    CheckRow(
-                        Icons.Default.BatterySaver,
-                        "Background reliability",
-                        if (batteryGranted) "Battery restriction removed" else "Recommended for long tasks",
-                        batteryGranted,
-                    )
-                    if (!batteryGranted) {
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(
-                            onClick = {
-                                val request = Intent(
-                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                    Uri.parse("package:${context.packageName}"),
-                                )
-                                runCatching { batteryLauncher.launch(request) }
-                                    .onFailure {
-                                        context.startActivity(
-                                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
-                                        )
-                                    }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Allow reliable background tasks") }
-                    }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF101722),
+                border = BorderStroke(1.dp, Color(0xFF263247)),
+            ) {
+                Column {
+                    PermissionSummaryRow(Icons.Default.Notifications, "Notifications", notificationGranted, currentStep == 0)
+                    HorizontalDivider(modifier = Modifier.padding(start = 58.dp), color = Color(0xFF202A3A))
+                    PermissionSummaryRow(Icons.Default.BatterySaver, "Background", batteryGranted, currentStep == 1)
+                    HorizontalDivider(modifier = Modifier.padding(start = 58.dp), color = Color(0xFF202A3A))
+                    PermissionSummaryRow(Icons.Default.Shield, "Task protection", taskProtectionConfirmed, currentStep == 2)
                 }
             }
 
             Spacer(Modifier.height(14.dp))
-            Text(
-                "Both options are optional. Android may still stop extremely heavy tasks if the phone runs low on memory.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp,
-            )
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth().height(54.dp)) {
-                Text(if (notificationGranted && batteryGranted) "Continue" else "Continue anyway")
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.24f)),
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(11.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(currentIcon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(21.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("STEP ${currentStep + 1} OF 3", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                            Text(currentTitle, color = Color(0xFFE6EDF3), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        if (currentGranted) Icon(Icons.Default.Check, "Granted", tint = PocketGreen)
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text(currentDescription, color = Color(0xFFCBD3DF), fontSize = 13.sp, lineHeight = 18.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(Icons.Default.Shield, null, tint = Color(0xFF8F9AAA), modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(currentPrivacyNote, color = Color(0xFF8F9AAA), fontSize = 11.sp, lineHeight = 15.sp)
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Button(
+                        onClick = {
+                            when (currentStep) {
+                                0 -> when {
+                                    notificationGranted -> currentStep = 1
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationDenied ->
+                                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    else -> notificationSettingsLauncher.launch(
+                                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(
+                                            Settings.EXTRA_APP_PACKAGE,
+                                            context.packageName,
+                                        ),
+                                    )
+                                }
+                                1 -> if (batteryGranted) {
+                                    currentStep = 2
+                                } else {
+                                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                    runCatching { batteryLauncher.launch(intent) }
+                                        .onFailure {
+                                            batteryLauncher.launch(
+                                                Intent(
+                                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                    Uri.parse("package:${context.packageName}"),
+                                                ),
+                                            )
+                                        }
+                                }
+                                else -> {
+                                    taskProtectionConfirmed = true
+                                    onContinue()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        shape = RoundedCornerShape(13.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                    ) {
+                        Text(
+                            when (currentStep) {
+                                0 -> if (notificationGranted) "Next" else if (notificationDenied) "Open notification settings" else "Allow notifications"
+                                1 -> if (batteryGranted) "Next" else "Open battery settings"
+                                else -> "Enable and finish"
+                            },
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp))
+                    }
+                }
             }
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "Required for background coding tasks. Android can still stop exceptionally heavy work when the device is low on memory.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 10.5.sp,
+                lineHeight = 15.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(28.dp))
         }
     }
+}
+
+@Composable
+private fun PermissionSummaryRow(
+    icon: ImageVector,
+    title: String,
+    complete: Boolean,
+    active: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else Color.Transparent)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            null,
+            tint = if (active) MaterialTheme.colorScheme.primary else Color(0xFF8F9AAA),
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(title, modifier = Modifier.weight(1f), color = Color(0xFFD7DEE8), fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+        when {
+            complete -> Icon(Icons.Default.Check, "Complete", tint = PocketGreen, modifier = Modifier.size(18.dp))
+            active -> Text("Required", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            else -> Text("Next", color = Color(0xFF6F7A8C), fontSize = 10.sp)
+        }
+    }
+}
+
+private data class DevStackVisuals(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accentColor: Color,
+    val tag: String,
+)
+
+private fun getDevStackVisuals(stack: DevStack): DevStackVisuals = when (stack) {
+    DevStack.WEB -> DevStackVisuals(
+        icon = Icons.Default.Language,
+        accentColor = Color(0xFF38BDF8),
+        tag = "HTML · CSS · JS · TS",
+    )
+    DevStack.PYTHON -> DevStackVisuals(
+        icon = Icons.Default.Terminal,
+        accentColor = Color(0xFFFBBF24),
+        tag = "python3 + pip + venv",
+    )
+    DevStack.ANDROID -> DevStackVisuals(
+        icon = Icons.Default.Android,
+        accentColor = Color(0xFF4ADE80),
+        tag = "OpenJDK build tools",
+    )
+    DevStack.CPP -> DevStackVisuals(
+        icon = Icons.Default.Memory,
+        accentColor = Color(0xFFA78BFA),
+        tag = "gcc + g++ + cmake",
+    )
+    DevStack.PHP -> DevStackVisuals(
+        icon = Icons.Default.Dns,
+        accentColor = Color(0xFF818CF8),
+        tag = "php-cli + Composer",
+    )
 }
 
 @Composable
@@ -349,96 +527,417 @@ private fun RuntimeSetupPromptScreen(
     val totalRamGb = memoryInfo.totalMem / 1_073_741_824L
     val arm64 = Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" }
     val compatible = arm64 && totalRamGb >= 4
-    Scaffold { padding ->
+
+    var currentStep by remember { mutableIntStateOf(0) }
+    val setupScrollState = rememberScrollState()
+
+    LaunchedEffect(currentStep) {
+        setupScrollState.scrollTo(0)
+    }
+
+    if (currentStep > 0) {
+        BackHandler { currentStep = 0 }
+    }
+
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(horizontal = 22.dp)
+                .verticalScroll(setupScrollState),
         ) {
             Spacer(Modifier.height(24.dp))
-            BrandMark()
-            Spacer(Modifier.height(20.dp))
-            Text("Set up your phone for coding", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Pocket Dev installs a private Linux workspace with real Claude Code, Node.js, and Git. Pick any extra tools you want.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(18.dp))
-            Text("What do you want to build?", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Multi-select — pick as many as you like. You can add or remove these anytime in Settings → Developer tools.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(10.dp))
-            DevStack.entries.forEach { stack ->
-                val selected = stack in selectedStacks
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .clickable { onToggleStack(stack) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (selected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        },
-                    ),
-                    border = CardDefaults.outlinedCardBorder().takeIf { !selected },
+
+            if (currentStep == 0) {
+                // Step 0: Device Compatibility & Verification
+                BrandMark()
+
+                Spacer(Modifier.height(20.dp))
+
+                Text(
+                    text = "Set up your phone for coding",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF0F6FC),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Pocket Dev checks compatibility before downloading the private Linux runtime with real Claude Code, Node.js, and Git.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+                // Hardware & Compatibility Specs Card
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF10141D),
+                    border = BorderStroke(1.dp, Color(0xFF222B3D)),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            if (selected) Icons.Default.Check else Icons.Default.Code,
-                            null,
-                            tint = if (selected) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Speed,
+                                    null,
+                                    tint = Color(0xFF9AA6B6),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "System Compatibility",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFFE6EDF3),
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (compatible) PocketGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                                border = BorderStroke(0.5.dp, if (compatible) PocketGreen.copy(alpha = 0.35f) else MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                            ) {
+                                Text(
+                                    text = if (compatible) "Verified" else "Unsupported",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (compatible) PocketGreen else MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1F2737), thickness = 1.dp)
+
+                        SpecRow(
+                            icon = Icons.Default.Memory,
+                            label = "Memory (RAM)",
+                            value = "$totalRamGb GB · ${if (totalRamGb >= 8) "Full mode (8GB+)" else "Lite mode"}",
+                            statusOk = totalRamGb >= 4,
                         )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(stack.label, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                stack.description,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                        SpecRow(
+                            icon = Icons.Default.Code,
+                            label = "Processor",
+                            value = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a",
+                            statusOk = arm64,
+                        )
+
+                        SpecRow(
+                            icon = Icons.Default.Storage,
+                            label = "Download",
+                            value = "~500 MB · Wi-Fi recommended",
+                            statusOk = true,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Zero-Root Security Callout
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF101722),
+                    border = BorderStroke(1.dp, Color(0xFF263247)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(Color(0xFF192231), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = Color(0xFF9AA6B6),
+                                modifier = Modifier.size(18.dp),
                             )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
                             Text(
-                                "Adds: ${stack.installsSummary}",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                "Zero-Root Isolated Environment",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = Color(0xFFF1F5F9),
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Everything is installed in Pocket Dev's private app storage. No Termux, ADB root, or OS modifications required.",
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = Color(0xFF94A3B8),
                             )
                         }
                     }
                 }
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "More coming soon: Rust · Ruby · Go · .NET",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            CheckRow(Icons.Default.Memory, "Memory", "$totalRamGb GB · ${if (totalRamGb >= 8) "Full mode" else "Lite mode"}", totalRamGb >= 4)
-            Spacer(Modifier.height(10.dp))
-            CheckRow(Icons.Default.Code, "Processor", Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", arm64)
-            Spacer(Modifier.height(10.dp))
-            CheckRow(Icons.Default.Storage, "Download", "About 500 MB · Wi-Fi recommended", true)
-            Spacer(Modifier.height(16.dp))
-            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
+
+                Spacer(Modifier.height(28.dp))
+
+                Button(
+                    onClick = { currentStep = 1 },
+                    enabled = compatible,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PocketOrange,
+                        contentColor = Color(0xFF1A0C00),
+                        disabledContainerColor = Color(0xFF222A38),
+                        disabledContentColor = Color(0xFF5B697F),
+                    ),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = if (compatible) "Continue to Tool Setup" else "Device not supported",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { currentStep = 0 }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color(0xFFE6EDF3))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "TOOLCHAIN SETUP",
+                        color = PocketOrange,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
                 Text(
-                    "Everything is installed in Pocket Dev's private storage. You do not need Termux or root access.",
-                    Modifier.padding(16.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = "Choose your tools",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF0F6FC),
                 )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Start lightweight. You can install more toolchains later from Settings.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                )
+
+                Spacer(Modifier.height(18.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF101722),
+                    border = BorderStroke(1.dp, Color(0xFF263247)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier.size(36.dp).background(Color(0xFF192231), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Default.Terminal, null, tint = Color(0xFF9AA6B6), modifier = Modifier.size(19.dp))
+                        }
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Core tools included", color = Color(0xFFE6EDF3), fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                            Text("Claude Code  ·  Node.js  ·  npm  ·  Git", color = Color(0xFF8F9AAA), fontSize = 11.sp)
+                        }
+                        Icon(Icons.Default.Check, "Included", tint = PocketGreen, modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                Text("OPTIONAL TOOLCHAINS", color = Color(0xFF8F9AAA), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
+                Spacer(Modifier.height(8.dp))
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(0xFF101722),
+                    border = BorderStroke(1.dp, Color(0xFF263247)),
+                ) {
+                    Column {
+                        DevStack.entries.forEachIndexed { index, stack ->
+                            DevStackChoiceRow(
+                                stack = stack,
+                                selected = stack in selectedStacks,
+                                onClick = { onToggleStack(stack) },
+                            )
+                            if (index != DevStack.entries.lastIndex) {
+                                HorizontalDivider(modifier = Modifier.padding(start = 62.dp), color = Color(0xFF202A3A))
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Storage, null, tint = Color(0xFF8F9AAA), modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        if (selectedStacks.isEmpty()) "Core runtime only · smallest download"
+                        else "${selectedStacks.size} optional toolchain${if (selectedStacks.size == 1) "" else "s"} selected",
+                        color = Color(0xFF8F9AAA),
+                        fontSize = 11.sp,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                Button(
+                    onClick = onDownload,
+                    enabled = compatible,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PocketOrange,
+                        contentColor = Color(0xFF1A0C00),
+                        disabledContainerColor = Color(0xFF222A38),
+                        disabledContentColor = Color(0xFF5B697F),
+                    ),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = if (compatible) "Install Pocket Dev" else "Device not supported",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                        )
+                        if (compatible) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
             }
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = onDownload, enabled = compatible, modifier = Modifier.fillMaxWidth().height(54.dp)) {
-                Text(if (compatible) "Download and install" else "This device is not supported")
-            }
-            Spacer(Modifier.height(24.dp))
+
+            Spacer(Modifier.height(28.dp))
         }
+    }
+}
+
+@Composable
+private fun DevStackChoiceRow(
+    stack: DevStack,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val visuals = getDevStackVisuals(stack)
+    val conciseDescription = when (stack) {
+        DevStack.WEB -> "Websites and JavaScript apps"
+        DevStack.PYTHON -> "Scripts, automation and backends"
+        DevStack.ANDROID -> "Java and Kotlin build tools"
+        DevStack.CPP -> "Native apps and command-line tools"
+        DevStack.PHP -> "PHP sites and Laravel projects"
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) PocketOrange.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .background(Color(0xFF192231), RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(visuals.icon, null, tint = Color(0xFF9AA6B6), modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f)) {
+            Text(stack.label, color = Color(0xFFE6EDF3), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Spacer(Modifier.height(1.dp))
+            Text(conciseDescription, color = Color(0xFF8F9AAA), fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .size(21.dp)
+                .background(if (selected) PocketOrange else Color.Transparent, RoundedCornerShape(6.dp))
+                .border(
+                    1.5.dp,
+                    if (selected) PocketOrange else Color(0xFF536077),
+                    RoundedCornerShape(6.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(Icons.Default.Check, "Selected", tint = Color(0xFF1A0C00), modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpecRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    statusOk: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(
+        imageVector = icon,
+        contentDescription = null,
+            tint = if (statusOk) Color(0xFF9AA6B6) else MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color(0xFFE6EDF3),
+        )
     }
 }
 
@@ -480,13 +979,95 @@ private fun StartupLoadingScreen(state: AppUiState) {
                 }
             }
             if (installing) {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
                 Text(
                     "Keep Pocket Dev open during the first setup.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(16.dp))
+                SetupLogPanel(
+                    logs = state.startupLogs.ifEmpty { listOf("\$ ${state.startupMessage}") },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupLogPanel(logs: List<String>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(logs.size, logs.lastOrNull()) {
+        if (expanded) {
+            delay(20)
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        color = Color(0xFF090D14),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF273244)),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Terminal,
+                    contentDescription = null,
+                    tint = PocketOrange,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (expanded) "Live setup terminal" else logs.lastOrNull().orEmpty(),
+                    modifier = Modifier.weight(1f),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Color(0xFFC9D1D9),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse setup details" else "Expand setup details",
+                    tint = Color(0xFF8B949E),
+                )
+            }
+
+            if (expanded) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = Color(0xFF273244),
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 170.dp)
+                        .verticalScroll(scrollState),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    logs.forEachIndexed { index, line ->
+                        Text(
+                            text = line,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            color = if (index == logs.lastIndex) PocketGreen else Color(0xFFC9D1D9),
+                        )
+                    }
+                    Text(
+                        text = "▌",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = PocketOrange,
+                    )
+                }
             }
         }
     }
@@ -762,41 +1343,177 @@ private fun CheckRow(icon: ImageVector, title: String, value: String, passed: Bo
 @Composable
 private fun ProviderChoiceStep(selected: ProviderKind, onSelected: (ProviderKind) -> Unit, onContinue: () -> Unit) {
     Column(Modifier.fillMaxHeight()) {
-        Text("Choose your AI", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("You can change this later.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(14.dp))
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(ProviderKind.entries) { provider ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable { onSelected(provider) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (selected == provider) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                    ),
-                    border = CardDefaults.outlinedCardBorder().takeIf { selected != provider },
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "STEP 2 OF 3",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = PocketOrange,
+                letterSpacing = 1.1.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            Surface(
+                color = PocketGreen.copy(alpha = 0.10f),
+                shape = RoundedCornerShape(50),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Key, null, tint = if (selected == provider) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.width(13.dp))
-                        Column(Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(provider.title, fontWeight = FontWeight.SemiBold)
-                                if (provider.experimental) {
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("EXPERIMENTAL", color = PocketOrange, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            Text(provider.subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                        }
-                        if (selected == provider) Icon(Icons.Default.Check, null)
+                    Icon(Icons.Default.Shield, null, tint = PocketGreen, modifier = Modifier.size(12.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Secure setup", color = PocketGreen, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Connect your AI", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Choose how Pocket Dev should access your coding model.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 13.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            shape = RoundedCornerShape(18.dp),
+            color = Color(0xFF101722),
+            border = BorderStroke(1.dp, Color(0xFF263247)),
+        ) {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                itemsIndexed(ProviderKind.entries) { index, provider ->
+                    ProviderChoiceRow(
+                        provider = provider,
+                        selected = selected == provider,
+                        onClick = { onSelected(provider) },
+                    )
+                    if (index != ProviderKind.entries.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 68.dp),
+                            color = Color(0xFF202A3A),
+                        )
                     }
                 }
             }
         }
-        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).height(52.dp)) { Text("Continue") }
+
+        Row(
+            modifier = Modifier.padding(top = 12.dp, start = 2.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Key, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(
+                "API keys are encrypted in Android secure storage.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
+        }
+        Button(
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 14.dp).height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = PocketOrange,
+                contentColor = Color(0xFF1A0C00),
+            ),
+        ) {
+            Text("Continue", fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProviderChoiceRow(
+    provider: ProviderKind,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val accent = when (provider) {
+        ProviderKind.CLAUDE -> Color(0xFFD97757)
+        ProviderKind.ANTHROPIC -> Color(0xFFE7A26D)
+        ProviderKind.LLM_ROUTER -> Color(0xFF5B8DEF)
+        ProviderKind.OPENAI -> Color(0xFF19A77C)
+        ProviderKind.KIMI -> Color(0xFF8B7CF6)
+        ProviderKind.CUSTOM -> PocketOrange
+    }
+    val mark = when (provider) {
+        ProviderKind.CLAUDE -> "C"
+        ProviderKind.ANTHROPIC -> "A"
+        ProviderKind.LLM_ROUTER -> "LR"
+        ProviderKind.OPENAI -> "O"
+        ProviderKind.KIMI -> "K"
+        ProviderKind.CUSTOM -> "<>"
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) PocketOrange.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .background(accent.copy(alpha = 0.15f), RoundedCornerShape(9.dp))
+                .border(1.dp, accent.copy(alpha = 0.28f), RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(mark, color = accent, fontSize = if (mark.length > 1) 9.sp else 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    provider.title,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = Color(0xFFE6EDF3),
+                )
+                if (provider.experimental) {
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        color = PocketOrange.copy(alpha = 0.10f),
+                        shape = RoundedCornerShape(5.dp),
+                    ) {
+                        Text(
+                            "Beta",
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                            color = PocketOrange,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(1.dp))
+            Text(
+                provider.subtitle,
+                color = Color(0xFF8F9AAA),
+                fontSize = 10.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(19.dp)
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) PocketOrange else Color(0xFF596579),
+                    shape = CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) Box(Modifier.size(8.dp).background(PocketOrange, CircleShape))
+        }
     }
 }
 
@@ -2213,8 +2930,31 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
 }
 
 @Composable
-private fun BrandMark(compact: Boolean = false) {
-    Surface(shape = RoundedCornerShape(if (compact) 10.dp else 16.dp), color = PocketOrange) {
-        Icon(Icons.Default.Code, null, Modifier.padding(if (compact) 7.dp else 12.dp).size(if (compact) 20.dp else 34.dp), tint = Color.Black)
+private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
+    val size = if (compact) 32.dp else 50.dp
+    val iconSize = if (compact) 17.dp else 24.dp
+    val cornerRadius = if (compact) 9.dp else 14.dp
+    val primary = MaterialTheme.colorScheme.primary
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .background(
+                color = primary.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(cornerRadius),
+            )
+            .border(
+                width = 1.dp,
+                color = primary.copy(alpha = 0.32f),
+                shape = RoundedCornerShape(cornerRadius),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Terminal,
+            contentDescription = "Pocket Dev",
+            modifier = Modifier.size(iconSize),
+            tint = primary,
+        )
     }
 }
