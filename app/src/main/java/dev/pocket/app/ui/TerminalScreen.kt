@@ -2,6 +2,7 @@ package dev.pocket.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -29,7 +30,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -56,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -64,14 +65,19 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.pocket.app.ui.theme.AppThemeMode
@@ -141,9 +147,17 @@ fun TerminalScreen(
         }
     }
 
-    LaunchedEffect(lines.size, liveOutput.length, isRunning, currentCommand, commandInput.text.length) {
-        delay(20)
-        terminalScrollState.animateScrollTo(terminalScrollState.maxValue)
+    // Auto-scroll to bottom whenever scrollable content grows
+    LaunchedEffect(Unit) {
+        snapshotFlow { terminalScrollState.maxValue }
+            .collect { maxValue ->
+                terminalScrollState.scrollTo(maxValue)
+            }
+    }
+    // Also trigger scroll when key state changes (e.g. isRunning toggling)
+    LaunchedEffect(lines.size, isRunning, commandInput.text.length) {
+        delay(100)
+        terminalScrollState.scrollTo(terminalScrollState.maxValue)
     }
 
     val quickCommands = listOf(
@@ -194,7 +208,8 @@ fun TerminalScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .imePadding(),
         ) {
             if (showQuickCommands) {
                 // Quick command chips are useful in the standalone terminal, but
@@ -229,7 +244,11 @@ fun TerminalScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                    .clickable(enabled = !isRunning) { openTerminalKeyboard() },
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        enabled = !isRunning,
+                    ) { openTerminalKeyboard() },
                 color = Color(0xFF090D14),
                 shape = RoundedCornerShape(12.dp),
             ) {
@@ -300,47 +319,49 @@ fun TerminalScreen(
                         }
                     }
                     if (!isRunning) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(32.dp)
-                                .clickable { openTerminalKeyboard() },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "root@pocket:$terminalPromptPath#",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = PocketGreen,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Box(Modifier.weight(1f)) {
-                                Text(
-                                    text = commandInput.text + if (cursorVisible) "│" else " ",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
-                                    color = Color(0xFFF0F6FC),
-                                    maxLines = 1,
-                                )
-                                BasicTextField(
-                                    value = commandInput,
-                                    onValueChange = { commandInput = it },
-                                    modifier = Modifier.fillMaxWidth().focusRequester(inputFocusRequester),
-                                    singleLine = true,
-                                    cursorBrush = SolidColor(Color.Transparent),
-                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 13.sp,
-                                        color = Color.Transparent,
-                                    ),
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { submitCommand() }),
-                                )
+                        val prefix = "root@pocket:$terminalPromptPath# "
+                        val prefixVisualTransformation = remember(prefix) {
+                            VisualTransformation { text ->
+                                val transformed = buildAnnotatedString {
+                                    withStyle(SpanStyle(color = PocketGreen, fontWeight = FontWeight.Bold)) {
+                                        append(prefix)
+                                    }
+                                    withStyle(SpanStyle(color = Color(0xFFF0F6FC), fontWeight = FontWeight.SemiBold)) {
+                                        append(text.text)
+                                    }
+                                }
+                                val offsetMapping = object : OffsetMapping {
+                                    override fun originalToTransformed(offset: Int): Int =
+                                        (offset + prefix.length).coerceIn(0, prefix.length + text.length)
+
+                                    override fun transformedToOriginal(offset: Int): Int =
+                                        (offset - prefix.length).coerceIn(0, text.length)
+                                }
+                                TransformedText(transformed, offsetMapping)
                             }
                         }
+
+                        BasicTextField(
+                            value = commandInput,
+                            onValueChange = { commandInput = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(inputFocusRequester),
+                            singleLine = false,
+                            visualTransformation = prefixVisualTransformation,
+                            cursorBrush = SolidColor(PocketGreen),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFF0F6FC),
+                            ),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { submitCommand() }),
+                        )
                     }
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(24.dp))
                 }
             }
 
@@ -350,7 +371,8 @@ fun TerminalScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 14.dp)
+                    .padding(bottom = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 TerminalKeyButton("↑", "Previous command") {
@@ -399,36 +421,22 @@ private fun TerminalIconKeyButton(icon: androidx.compose.ui.graphics.vector.Imag
 
 @Composable
 private fun TerminalCommandPrompt(promptPath: String, command: String) {
-    val clipboard = LocalClipboardManager.current
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "root@pocket:$promptPath#",
-                modifier = Modifier.weight(1f),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = PocketGreen,
-            )
-            IconButton(
-                onClick = { clipboard.setText(AnnotatedString(command)) },
-                modifier = Modifier.size(28.dp),
-            ) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "Copy command", modifier = Modifier.size(16.dp))
+    val promptText = remember(promptPath, command) {
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = PocketGreen, fontWeight = FontWeight.Bold)) {
+                append("root@pocket:$promptPath# ")
+            }
+            withStyle(SpanStyle(color = Color(0xFFF0F6FC), fontWeight = FontWeight.SemiBold)) {
+                append(command)
             }
         }
-        Text(
-            command,
-            modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFF0F6FC),
-            softWrap = true,
-        )
     }
+    Text(
+        text = promptText,
+        modifier = Modifier.fillMaxWidth(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
+        softWrap = true,
+    )
 }
