@@ -56,6 +56,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
@@ -2252,21 +2253,27 @@ private fun WorkspaceScreen(
         }
     }
 
+    var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
+    var showChats by rememberSaveable { mutableStateOf(false) }
+    val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
+
     // If a file is open, show the FileViewerScreen on top
     if (state.openedFilePath != null) {
-        BackHandler(onBack = onCloseFile)
+        BackHandler(onBack = {
+            onCloseFile()
+            selectedTab = WorkspaceTab.FILES
+        })
         FileViewerScreen(
             filePath = state.openedFilePath,
             content = state.openedFileContent,
             loading = state.fileContentLoading,
-            onClose = onCloseFile,
+            onClose = {
+                onCloseFile()
+                selectedTab = WorkspaceTab.FILES
+            },
         )
         return
     }
-
-    var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
-    var showChats by rememberSaveable { mutableStateOf(false) }
-    val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
 
     if (showChats) {
         ChatSwitcherDialog(
@@ -2699,7 +2706,7 @@ private fun FilesTab(
             ) {
                 if (entry.isDirectory) {
                     Icon(
-                        if (entry.path in expandedSet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.ArrowForward,
+                        if (entry.path in expandedSet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         if (entry.path in expandedSet) "Collapse folder" else "Expand folder",
                         Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2722,9 +2729,9 @@ private fun FilesTab(
                     Text(formatFileSize(entry.sizeBytes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(4.dp))
                     Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         null,
-                        modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = 180f },
+                        modifier = Modifier.size(16.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
