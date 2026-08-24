@@ -12,8 +12,8 @@ val testSecrets = Properties().apply {
 }
 val playBuild = providers.gradleProperty("playBuild").orNull?.toBoolean() == true ||
     providers.gradleProperty("playFeasibility").orNull?.toBoolean() == true
-val appVersionCode = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 1
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "1.0.0"
+val appVersionCode = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 2
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "1.0.1"
 val privacyPolicyUrl = providers.gradleProperty("privacyPolicyUrl").orNull
     ?: "https://github.com/techjarves/Mobile-Harness/blob/main/PRIVACY.md"
 val uploadStorePath = providers.environmentVariable("MH_UPLOAD_STORE_FILE").orNull
@@ -54,9 +54,7 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
 
-        if (playBuild) {
-            ndk.abiFilters += "arm64-v8a"
-        }
+        ndk.abiFilters += "arm64-v8a"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -106,7 +104,6 @@ android {
             version = "3.22.1"
         }
     }
-    sourceSets.getByName("main").jniLibs.exclude("**/libpocketspawn.so")
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true
 }
