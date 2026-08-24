@@ -113,6 +113,7 @@ data class AppUiState(
     val taskStartedAtMillis: Long? = null,
     val taskFinishedAtMillis: Long? = null,
     val workSegmentStartedAtMillis: Long? = null,
+    val currentTaskRequest: String? = null,
     val previewReady: Boolean = false,
     val previewUrl: String? = null,
     val isRunning: Boolean = false,
@@ -183,6 +184,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferences.saveProvider(testProvider)
             preferences.testProviderDefaultsVersion = TEST_PROVIDER_DEFAULTS_VERSION
             _state.update { it.copy(provider = testProvider) }
+        }
+
+        val loadedProjects = preferences.loadProjects()
+        val cleanedProjects = loadedProjects.filter { project ->
+            if (project.kind == ProjectKind.QUICK_PROJECT) {
+                val chats = preferences.loadProjectChats(project.id)
+                val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
+                val workspaceDir = File(application.filesDir, "workspaces/${project.id}")
+                val userFiles = if (workspaceDir.isDirectory) {
+                    workspaceDir.walkTopDown().filter { file ->
+                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                    }.count()
+                } else 0
+                val keep = userMessages > 0 || userFiles > 0
+                if (!keep) {
+                    workspaceDir.deleteRecursively()
+                    terminalHistoryFile(project.id).delete()
+                    preferences.deleteProjectChats(project.id)
+                }
+                keep
+            } else true
+        }
+        if (cleanedProjects.size != loadedProjects.size) {
+            preferences.saveProjects(cleanedProjects)
+            _state.update { it.copy(projects = cleanedProjects) }
         }
     }
 
@@ -914,11 +940,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeProject() {
+        val active = _state.value.activeProject
         persistMessages()
         if (_state.value.isRunning) {
             viewModelScope.launch { runtime.stopActiveSession() }
         }
         if (_state.value.projectTerminalRunning) stopProjectTerminalCommand()
+
+        if (active != null) {
+            val chats = preferences.loadProjectChats(active.id)
+            val userMessages = chats.sumOf { preferences.loadMessages(active.id, it.id).count { m -> m.fromUser } }
+            val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
+            val userFiles = if (workspaceDir.isDirectory) {
+                workspaceDir.walkTopDown().filter { file ->
+                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                }.count()
+            } else 0
+
+            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
+                // Unused empty project; delete immediately so it does not clutter the project list.
+                _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
+                preferences.saveProjects(_state.value.projects)
+                viewModelScope.launch(Dispatchers.IO) {
+                    workspaceDir.deleteRecursively()
+                    terminalHistoryFile(active.id).delete()
+                    preferences.deleteProjectChats(active.id)
+                }
+            }
+        }
+
         _state.update {
             it.copy(
                 activeProject = null,
@@ -1410,11 +1460,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 pendingAttachments = emptyList(),
                 isRunning = true,
                 activity = listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity,
-                liveProcess = listOf(ActivityItem("Think", "Reviewing the request and planning the next action", false)),
+                liveProcess = listOf(ActivityItem("Think", requestPlanningSummary(requestText), false)),
                 liveThinking = true,
                 taskStartedAtMillis = startedAt,
                 taskFinishedAtMillis = null,
                 workSegmentStartedAtMillis = startedAt,
+                currentTaskRequest = requestText,
             )
         }
         touchProject(project.id)
@@ -1526,6 +1577,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun requestPlanningSummary(request: String, toolName: String? = null, detail: String = ""): String {
+        val cleanRequest = request.replace(Regex("\\s+"), " ").trim().take(110)
+        val requestPart = if (cleanRequest.isBlank()) {
+            "Claude is reviewing the request"
+        } else {
+            "The user is asking: “$cleanRequest”"
+        }
+        return if (toolName == null) {
+            "$requestPart. Claude is deciding the next useful step."
+        } else {
+            "$requestPart. ${toolPlanSummary(toolName, detail)}."
+        }
+    }
+
     private fun finishWorkSegment(current: AppUiState, finishedAt: Long = System.currentTimeMillis()): AppUiState {
         val meaningfulItems = current.liveProcess.filterNot(::isNoisyRuntimeItem)
             .map { if (it.isComplete) it else it.copy(isComplete = true) }
@@ -1581,12 +1646,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 is RuntimeEvent.ReasoningProgress -> {
+                    val existingIndex = current.liveProcess.indexOfLast { it.title == "Think" }
                     val reasoning = ActivityItem(
                         title = "Think",
-                        detail = "Reviewing the request and planning the next action",
+                        detail = current.liveProcess.getOrNull(existingIndex)?.detail
+                            ?: requestPlanningSummary(current.currentTaskRequest.orEmpty()),
                         isComplete = false,
                     )
-                    val existingIndex = current.liveProcess.indexOfLast { it.title == "Think" }
                     val process = if (existingIndex >= 0) {
                         current.liveProcess.toMutableList().also { it[existingIndex] = reasoning }
                     } else {
@@ -1601,7 +1667,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is RuntimeEvent.ToolStarted -> {
                     val planned = current.copy(
                         liveProcess = current.liveProcess.map { item ->
-                            if (item.title == "Think") item.copy(detail = toolPlanSummary(event.toolName, event.detail), isComplete = true) else item
+                            if (item.title == "Think") {
+                                item.copy(
+                                    detail = requestPlanningSummary(current.currentTaskRequest.orEmpty(), event.toolName, event.detail),
+                                    isComplete = true,
+                                )
+                            } else item
                         },
                         activity = listOf(
                             ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
@@ -1678,6 +1749,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activity = listOf(ActivityItem("Task completed", "Claude Code finished successfully")) +
                         current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
                     taskFinishedAtMillis = System.currentTimeMillis(),
+                    currentTaskRequest = null,
                 )
                 is RuntimeEvent.SessionFailed -> finishWorkSegment(
                     appendWorkItem(current, ActivityItem("Task stopped", event.reason)),
@@ -1692,6 +1764,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     activity = listOf(ActivityItem("Task stopped", event.reason)) + current.activity,
                     taskFinishedAtMillis = System.currentTimeMillis(),
+                    currentTaskRequest = null,
                 )
             }
         }

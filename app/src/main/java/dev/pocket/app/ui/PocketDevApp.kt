@@ -18,6 +18,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -206,6 +212,7 @@ private enum class WorkspaceTab(val label: String, val icon: ImageVector) {
 fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val projectsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     LaunchedEffect(state.toastMessage) {
         state.toastMessage?.let { message ->
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -268,7 +275,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRemoveAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = viewModel::openChatAttachment,
         )
-        else -> RootScreenHost(state, viewModel)
+        else -> RootScreenHost(state, viewModel, projectsListState)
     }
 }
 
@@ -1256,7 +1263,11 @@ private fun StartupErrorScreen(message: String?, isOffline: Boolean, logs: List<
 private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1_048_576.0)
 
 @Composable
-private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
+private fun RootScreenHost(
+    state: AppUiState,
+    viewModel: MainViewModel,
+    projectsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
@@ -1288,6 +1299,7 @@ private fun RootScreenHost(state: AppUiState, viewModel: MainViewModel) {
             when (screen) {
                 RootScreen.PROJECTS -> ProjectsScreen(
                     state = state,
+                    listState = projectsListState,
                     onOpen = viewModel::openProject,
                     onCreate = viewModel::createProject,
                     onCreateQuickProject = viewModel::createQuickProject,
@@ -1920,6 +1932,7 @@ private fun ProviderCredentialsStep(
 @Composable
 private fun ProjectsScreen(
     state: AppUiState,
+    listState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
     onOpen: (Project) -> Unit,
     onCreate: (String) -> Unit,
     onCreateQuickProject: () -> Unit,
@@ -1949,6 +1962,7 @@ private fun ProjectsScreen(
         },
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -2892,26 +2906,20 @@ private fun LiveClaudeProcess(
     finishedAtMillis: Long?,
     thinkingActive: Boolean,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
     val elapsedSeconds = startedAtMillis?.let { rememberLiveElapsedSeconds(it).toLong() } ?: 0L
     ClaudeActivityDisclosure(
         items = processItems,
         headline = activityHeadline(processItems, elapsedSeconds, thinkingActive),
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
         isRunning = isRunning,
     )
 }
 
 @Composable
 private fun WorkBlockCard(message: ChatMessage) {
-    var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
     val seconds = (message.workedMillis / 1_000L).coerceAtLeast(1L)
     ClaudeActivityDisclosure(
         items = message.workItems,
         headline = activityHeadline(message.workItems, seconds, message.workItems.isEmpty()),
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
     )
 }
 
@@ -2919,49 +2927,165 @@ private fun WorkBlockCard(message: ChatMessage) {
 private fun ClaudeActivityDisclosure(
     items: List<ActivityItem>,
     headline: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
     isRunning: Boolean = false,
-    timestamp: String? = null,
 ) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 4.dp, vertical = 6.dp)) {
+    var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)) {
         if (items.isEmpty()) {
             ActivitySummaryRow(
                 item = null,
                 text = headline,
-                trailing = {
-                    ActivityDisclosureTrailing(timestamp, isRunning, expanded, muted)
+                expanded = 0 in expandedItems,
+                showProgress = isRunning,
+                onToggle = {
+                    expandedItems = if (0 in expandedItems) expandedItems - 0 else expandedItems + 0
                 },
             )
+            if (0 in expandedItems) ActivityExpandedDetail(null, "Reviewing the request and planning the next action.")
         } else {
             items.forEachIndexed { index, item ->
                 ActivitySummaryRow(
                     item = item,
                     text = compactActivityText(item),
-                    trailing = if (index == 0) {
-                        { ActivityDisclosureTrailing(timestamp, isRunning, expanded, muted) }
-                    } else null,
+                    expanded = index in expandedItems,
+                    showProgress = isRunning && !item.isComplete,
+                    onToggle = {
+                        expandedItems = if (index in expandedItems) expandedItems - index else expandedItems + index
+                    },
                 )
+                if (index in expandedItems) ActivityExpandedDetail(item, activityDetail(item))
             }
         }
-        if (expanded) {
-            Column(Modifier.padding(start = 29.dp, end = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (items.isEmpty()) {
-                    Text("Reviewing the request and planning the next action.", fontSize = 12.sp, color = muted)
-                } else {
-                    items.forEach { item ->
-                        Text(
-                            "${activityName(item)} · ${activityDetail(item)}",
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = muted,
-                            fontFamily = if (item.isCommand) FontFamily.Monospace else FontFamily.Default,
-                        )
-                    }
-                }
-            }
-        }
+    }
+}
+
+@Composable
+private fun AnimatedThinkingDots(
+    modifier: Modifier = Modifier,
+    dotColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    val transition = rememberInfiniteTransition(label = "thinking_dots")
+    val dot1Offset by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = -3.5f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1100
+                0f at 0
+                -3.5f at 220
+                0f at 440
+                0f at 1100
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(0),
+        ),
+        label = "dot1",
+    )
+    val dot2Offset by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = -3.5f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1100
+                0f at 0
+                -3.5f at 220
+                0f at 440
+                0f at 1100
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(180),
+        ),
+        label = "dot2",
+    )
+    val dot3Offset by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = -3.5f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1100
+                0f at 0
+                -3.5f at 220
+                0f at 440
+                0f at 1100
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(360),
+        ),
+        label = "dot3",
+    )
+
+    val dot1Alpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1100
+                0.35f at 0
+                1f at 220
+                0.35f at 440
+                0.35f at 1100
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(0),
+        ),
+        label = "dot1_alpha",
+    )
+    val dot2Alpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1100
+                0.35f at 0
+                1f at 220
+                0.35f at 440
+                0.35f at 1100
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(180),
+        ),
+        label = "dot2_alpha",
+    )
+    val dot3Alpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1100
+                0.35f at 0
+                1f at 220
+                0.35f at 440
+                0.35f at 1100
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(360),
+        ),
+        label = "dot3_alpha",
+    )
+
+    Row(
+        modifier = modifier.padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(3.5.dp)
+                .graphicsLayer { translationY = dot1Offset * density }
+                .background(dotColor.copy(alpha = dot1Alpha), CircleShape),
+        )
+        Box(
+            Modifier
+                .size(3.5.dp)
+                .graphicsLayer { translationY = dot2Offset * density }
+                .background(dotColor.copy(alpha = dot2Alpha), CircleShape),
+        )
+        Box(
+            Modifier
+                .size(3.5.dp)
+                .graphicsLayer { translationY = dot3Offset * density }
+                .background(dotColor.copy(alpha = dot3Alpha), CircleShape),
+        )
     }
 }
 
@@ -2969,10 +3093,15 @@ private fun ClaudeActivityDisclosure(
 private fun ActivitySummaryRow(
     item: ActivityItem?,
     text: String,
-    trailing: (@Composable () -> Unit)?,
+    expanded: Boolean,
+    showProgress: Boolean,
+    onToggle: () -> Unit,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(
             if (item?.isCommand == true) Icons.Default.Terminal else Icons.Default.AutoAwesome,
             null,
@@ -2981,30 +3110,28 @@ private fun ActivitySummaryRow(
         )
         Spacer(Modifier.width(9.dp))
         Text(text, Modifier.weight(1f), fontSize = 13.sp, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        trailing?.invoke()
+        if (showProgress) {
+            AnimatedThinkingDots(dotColor = muted)
+            Spacer(Modifier.width(6.dp))
+        }
+        Icon(
+            if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            if (expanded) "Collapse activity" else "Expand activity",
+            Modifier.size(18.dp),
+            tint = muted,
+        )
     }
 }
 
 @Composable
-private fun ActivityDisclosureTrailing(
-    timestamp: String?,
-    isRunning: Boolean,
-    expanded: Boolean,
-    color: Color,
-) {
-    if (timestamp != null) {
-        Text(timestamp, fontSize = 10.sp, color = color)
-        Spacer(Modifier.width(6.dp))
-    }
-    if (isRunning) {
-        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = color)
-        Spacer(Modifier.width(7.dp))
-    }
-    Icon(
-        if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-        if (expanded) "Collapse activity" else "Expand activity",
-        Modifier.size(18.dp),
-        tint = color,
+private fun ActivityExpandedDetail(item: ActivityItem?, detail: String) {
+    Text(
+        detail,
+        modifier = Modifier.fillMaxWidth().padding(start = 25.dp, end = 8.dp, bottom = 8.dp),
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontFamily = if (item?.isCommand == true) FontFamily.Monospace else FontFamily.Default,
     )
 }
 
