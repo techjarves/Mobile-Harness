@@ -129,8 +129,8 @@ Mobile Harness does not offer Claude.ai subscription login in public third-party
 ### Build and install
 
 ```bash
-git clone https://github.com/techjarves/PocketDev.git
-cd PocketDev
+git clone https://github.com/techjarves/Mobile-Harness.git
+cd Mobile-Harness
 
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk

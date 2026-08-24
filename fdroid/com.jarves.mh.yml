@@ -3,9 +3,9 @@ Categories:
   - System
 License: MIT
 AuthorName: TechJarves
-SourceCode: https://github.com/techjarves/PocketDev
-IssueTracker: https://github.com/techjarves/PocketDev/issues
-Changelog: https://github.com/techjarves/PocketDev/releases
+SourceCode: https://github.com/techjarves/Mobile-Harness
+IssueTracker: https://github.com/techjarves/Mobile-Harness/issues
+Changelog: https://github.com/techjarves/Mobile-Harness/releases
 
 AutoName: Mobile Harness
 Summary: Autonomous AI Coding Agent & Full Linux Development Environment on Android
@@ -19,7 +19,7 @@ Description: |-
   phone—without needing Termux, root access, or remote server dependencies.
 
 RepoType: git
-Repo: https://github.com/techjarves/PocketDev.git
+Repo: https://github.com/techjarves/Mobile-Harness.git
 
 AntiFeatures:
   - NonFreeNet
