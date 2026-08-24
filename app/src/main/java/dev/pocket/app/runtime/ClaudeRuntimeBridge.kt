@@ -401,7 +401,8 @@ class ClaudeRuntimeBridge(
                 // Content block finished — nothing to do, text already streamed
             }
             "assistant" -> {
-                val content = json.optJSONObject("message")?.optJSONArray("content") ?: return true
+                val message = json.optJSONObject("message") ?: return true
+                val content = message.optJSONArray("content") ?: return true
                 for (index in 0 until content.length()) {
                     val block = content.optJSONObject(index) ?: continue
                     when (block.optString("type")) {
@@ -414,6 +415,13 @@ class ClaudeRuntimeBridge(
                     }
                 }
                 streamedText.clear()
+                // Some Anthropic-compatible providers omit Claude Code's final
+                // `result` envelope. An assistant end_turn is still authoritative;
+                // tool_use means the agent must remain active for another turn.
+                if (message.optString("stop_reason") == "end_turn") {
+                    emitCompletedOnce(sessionId)
+                    terminateActiveProcessGracefully()
+                }
             }
             "user" -> {
                 val content = json.optJSONObject("message")?.optJSONArray("content") ?: return true
@@ -526,10 +534,10 @@ class ClaudeRuntimeBridge(
 
         val sb = StringBuilder()
         sb.appendLine("<project_workspace>")
-        if (projectKind == ProjectKind.QUICK_CHAT) {
-            sb.appendLine("This is a Quick Chat with an optional private scratch workspace at $guestWorkspacePath.")
-            sb.appendLine("Respond conversationally by default. Use terminal or file tools only when the user asks or when they are genuinely needed for the request.")
-            sb.appendLine("When tools are needed, keep every file and command inside this workspace.")
+        if (projectKind == ProjectKind.QUICK_PROJECT) {
+            sb.appendLine("This is a lightweight project workspace at $guestWorkspacePath.")
+            sb.appendLine("Respond conversationally, and use terminal or file tools whenever they are useful for the request.")
+            sb.appendLine("Keep every file and command inside this project workspace.")
         } else {
             sb.appendLine("The current working directory $guestWorkspacePath is the project root.")
             sb.appendLine("Create and edit project files directly in this directory. Do not create another outer project folder unless the user explicitly asks for one.")

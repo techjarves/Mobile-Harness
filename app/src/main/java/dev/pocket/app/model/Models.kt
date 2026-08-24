@@ -31,7 +31,7 @@ data class ProviderProfile(
     val hasSecret: Boolean = false,
 )
 
-enum class ProjectKind { PROJECT, QUICK_CHAT }
+enum class ProjectKind { PROJECT, QUICK_PROJECT }
 
 data class Project(
     val id: String = UUID.randomUUID().toString(),

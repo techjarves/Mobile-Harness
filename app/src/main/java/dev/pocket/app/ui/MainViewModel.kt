@@ -994,14 +994,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshProjectFiles()
     }
 
-    fun createQuickChat() {
+    fun createQuickProject() {
         val identity = generateQuickChatIdentity(_state.value.projects.mapTo(mutableSetOf()) { it.slug })
         val project = Project(
             name = identity.displayName,
-            description = "Private quick-chat workspace",
+            description = "Quick project workspace",
             language = "General",
             slug = identity.slug,
-            kind = ProjectKind.QUICK_CHAT,
+            kind = ProjectKind.QUICK_PROJECT,
         )
         val firstChat = ProjectChat(title = "New chat")
         File(getApplication<Application>().filesDir, "workspaces/${project.id}").mkdirs()
@@ -1011,40 +1011,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         openProject(project)
     }
 
-    fun renameQuickChat(projectId: String, newName: String) {
+    fun renameProject(projectId: String, newName: String) {
         val clean = newName.replace(Regex("\\s+"), " ").trim().take(60)
         if (clean.isBlank()) return
         _state.update { current ->
             val projects = current.projects.map { project ->
-                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) project.copy(name = clean) else project
+                if (project.id == projectId) project.copy(name = clean) else project
             }
             val active = current.activeProject?.let { project ->
-                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) project.copy(name = clean) else project
+                if (project.id == projectId) project.copy(name = clean) else project
             }
             current.copy(projects = projects, activeProject = active)
         }
         preferences.saveProjects(_state.value.projects)
     }
 
-    fun convertQuickChat(projectId: String) {
-        _state.update { current ->
-            val projects = current.projects.map { project ->
-                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) {
-                    project.copy(kind = ProjectKind.PROJECT, description = "Project created from Quick Chat")
-                } else project
-            }
-            val active = current.activeProject?.let { project ->
-                if (project.id == projectId && project.kind == ProjectKind.QUICK_CHAT) {
-                    project.copy(kind = ProjectKind.PROJECT, description = "Project created from Quick Chat")
-                } else project
-            }
-            current.copy(projects = projects, activeProject = active)
-        }
-        preferences.saveProjects(_state.value.projects)
-    }
-
-    fun deleteQuickChat(projectId: String) {
-        val project = _state.value.projects.firstOrNull { it.id == projectId && it.kind == ProjectKind.QUICK_CHAT } ?: return
+    fun deleteProject(projectId: String) {
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
         if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning) return
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
@@ -1427,8 +1410,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 pendingAttachments = emptyList(),
                 isRunning = true,
                 activity = listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity,
-                liveProcess = emptyList(),
-                liveThinking = false,
+                liveProcess = listOf(ActivityItem("Think", "Reviewing the request and planning the next action", false)),
+                liveThinking = true,
                 taskStartedAtMillis = startedAt,
                 taskFinishedAtMillis = null,
                 workSegmentStartedAtMillis = startedAt,
@@ -1525,6 +1508,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             combined.contains("Task completed", true)
     }
 
+    private fun toolPlanSummary(toolName: String, detail: String): String {
+        val clean = detail.replace(Regex("\\s+"), " ").trim()
+        val short = clean.take(90).ifBlank { "the current project" }
+        return when (toolName) {
+            "Write" -> "Preparing to create ${clean.substringAfterLast('/').ifBlank { "a project file" }}"
+            "Edit", "NotebookEdit" -> "Preparing to update ${clean.substringAfterLast('/').ifBlank { "a project file" }}"
+            "Read" -> "Preparing to inspect ${clean.substringAfterLast('/').ifBlank { "a project file" }}"
+            "Glob" -> "Preparing to find matching project files"
+            "Grep" -> "Preparing to search the project for $short"
+            "Bash" -> if (clean.contains("cat ", true) || clean.contains("printf ", true) || clean.contains(" >")) {
+                "Preparing to create or update project files with Bash"
+            } else {
+                "Preparing to run: $short"
+            }
+            else -> "Preparing to use $toolName for the next step"
+        }
+    }
+
     private fun finishWorkSegment(current: AppUiState, finishedAt: Long = System.currentTimeMillis()): AppUiState {
         val meaningfulItems = current.liveProcess.filterNot(::isNoisyRuntimeItem)
             .map { if (it.isComplete) it else it.copy(isComplete = true) }
@@ -1557,7 +1558,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun onRuntimeEvent(event: RuntimeEvent) {
         _state.update { current ->
-            when (event) {
+            if (!current.isRunning) {
+                current
+            } else if (current.activeSessionId != null && current.activeSessionId != event.sessionId) {
+                current
+            } else when (event) {
                 is RuntimeEvent.SessionStarted -> current.copy(
                     activeSessionId = event.sessionId,
                     activity = current.activity.mapIndexed { index, item -> if (index == 0) item.copy(isComplete = true) else item },
@@ -1575,18 +1580,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = event.text))
                     }
                 }
-                is RuntimeEvent.ReasoningProgress -> current.copy(
-                    liveThinking = true,
-                    workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
-                )
-                is RuntimeEvent.ToolStarted -> appendWorkItem(
+                is RuntimeEvent.ReasoningProgress -> {
+                    val reasoning = ActivityItem(
+                        title = "Think",
+                        detail = "Reviewing the request and planning the next action",
+                        isComplete = false,
+                    )
+                    val existingIndex = current.liveProcess.indexOfLast { it.title == "Think" }
+                    val process = if (existingIndex >= 0) {
+                        current.liveProcess.toMutableList().also { it[existingIndex] = reasoning }
+                    } else {
+                        current.liveProcess + reasoning
+                    }
                     current.copy(
+                        liveProcess = process,
+                        liveThinking = true,
+                        workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
+                    )
+                }
+                is RuntimeEvent.ToolStarted -> {
+                    val planned = current.copy(
+                        liveProcess = current.liveProcess.map { item ->
+                            if (item.title == "Think") item.copy(detail = toolPlanSummary(event.toolName, event.detail), isComplete = true) else item
+                        },
                         activity = listOf(
                             ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
                         ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
-                    ),
-                    ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
-                )
+                    )
+                    appendWorkItem(
+                        planned,
+                        ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
+                    )
+                }
                 is RuntimeEvent.RuntimeLog -> appendWorkItem(
                     current.copy(activity = listOf(ActivityItem(event.title, event.detail)) + current.activity),
                     ActivityItem(event.title, event.detail),
@@ -1608,9 +1633,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val process = if (runningIndex >= 0) {
                         current.liveProcess.toMutableList().also { items ->
+                            val runningItem = items[runningIndex]
                             items[runningIndex] = ActivityItem(
                                 "${event.toolName} completed",
-                                event.summary,
+                                runningItem.detail.ifBlank { event.summary },
                                 isCommand = event.toolName == "Bash",
                             )
                         }
@@ -1707,7 +1733,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (it.length <= 42) it else it.take(39).trimEnd() + "…"
         }
         _state.update { current ->
-            val activeChatWasUntitled = current.projectChats.firstOrNull { it.id == chatId }?.title == "New chat"
             val chats = current.projectChats.map { chat ->
                 if (chat.id == chatId) {
                     chat.copy(
@@ -1716,16 +1741,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 } else chat
             }.sortedByDescending { it.updatedAtMillis }
-            val projects = if (project.kind == ProjectKind.QUICK_CHAT && activeChatWasUntitled) {
-                current.projects.map { saved -> if (saved.id == project.id) saved.copy(name = title, updatedAtMillis = now) else saved }
-            } else current.projects
-            val activeProject = if (project.kind == ProjectKind.QUICK_CHAT && activeChatWasUntitled) {
-                project.copy(name = title, updatedAtMillis = now)
-            } else current.activeProject
-            current.copy(projectChats = chats, projects = projects, activeProject = activeProject)
+            current.copy(projectChats = chats)
         }
         preferences.saveProjectChats(project.id, _state.value.projectChats)
-        preferences.saveProjects(_state.value.projects)
     }
 
     companion object {

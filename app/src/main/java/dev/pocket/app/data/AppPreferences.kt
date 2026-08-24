@@ -103,7 +103,8 @@ class AppPreferences(private val context: Context) {
                 val obj = arr.getJSONObject(i)
                 val id = obj.getString("id")
                 val name = obj.getString("name")
-                if (!obj.has("kind")) needsSave = true
+                val storedKind = obj.optString("kind", ProjectKind.PROJECT.name)
+                if (!obj.has("kind") || storedKind == "QUICK_CHAT") needsSave = true
                 val requestedSlug = obj.optString("slug").ifBlank { projectSlug(name) }
                 var slug = requestedSlug
                 if (!usedSlugs.add(slug)) {
@@ -132,8 +133,11 @@ class AppPreferences(private val context: Context) {
                         root.isBlank() || (!root.startsWith('/') && !root.contains(".."))
                     } ?: "",
                     updatedAtMillis = millis,
-                    kind = runCatching { ProjectKind.valueOf(obj.optString("kind", ProjectKind.PROJECT.name)) }
-                        .getOrDefault(ProjectKind.PROJECT),
+                    kind = when (storedKind) {
+                        "QUICK_CHAT" -> ProjectKind.QUICK_PROJECT
+                        else -> runCatching { ProjectKind.valueOf(storedKind) }
+                            .getOrDefault(ProjectKind.PROJECT)
+                    },
                 )
             }
         }.getOrDefault(emptyList())
