@@ -25,14 +25,14 @@ AntiFeatures:
   - NonFreeNet
 
 Builds:
-  - versionName: 0.1.0-alpha
+  - versionName: 1.0.0
     versionCode: 1
-    commit: v0.1.0-alpha
+    commit: v1.0.0
     subdir: app
     gradle:
       - yes
 
 AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags
-CurrentVersion: 0.1.0-alpha
+CurrentVersion: 1.0.0
 CurrentVersionCode: 1

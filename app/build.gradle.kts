@@ -26,7 +26,7 @@ android {
         // This matches the proven Termux execution policy; reassess before public distribution.
         targetSdk = if (playFeasibility) 36 else 28
         versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
