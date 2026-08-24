@@ -16,11 +16,11 @@ fun buildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 android {
-    namespace = "dev.pocket.app"
+    namespace = "com.jarves.mh"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.pocket.app"
+        applicationId = "com.jarves.mh"
         minSdk = 28
         // Direct-APK compatibility: Android blocks PRoot guest exec for targets 29+.
         // This matches the proven Termux execution policy; reassess before public distribution.

@@ -1,0 +1,11 @@
+Mobile Harness brings a full-stack, local AI software engineering environment directly to your Android device.
+
+By combining an embedded ARM64 Ubuntu PRoot Linux runtime with autonomous coding agents (Claude Code, OpenAI, OpenRouter, and custom LLM providers), Mobile Harness allows you to code, build, test, and run real projects on your phone—without needing Termux, root access, or remote server dependencies.
+
+Features:
+• Autonomous Coding Agent: Native Claude Code bridge with streaming thoughts, tool execution, and granular approval cards.
+• Embedded Linux Environment: ARM64 Ubuntu 24.04 PRoot sandbox with native JNI process management.
+• Interactive Terminal: Full Linux terminal with quick commands and virtual modifier keys (CTRL, ALT, ESC, TAB).
+• Multi-Provider AI Support: Anthropic, OpenRouter, OpenAI, Kimi / Moonshot, and custom OpenAI/Anthropic-compatible endpoints.
+• Project Workspace: File browser with real-time sync, live preview container, and foreground execution service.
+• Privacy & Security: API keys encrypted via hardware-backed Android Keystore.

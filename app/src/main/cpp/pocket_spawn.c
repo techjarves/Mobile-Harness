@@ -12,7 +12,7 @@
 static void close_pair(int pair[2]) { close(pair[0]); close(pair[1]); }
 
 JNIEXPORT jintArray JNICALL
-Java_dev_pocket_app_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectArray java_argv,
+Java_com_jarves_mh_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectArray java_argv,
                                                jobjectArray java_env, jstring java_cwd,
                                                jstring java_output) {
     (void)self;
@@ -76,7 +76,7 @@ Java_dev_pocket_app_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobject
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_pocket_app_runtime_NativeSpawn_waitFor(JNIEnv *env, jobject self, jint pid, jboolean no_hang) {
+Java_com_jarves_mh_runtime_NativeSpawn_waitFor(JNIEnv *env, jobject self, jint pid, jboolean no_hang) {
     (void)env; (void)self;
     int status = 0;
     pid_t value = waitpid(pid, &status, no_hang ? WNOHANG : 0);
@@ -88,7 +88,7 @@ Java_dev_pocket_app_runtime_NativeSpawn_waitFor(JNIEnv *env, jobject self, jint 
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_pocket_app_runtime_NativeSpawn_kill(JNIEnv *env, jobject self, jint pid, jint signal) {
+Java_com_jarves_mh_runtime_NativeSpawn_kill(JNIEnv *env, jobject self, jint pid, jint signal) {
     (void)env; (void)self;
     // Negative pid targets the whole runtime process group. Fall back to the
     // wrapper pid for devices where group creation raced with an early exit.

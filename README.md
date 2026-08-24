@@ -1,216 +1,228 @@
-# 🚀 Pocket Dev
+<div align="center">
 
-<p align="center">
-  <strong>Autonomous AI Coding Agent & Full Linux Development Environment on Android</strong>
-</p>
+# 🚀 Mobile Harness
 
-<p align="center">
-  <a href="https://kotlinlang.org/"><img src="https://img.shields.io/badge/Kotlin-2.0-7F52FF.svg?logo=kotlin&logoColor=white" alt="Kotlin"/></a>
-  <a href="https://developer.android.com/jetpack/compose"><img src="https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4.svg?logo=android&logoColor=white" alt="Jetpack Compose"/></a>
-  <a href="https://developer.android.com/about/versions/pie"><img src="https://img.shields.io/badge/Android-9.0%2B%20(API%2028%2B)-3DDC84.svg?logo=android&logoColor=white" alt="Android Version"/></a>
-  <a href="https://ubuntu.com/"><img src="https://img.shields.io/badge/Runtime-Ubuntu%2024.04%20ARM64-E95420.svg?logo=ubuntu&logoColor=white" alt="Ubuntu PRoot"/></a>
-  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"/></a>
-</p>
+### A local-first AI development workspace for Android
 
----
+Chat with a coding agent, inspect files, run Linux commands, review changes, and preview local web apps—without installing Termux.
 
-## 📌 Overview
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-FF914D?style=flat-square)](#project-status)
+[![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#requirements)
+[![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](#build-from-source)
+[![Runtime](https://img.shields.io/badge/runtime-Ubuntu%20ARM64-E95420?style=flat-square&logo=ubuntu&logoColor=white)](#how-it-works)
+[![Distribution](https://img.shields.io/badge/distribution-direct%20APK-30363D?style=flat-square)](#distribution-and-google-play)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2F81F7?style=flat-square)](LICENSE)
 
-**Pocket Dev** brings a full-stack, local AI software engineering environment directly to your mobile device. By combining an embedded **ARM64 Ubuntu PRoot runtime** with autonomous coding agents (such as **Claude Code** and custom LLM providers), Pocket Dev enables you to code, build, test, and run real projects on your phone—without needing Termux, root access, or remote server dependencies.
+</div>
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                   Pocket Dev Mobile UI                   │
-│      [ Projects ]   [ AI Chat ]   [ Terminal ]           │
-└────────────────────────────┬─────────────────────────────┘
-                             │ JNI / Process Bridge
-┌────────────────────────────▼─────────────────────────────┐
-│              PRoot Sandboxed Linux Subsystem             │
-│   Ubuntu 24.04 ARM64 · Node.js · Python · Git · Clang    │
-├──────────────────────────────────────────────────────────┤
-│             Autonomous Agent Execution Engine            │
-│       Claude Code / OpenAI / OpenRouter / Custom         │
-└──────────────────────────────────────────────────────────┘
-```
+> [!IMPORTANT]
+> Mobile Harness is an experimental alpha for ARM64 Android devices. Its PRoot environment is not a hardened security sandbox. Open only projects you own or trust, and do not use the app for sensitive or untrusted code.
 
----
+## Overview
 
-## ✨ Key Features
+Mobile Harness brings a practical coding workspace to an Android phone. The Android interface stays beginner-friendly while an app-private Ubuntu environment runs the command-line tools behind it.
 
-### 🤖 Autonomous Coding Agent
-- **Native Claude Code Bridge**: Downloads and orchestrates Claude Code directly within the on-device Linux runtime using streaming JSON IPC.
-- **Multi-Provider AI Gateway**: Seamlessly connect to **Anthropic** (Claude 3.5 / 3.7 Sonnet, Opus), **OpenRouter**, **OpenAI** (GPT-4o, o3-mini), **Kimi / Moonshot**, or custom endpoints.
-- **Human-in-the-Loop Safety**: Granular approval cards for file writes, modifications, and command execution.
-- **Live Activity Streaming**: Real-time thinking disclosures, tool executions, and step-by-step progress tracking.
+The app currently provides:
 
-### 🐧 On-Device Linux Environment
-- **Zero-Configuration PRoot**: Private ARM64 Ubuntu 24.04 environment configured automatically during onboarding.
-- **Native Process Spawn Bridge**: High-performance C++/JNI process management (`libpocketspawn.so`) bypassing Android SELinux execution constraints.
-- **Full Linux Terminal**: Interactive terminal emulator with quick-command chips, virtual modifier keys (`CTRL`, `ALT`, `ESC`, `TAB`), and direct project session targeting.
-- **Extensible Toolchains**: Built-in installer for Node.js, Python 3, Rust, Go, Git, and build essentials.
+- Persistent projects and instantly created **Quick Projects**
+- Multi-session AI chat with streamed responses and tool activity
+- A workspace-scoped Linux terminal
+- A collapsible file browser and local attachment storage
+- File diffs, task checkpoints, and rollback controls
+- A browser-style preview for local web servers
+- Guided runtime installation with live logs and recovery
+- Configurable Anthropic-compatible model providers
 
-### 🛠️ Developer Workspace & Tools
-- **Project Hub**: Create named projects or launch rapid scratchpad sessions with one tap.
-- **Live File Explorer**: Real-time project directory view synchronized with AI agent workspace modifications.
-- **In-App Live Preview**: Integrated preview container for local web servers, static sites, and development ports.
-- **Foreground Execution**: Continuous background compilation and agent reasoning via Android Foreground Services.
+## Product experience
 
-### 🔒 Privacy & Security
-- **Hardware-Backed Security**: API keys and sensitive tokens are encrypted using the **Android Keystore** (`MasterKeys` / AES-GCM-256).
-- **On-Device Storage**: Project files, logs, and development dependencies remain strictly isolated in app-private sandbox storage.
-- **Adaptive Theming**: Full Material 3 dynamic styling with dedicated **Dark** and **Light** modes.
+| Area | What users can do |
+| --- | --- |
+| **Projects** | Create named workspaces, start Quick Projects, rename, delete, export, and resume recent work. |
+| **Chat** | Ask the agent to explain, create, edit, or test code while following tool activity in real time. |
+| **Files** | Browse the real workspace tree, open files, collapse folders, and access saved attachments. |
+| **Terminal** | Run commands directly inside the active project or use the global Linux terminal. |
+| **Changes** | Review diffs, keep a completed task, or restore its checkpoint. |
+| **Preview** | Open loopback URLs in a restricted WebView, enter a local URL, and refresh the page. |
+| **Settings** | Configure the AI connection, appearance, optional toolchains, and Linux runtime. |
 
----
+Quick Projects use friendly, collision-safe workspace names such as `curious-turing` or `bright-lovelace`. They use the same chat, files, terminal, changes, and preview experience as regular projects.
 
-## 🏗️ Architecture
-
-Pocket Dev is built on a clean, modern Android architecture using Kotlin Coroutines, StateFlow, and Jetpack Compose:
+## How it works
 
 ```mermaid
-flowchart TB
-    subgraph UI["App UI Layer (Jetpack Compose)"]
-        Projects["Projects Screen"]
-        Chat["AI Chat Workspace"]
-        Terminal["Interactive Terminal"]
-        Settings["Settings & Providers"]
-    end
-
-    subgraph Core["Core Application Logic"]
-        VM["MainViewModel & StateFlow"]
-        Vault["ApiKeyVault (Android Keystore)"]
-        Service["RuntimeExecutionService"]
-    end
-
-    subgraph Bridge["Native & Subsystem Bridge"]
-        BridgeManager["ClaudeRuntimeBridge"]
-        JNI["Native JNI Bridge (libpocketspawn.so)"]
-    end
-
-    subgraph Runtime["PRoot Linux Subsystem"]
-        PRoot["PRoot ARM64 Engine"]
-        Ubuntu["Ubuntu 24.04 Rootfs"]
-        Agent["Claude Code Agent"]
-        Toolchain["Node.js / Python / Git"]
-    end
-
-    UI --> VM
-    VM --> Vault
-    VM --> Service
-    Service --> BridgeManager
-    BridgeManager --> JNI
-    JNI --> PRoot
-    PRoot --> Ubuntu
-    Ubuntu --> Agent
-    Ubuntu --> Toolchain
+flowchart LR
+    UI[Android app<br/>Jetpack Compose] --> BRIDGE[Runtime bridge<br/>Foreground services]
+    BRIDGE --> LINUX[Private Ubuntu<br/>PRoot environment]
+    LINUX --> AGENT[Claude Code CLI]
+    AGENT --> API[Configured<br/>model provider]
+    LINUX --> WORKSPACE[Project workspace<br/>App-private storage]
+    WORKSPACE --> UI
 ```
 
----
+1. Mobile Harness checks that the phone is ARM64 and has enough memory and storage.
+2. The first-run installer downloads verified runtime components into app-private storage.
+3. Ubuntu runs through PRoot without Android root access or a separate terminal application.
+4. Claude Code runs in structured streaming mode and reports responses and tool events to the Android UI.
+5. Commands and file operations run inside the active project workspace.
 
-## 📱 Supported Providers
+The first setup can take 10–12 minutes depending on the device and network. A foreground service keeps setup active, exposes live sanitized logs, and reports progress through an Android notification when permission is available.
 
-Pocket Dev supports dynamic model discovery and validation across major LLM APIs:
+## Runtime and toolchains
 
-| Provider | Supported Models | Authentication |
-| :--- | :--- | :--- |
-| **Anthropic** | Claude 3.7 Sonnet, Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus | API Key / Subscription |
-| **OpenRouter** | DeepSeek R1/V3, Llama 3.3 70B, Qwen 2.5 Coder, Claude, etc. | API Key |
-| **OpenAI** | GPT-4o, GPT-4o-mini, o1, o3-mini | API Key |
-| **Moonshot / Kimi** | Moonshot-v1 (8k / 32k / 128k), Kimi-latest | API Key |
-| **Custom OpenAI / Anthropic** | Any self-hosted or proxy endpoint (vLLM, Ollama, LiteLLM) | Custom Base URL + Key |
+The core setup includes:
 
----
+- Ubuntu 20.04 ARM64 root filesystem
+- Claude Code CLI, downloaded from Anthropic's official distribution endpoint
+- Node.js and npm
+- Git, certificates, and essential shell utilities
 
-## 🚀 Getting Started
+Optional toolchains can be selected during setup or managed later:
+
+| Toolchain | Included tools |
+| --- | --- |
+| **Web** | Node.js, npm, JavaScript, and TypeScript workflows |
+| **Python** | Python 3, pip, venv, and build essentials |
+| **Android** | OpenJDK and Kotlin-oriented build tools |
+| **C / C++** | GCC, G++, Make, CMake, and GDB |
+| **PHP** | PHP CLI and Composer |
+
+Docker, systemd, nested containers, kernel modules, Android emulators, and workflows requiring real root are outside the supported scope.
+
+## AI providers
+
+Mobile Harness is designed around Claude Code's Anthropic-compatible API path.
+
+| Connection | Status |
+| --- | --- |
+| **Anthropic API** | Primary supported API-key configuration |
+| **LLMrouter** | Anthropic-compatible gateway; compatibility depends on the selected model |
+| **Custom API** | Experimental support for Anthropic-compatible endpoints and model discovery |
+| **OpenAI gateway** | Experimental; requires a compatible Pocket gateway |
+| **Kimi gateway** | Experimental; requires a compatible Pocket gateway |
+
+API keys are encrypted with an Android Keystore-backed AES key before local persistence. They must still be treated as exposed to any trusted code deliberately executed in the same on-device environment.
+
+Mobile Harness does not offer Claude.ai subscription login in public third-party builds unless Anthropic explicitly approves that authentication path. Provider support does not guarantee that every model implements all Claude Code tools or streaming events correctly.
+
+## Requirements
+
+| Requirement | Minimum | Recommended |
+| --- | --- | --- |
+| **Android** | Android 9 (API 28) | Android 13 or newer |
+| **Architecture** | ARM64 (`arm64-v8a`) | ARM64 |
+| **Memory** | 4 GB RAM | 8 GB RAM |
+| **Storage** | 2 GB free for the core runtime | More space for projects and optional toolchains |
+| **Network** | Required for initial setup and AI access | Stable Wi-Fi for setup |
+
+32-bit Android devices are not supported. Android may still stop long-running or memory-intensive work despite foreground execution and wake-lock safeguards.
+
+## Build from source
 
 ### Prerequisites
-- **Android Device**: ARM64-v8a architecture, Android 9.0+ (API 28+).
-- **Free Storage**: At least ~1.5 GB of free internal storage for the Ubuntu rootfs and developer toolchains.
-- **RAM**: 4 GB minimum (6 GB+ recommended for large project workflows).
 
-### Building from Source
+- Android Studio with Android SDK 36
+- JDK 17
+- Android NDK and CMake 3.22.1
+- An ARM64 Android device or emulator
+- ADB for command-line installation
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/techjarves/PocketDev.git
-   cd PocketDev
-   ```
+### Build and install
 
-2. **Setup Build Environment**:
-   - Ensure **JDK 17** or higher is installed and configured in `JAVA_HOME`.
-   - Ensure the Android SDK with NDK and CMake `3.22.1` is installed.
+```bash
+git clone https://github.com/techjarves/PocketDev.git
+cd PocketDev
 
-3. **Compile the Debug APK**:
-   ```bash
-   ./gradlew assembleDebug
-   ```
-
-4. **Run Unit Tests**:
-   ```bash
-   ./gradlew testDebugUnitTest
-   ```
-
-5. **Install on Connected Device via ADB**:
-   ```bash
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
-   ```
-
----
-
-## 📂 Project Structure
-
-```
-PocketDev/
-├── app/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── cpp/                    # Native C++ process spawn routines
-│   │   │   │   ├── CMakeLists.txt
-│   │   │   │   └── pocketspawn.cpp
-│   │   │   ├── java/dev/pocket/app/
-│   │   │   │   ├── data/               # Keystore vault & persistent preferences
-│   │   │   │   │   ├── ApiKeyVault.kt
-│   │   │   │   │   └── AppPreferences.kt
-│   │   │   │   ├── model/              # Domain models, states, & event definitions
-│   │   │   │   │   └── Models.kt
-│   │   │   │   ├── network/            # Model discovery & validation HTTP client
-│   │   │   │   │   └── ProviderApiClient.kt
-│   │   │   │   ├── runtime/            # PRoot runtime installer & Claude agent bridge
-│   │   │   │   │   ├── ClaudeRuntimeBridge.kt
-│   │   │   │   │   ├── NativeSpawnProcess.kt
-│   │   │   │   │   ├── RuntimeExecutionService.kt
-│   │   │   │   │   └── RuntimeInstaller.kt
-│   │   │   │   └── ui/                 # Jetpack Compose UI & ViewModels
-│   │   │   │       ├── MainViewModel.kt
-│   │   │   │       ├── MarkdownText.kt
-│   │   │   │       ├── PocketDevApp.kt
-│   │   │   │       ├── SettingsScreenModern.kt
-│   │   │   │       ├── TerminalScreen.kt
-│   │   │   │       └── theme/
-│   │   │   └── res/                    # Vector icons, drawables, & strings
-│   └── build.gradle.kts
-├── gradle/
-├── build.gradle.kts
-└── settings.gradle.kts
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Useful verification commands:
+
+```bash
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+```
+
+The standard direct-APK build currently targets API 28 for compatibility with its local native runtime. An API 36 feasibility build can be produced with:
+
+```bash
+./gradlew -PplayFeasibility=true assembleDebug
+```
+
+That build flag is for compatibility testing; it does not make the current runtime architecture Google Play compliant.
+
+## First-run flow
+
+1. Review the device compatibility check.
+2. Review notification and background-execution explanations.
+3. Select the core runtime and any optional toolchains.
+4. Keep the installer open or follow progress from its foreground notification.
+5. Choose an AI provider, enter credentials, discover or enter a model, and test the connection.
+6. Create a project or start a Quick Project.
+
+Notification permission and battery-optimization exemption improve background reliability, but denial does not permanently block the app.
+
+## Project structure
+
+```text
+app/src/main/
+├── java/com/jarves/mh/
+│   ├── data/       Preferences, encrypted credentials, and persistence
+│   ├── model/      Projects, chats, attachments, and runtime events
+│   ├── runtime/    Installer, Claude bridge, terminal, and services
+│   └── ui/         Jetpack Compose screens and state management
+├── cpp/            Native launcher and process bridge
+├── assets/         Runtime metadata and third-party notices
+└── res/            Android resources
+```
+
+## Security and privacy
+
+- Runtime files, projects, conversations, attachments, checkpoints, and diagnostics are stored locally in app-private storage.
+- Selected local folders are imported through Android's Storage Access Framework rather than exposing all shared storage.
+- Runtime downloads are pinned and checksum-verified before execution.
+- Permanent backend credentials must never be embedded in the APK.
+- PRoot performs userspace path translation; it is **not** a container, virtual machine, or hardened security boundary.
+- Imported code can attempt to access credentials and data available to its process. Use only trusted repositories and files.
+
+Release builds must not contain test API keys, debug provider defaults, or private endpoints.
+
+## Known limitations
+
+- ARM64 phones only
+- No hardened isolation for hostile code
+- Terminal input/output currently uses a process bridge rather than a complete PTY emulator; full-screen interactive programs may render incorrectly
+- Background tasks are subject to Android process and battery policies
+- Custom providers may lack Claude-compatible thinking, tool use, token counting, or streaming behavior
+- Large builds can be slow and memory-intensive under PRoot
+- Runtime installation requires a substantial download and free storage
+
+## Distribution and Google Play
+
+Mobile Harness is currently intended for signed direct APK distribution and private testing.
+
+The local-runtime edition is not ready for Google Play because it still requires policy and technical validation for downloaded executable code, foreground-service declarations, API 36 behavior, and 16 KB native-library alignment. A future Play edition may need to package approved runtime assets differently or move execution to a remote service.
+
+Public release is also conditional on legal review and written guidance from Anthropic regarding branding, authentication, and redistribution.
+
+## Project status
+
+Mobile Harness is under active development and should be treated as alpha software. Interfaces, runtime versions, provider behavior, and storage formats may change while reliability and device compatibility are validated.
+
+## Legal and third-party software
+
+Mobile Harness is an independent project and is not affiliated with, endorsed by, or sponsored by Anthropic.
+
+Claude and Claude Code are trademarks of Anthropic. Claude Code is proprietary software, is downloaded from Anthropic rather than bundled or mirrored by this repository, and remains subject to Anthropic's terms and license. Ubuntu, Android, Kotlin, Node.js, Git, and other components belong to their respective owners.
+
+Third-party notices bundled with the Android application are available in [`app/src/main/assets/licenses`](app/src/main/assets/licenses).
+
+## License
+
+Mobile Harness is available under the [MIT License](LICENSE). Third-party components remain governed by their own licenses.
+
 ---
 
-## 🛡️ Security Considerations
-
-- **PRoot Isolation**: PRoot runs as a userland process translation layer. While it isolates your project workspace within app-private storage, it is not a kernel-enforced hypervisor sandbox. Only open projects and execute scripts from trusted sources.
-- **Permission Boundaries**: Pocket Dev requests only necessary foreground service and notification permissions to keep terminal commands and AI agent tasks alive without background termination.
-
----
-
-## 🤝 Attribution & Acknowledgements
-
-- **PRoot Project**: User-space `chroot` implementation enabling Linux userspace on Android.
-- **Termux**: Inspiration and packaging standards for Android-adapted Linux tools.
-- **Claude Code**: Advanced agentic coding interface by Anthropic.
-- **ferrumclaudepilgrim/claude-code-android**: Valuable research on verified download pipelines and PRoot smoke-testing strategies on mobile.
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+<div align="center">
+  <sub>Built for developers who want a capable coding workspace in their pocket.</sub>
+</div>
