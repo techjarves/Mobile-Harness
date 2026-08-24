@@ -27,7 +27,7 @@ AntiFeatures:
 Builds:
   - versionName: 1.0.0
     versionCode: 1
-    commit: v1.0.0
+    commit: 75d23f2fa74dc36c4fdf549caff7dd363307f1ad
     subdir: app
     gradle:
       - yes
