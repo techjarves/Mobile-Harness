@@ -103,7 +103,7 @@ fun TerminalScreen(
     onCommandDraftConsumed: () -> Unit = {},
     promptPath: String = "/workspace",
     onStop: (() -> Unit)? = null,
-    showThemeAction: Boolean = true,
+    showThemeAction: Boolean = false,
     showQuickCommands: Boolean = true,
     compactHeader: Boolean = false,
 ) {
@@ -171,36 +171,65 @@ fun TerminalScreen(
     )
 
     Scaffold(
-        modifier = Modifier.statusBarsPadding(),
+        modifier = if (compactHeader) Modifier else Modifier.statusBarsPadding(),
         topBar = {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = if (compactHeader) 4.dp else 8.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compactHeader) 5.dp else 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            if (compactHeader) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                 ) {
-                    Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(22.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(title, fontWeight = FontWeight.Bold, style = if (compactHeader) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
-                        Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = onClear) { Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output") }
-                    if (showThemeAction) {
-                        IconButton(onClick = onToggleTheme) {
-                            Icon(
-                                if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                contentDescription = "Toggle theme",
-                            )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = onClear) { Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output") }
+                        if (showThemeAction) {
+                            IconButton(onClick = onToggleTheme) {
+                                Icon(
+                                    if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                    contentDescription = "Toggle theme",
+                                )
+                            }
                         }
                     }
                 }
+            } else {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                                Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = onClear) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output")
+                        }
+                        if (showThemeAction) {
+                            IconButton(onClick = onToggleTheme) {
+                                Icon(
+                                    if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                    contentDescription = "Toggle theme",
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
             }
         },
     ) { padding ->

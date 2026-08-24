@@ -13,6 +13,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -2080,14 +2081,6 @@ private fun ProjectsScreen(
         topBar = {
             TopAppBar(
                 title = { Row(verticalAlignment = Alignment.CenterVertically) { BrandMark(compact = true); Spacer(Modifier.width(9.dp)); Text("Pocket Dev", fontWeight = FontWeight.Bold) } },
-                actions = {
-                    IconButton(onClick = onToggleTheme) {
-                        Icon(
-                            if (state.themeMode == dev.pocket.app.ui.theme.AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Toggle theme",
-                        )
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -3055,10 +3048,10 @@ private fun ChatTab(
 
                 Surface(
                     shape = RoundedCornerShape(26.dp),
-                    color = Color(0xFF121722),
+                    color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
                         width = 1.dp,
-                        color = if (canSend) PocketOrange.copy(alpha = 0.55f) else Color(0xFF222C3E),
+                        color = if (canSend) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -3077,7 +3070,7 @@ private fun ChatTab(
                                 imageVector = Icons.Default.AttachFile,
                                 contentDescription = "Attach files",
                                 modifier = Modifier.size(20.dp),
-                                tint = if (pendingAttachments.isNotEmpty()) PocketOrange else Color(0xFF8B98AD),
+                                tint = if (pendingAttachments.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
 
@@ -3089,18 +3082,18 @@ private fun ChatTab(
                                 .padding(horizontal = 4.dp, vertical = 10.dp)
                                 .heightIn(min = 20.dp, max = 130.dp),
                             textStyle = TextStyle(
-                                color = Color(0xFFF0F6FC),
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 15.sp,
                                 lineHeight = 20.sp,
                             ),
-                            cursorBrush = SolidColor(PocketOrange),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                             decorationBox = { innerTextField ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (prompt.isEmpty()) {
                                         Text(
                                             text = "Message Claude…",
-                                            color = Color(0xFF6B7A90),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 15.sp,
                                         )
                                     }
@@ -3116,7 +3109,7 @@ private fun ChatTab(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .background(
-                                        color = Color(0xFFEF4444),
+                                        color = MaterialTheme.colorScheme.error,
                                         shape = CircleShape,
                                     )
                                     .clickable(onClick = onStop),
@@ -3125,7 +3118,7 @@ private fun ChatTab(
                                 Icon(
                                     imageVector = Icons.Default.Stop,
                                     contentDescription = "Stop AI task",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onError,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
@@ -3134,7 +3127,7 @@ private fun ChatTab(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .background(
-                                        color = if (canSend) PocketOrange else Color(0xFF1C2433),
+                                        color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                                         shape = CircleShape,
                                     )
                                     .clickable(
@@ -3151,7 +3144,7 @@ private fun ChatTab(
                                 Icon(
                                     imageVector = Icons.Default.ArrowUpward,
                                     contentDescription = "Send",
-                                    tint = if (canSend) Color(0xFF1A0C00) else Color(0xFF55647A),
+                                    tint = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                     modifier = Modifier.size(19.dp),
                                 )
                             }
@@ -3724,38 +3717,147 @@ private fun DiffLineRow(line: DiffLine) {
 
 @Composable
 private fun PreviewTab(ready: Boolean, url: String?) {
-    if (!ready || url == null) {
-        EmptyState(Icons.Default.PlayArrow, "Preview not running", "Start a local web server in the project Terminal. Its localhost URL will appear here automatically.")
-        return
+    var address by rememberSaveable(url) { mutableStateOf(if (ready) url.orEmpty() else "") }
+    var activeUrl by rememberSaveable(url) { mutableStateOf(if (ready) url else null) }
+    var addressError by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+
+    val navigate = {
+        val normalized = normalizePreviewUrl(address)
+        if (normalized == null) {
+            addressError = "Use a local URL such as localhost:3000"
+        } else {
+            addressError = null
+            address = normalized
+            activeUrl = normalized
+        }
     }
-    Column(Modifier.fillMaxSize()) {
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
-            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(9.dp).background(PocketGreen, CircleShape)); Spacer(Modifier.width(8.dp)); Text(url, fontSize = 12.sp, maxLines = 1)
+
+    LaunchedEffect(ready, url) {
+        if (ready && !url.isNullOrBlank() && activeUrl == null) {
+            normalizePreviewUrl(url)?.let {
+                address = it
+                activeUrl = it
             }
         }
-        AndroidView(
-            factory = { context ->
-                WebView(context).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                            val target = request?.url ?: return true
-                            return !target.isLoopbackPreviewUrl()
-                        }
+    }
 
-                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                            val target = request?.url ?: return blockedPreviewResponse()
-                            return if (target.isLoopbackPreviewUrl()) null else blockedPreviewResponse()
-                        }
+    Column(Modifier.fillMaxSize()) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            tonalElevation = 1.dp,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = {
+                            address = it
+                            addressError = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Preview URL") },
+                        placeholder = { Text("localhost:3000") },
+                        leadingIcon = {
+                            Box(
+                                Modifier.size(8.dp).background(
+                                    if (activeUrl != null) PocketGreen else MaterialTheme.colorScheme.outline,
+                                    CircleShape,
+                                ),
+                            )
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = navigate) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Open URL")
+                            }
+                        },
+                        isError = addressError != null,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Go,
+                        ),
+                        keyboardActions = KeyboardActions(onGo = { navigate() }),
+                    )
+                    IconButton(
+                        onClick = { webView?.reload() ?: navigate() },
+                        enabled = address.isNotBlank(),
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh preview")
                     }
-                    loadUrl(url)
                 }
+                if (addressError != null) {
+                    Text(
+                        addressError.orEmpty(),
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(start = 16.dp, top = 3.dp),
+                    )
+                } else if (loading) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 5.dp))
+                }
+            }
+        }
+        val targetUrl = activeUrl
+        if (targetUrl == null) {
+            EmptyState(Icons.Default.PlayArrow, "Preview not running", "Enter a localhost URL above, or start a local web server in the project Terminal.")
+        } else {
+            AndroidView(
+                factory = { context ->
+                    WebView(context).apply {
+                        webView = this
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                loading = newProgress < 100
+                            }
+                        }
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val target = request?.url ?: return true
+                                if (!target.isLoopbackPreviewUrl()) {
+                                    addressError = "External navigation is blocked in project preview"
+                                    return true
+                                }
+                                address = target.toString()
+                                return false
+                            }
+
+                            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                                val target = request?.url ?: return blockedPreviewResponse()
+                                return if (target.isLoopbackPreviewUrl()) null else blockedPreviewResponse()
+                            }
+                        }
+                        loadUrl(targetUrl)
+                    }
+                },
+                update = { current ->
+                    webView = current
+                    if (current.url != targetUrl) current.loadUrl(targetUrl)
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+private fun normalizePreviewUrl(input: String): String? {
+    val raw = input.trim()
+    if (raw.isBlank()) return null
+    val withScheme = if ("://" in raw) raw else "http://$raw"
+    val parsed = runCatching { Uri.parse(withScheme) }.getOrNull() ?: return null
+    if (!parsed.isLoopbackPreviewUrl() || parsed.host.isNullOrBlank()) return null
+    return if (parsed.host == "0.0.0.0") {
+        parsed.buildUpon().encodedAuthority(
+            buildString {
+                append("127.0.0.1")
+                if (parsed.port >= 0) append(":${parsed.port}")
             },
-            update = { webView -> if (webView.url != url) webView.loadUrl(url) },
-            modifier = Modifier.fillMaxSize(),
-        )
+        ).build().toString()
+    } else {
+        parsed.toString()
     }
 }
 
