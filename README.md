@@ -143,13 +143,13 @@ Useful verification commands:
 ./gradlew lintDebug
 ```
 
-The standard direct-APK build currently targets API 28 for compatibility with its local native runtime. An API 36 feasibility build can be produced with:
+The standard direct-APK build currently targets API 28 for compatibility with its local native runtime. An API 36 Play-oriented build can be produced with:
 
 ```bash
-./gradlew -PplayFeasibility=true assembleDebug
+./gradlew -PplayBuild=true assembleDebug
 ```
 
-That build flag is for compatibility testing; it does not make the current runtime architecture Google Play compliant.
+That build flag configures API 36 and ARM64-only output. See the [Google Play release checklist](docs/PLAY_STORE_CHECKLIST.md) for signing and policy work that must still be completed.
 
 ## First-run flow
 
@@ -201,7 +201,7 @@ Release builds must not contain test API keys, debug provider defaults, or priva
 
 Mobile Harness is currently intended for signed direct APK distribution and private testing.
 
-The local-runtime edition is not ready for Google Play because it still requires policy and technical validation for downloaded executable code, foreground-service declarations, API 36 behavior, and 16 KB native-library alignment. A future Play edition may need to package approved runtime assets differently or move execution to a remote service.
+The Play-oriented build now targets API 36, emits ARM64-only native code, supports 16 KB page alignment, uses upload-key signing, and includes the required store metadata and declaration worksheets. Submission still requires Play Console enrollment, listing declarations, reviewer access, pre-launch testing, and approval of the downloadable local-runtime architecture. A future Play edition may need to package approved runtime assets differently or move execution to a remote service.
 
 Public release is also conditional on legal review and written guidance from Anthropic regarding branding, authentication, and redistribution.
 

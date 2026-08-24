@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="500" viewBox="0 0 1024 500">
+  <image xlink:href="feature-background.png" width="1024" height="500"/>
+  <text x="64" y="218" fill="#F3F5F7" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="62" font-weight="650">Mobile Harness</text>
+  <text x="67" y="268" fill="#A8B0BC" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="30" font-weight="400">Build from your phone</text>
+  <rect x="67" y="302" width="94" height="7" rx="3.5" fill="#F28C52"/>
+</svg>

@@ -10,7 +10,22 @@ val testSecrets = Properties().apply {
     val secretsFile = rootProject.file("test-secrets.properties")
     if (secretsFile.isFile) secretsFile.inputStream().use(::load)
 }
-val playFeasibility = providers.gradleProperty("playFeasibility").orNull?.toBoolean() == true
+val playBuild = providers.gradleProperty("playBuild").orNull?.toBoolean() == true ||
+    providers.gradleProperty("playFeasibility").orNull?.toBoolean() == true
+val appVersionCode = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 1
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "1.0.0"
+val privacyPolicyUrl = providers.gradleProperty("privacyPolicyUrl").orNull
+    ?: "https://github.com/techjarves/Mobile-Harness/blob/main/PRIVACY.md"
+val uploadStorePath = providers.environmentVariable("MH_UPLOAD_STORE_FILE").orNull
+val uploadStorePassword = providers.environmentVariable("MH_UPLOAD_STORE_PASSWORD").orNull
+val uploadKeyAlias = providers.environmentVariable("MH_UPLOAD_KEY_ALIAS").orNull
+val uploadKeyPassword = providers.environmentVariable("MH_UPLOAD_KEY_PASSWORD").orNull
+val hasUploadSigning = listOf(
+    uploadStorePath,
+    uploadStorePassword,
+    uploadKeyAlias,
+    uploadKeyPassword,
+).all { !it.isNullOrBlank() }
 
 fun buildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -19,17 +34,35 @@ android {
     namespace = "com.jarves.mh"
     compileSdk = 36
 
+    signingConfigs {
+        if (hasUploadSigning) {
+            create("upload") {
+                storeFile = rootProject.file(checkNotNull(uploadStorePath))
+                storePassword = checkNotNull(uploadStorePassword)
+                keyAlias = checkNotNull(uploadKeyAlias)
+                keyPassword = checkNotNull(uploadKeyPassword)
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.jarves.mh"
         minSdk = 28
-        // Direct-APK compatibility: Android blocks PRoot guest exec for targets 29+.
-        // This matches the proven Termux execution policy; reassess before public distribution.
-        targetSdk = if (playFeasibility) 36 else 28
-        versionCode = 1
-        versionName = "1.0.0"
+        // The direct APK retains the proven target-28 PRoot execution path. The
+        // Play build targets current Android while its runtime path is validated.
+        targetSdk = if (playBuild) 36 else 28
+        versionCode = appVersionCode
+        versionName = appVersionName
+
+        if (playBuild) {
+            ndk.abiFilters += "arm64-v8a"
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        buildConfigField("boolean", "IS_PLAY_BUILD", playBuild.toString())
+        buildConfigField("String", "PRIVACY_POLICY_URL", buildConfigString(privacyPolicyUrl))
 
         buildConfigField(
             "String",
@@ -48,6 +81,9 @@ android {
         }
         release {
             isMinifyEnabled = false
+            if (hasUploadSigning) {
+                signingConfig = signingConfigs.getByName("upload")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -73,6 +109,20 @@ android {
     sourceSets.getByName("main").jniLibs.exclude("**/libpocketspawn.so")
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true
+}
+
+tasks.register("playReadinessCheck") {
+    group = "verification"
+    description = "Checks configuration required before uploading a Mobile Harness Play bundle."
+    doLast {
+        check(playBuild) { "Run with -PplayBuild=true." }
+        check(privacyPolicyUrl.startsWith("https://")) {
+            "privacyPolicyUrl must be a public HTTPS URL."
+        }
+        check(hasUploadSigning) {
+            "Set MH_UPLOAD_STORE_FILE, MH_UPLOAD_STORE_PASSWORD, MH_UPLOAD_KEY_ALIAS, and MH_UPLOAD_KEY_PASSWORD."
+        }
+    }
 }
 
 dependencies {

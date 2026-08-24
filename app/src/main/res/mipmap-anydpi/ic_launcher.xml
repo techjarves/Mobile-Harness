@@ -1,6 +1,8 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp"
-    android:viewportWidth="108" android:viewportHeight="108">
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
     <path android:fillColor="#0B0E14" android:pathData="M0,0h108v108h-108z" />
     <group android:pivotX="54" android:pivotY="54" android:scaleX="1.1" android:scaleY="1.1">
         <path android:fillColor="#F28C52" android:pathData="M22,26h47c10,0 18,8 18,18v20c0,10 -8,18 -18,18h-18l-12,11v-11h-17z" />
