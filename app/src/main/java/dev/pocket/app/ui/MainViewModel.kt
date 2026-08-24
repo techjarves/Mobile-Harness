@@ -67,6 +67,12 @@ data class TerminalOutputLine(
     val exitCode: Int = 0,
 )
 
+private val ANSI_TERMINAL_SEQUENCE = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
+
+internal fun sanitizeTerminalOutput(text: String): String = text
+    .replace(ANSI_TERMINAL_SEQUENCE, "")
+    .filter { it == '\n' || it == '\r' || it == '\t' || it.code >= 0x20 }
+
 private data class ProjectTerminalSnapshot(
     val lines: List<TerminalOutputLine> = emptyList(),
     val cwd: String = "/workspace",
@@ -143,6 +149,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val installer = RuntimeInstaller(application)
     private val providerApi = ProviderApiClient()
     @Volatile private var projectTerminalProcess: Process? = null
+    @Volatile private var terminalProcess: Process? = null
     @Volatile private var projectTerminalProjectId: String? = null
     @Volatile private var projectTerminalStopRequested: Boolean = false
     @Volatile private var setupCompletionHandled: Boolean = false
@@ -253,19 +260,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val runtime = installer.installedRuntime()
                     val workspace = File(getApplication<Application>().filesDir, "workspaces/terminal").apply { mkdirs() }
+                    val preparedCommand = prepareInteractiveShellCommand(command)
                     val proc = installer.process(
                         proot = runtime.proot,
                         rootfs = runtime.rootfs,
                         workspace = workspace,
                         environment = emptyMap(),
-                        guestCommand = listOf("/usr/bin/bash", "-c", command),
+                        guestCommand = listOf("/usr/bin/bash", "-c", preparedCommand),
                     )
-                    // Terminal commands are one-shot for now. Closing stdin prevents
-                    // interactive programs from waiting forever for input the UI cannot send.
-                    proc.outputStream.close()
+                    terminalProcess = proc
                     val native = proc as? NativeSpawnProcess
                     var offset = 0L
                     val streamed = StringBuilder()
+                    var autoConfirmed = false
                     while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
                         val file = native?.outputFile
                         val available = (file?.length() ?: 0L) - offset
@@ -281,11 +288,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (count > 0) {
                             offset += count
                             streamed.append(bytes.decodeToString(0, count))
-                            _terminalLiveOutput.value = streamed.toString().trimEnd().takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                            _terminalLiveOutput.value = sanitizeTerminalOutput(streamed.toString())
+                                .trimEnd()
+                                .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                            if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, streamed.toString())) {
+                                proc.outputStream.write("y\n".toByteArray())
+                                proc.outputStream.flush()
+                                autoConfirmed = true
+                            }
                         }
                     }
                     val exit = proc.waitFor()
-                    val out = streamed.toString().trim()
+                    runCatching { proc.outputStream.close() }
+                    val out = sanitizeTerminalOutput(streamed.toString()).trim()
                     val finalOut = if (out.isNotEmpty() || exit == 0) out else "Process exited with code $exit"
                     finalOut to exit
                 }.getOrElse { "Error: ${it.message}" to 1 }
@@ -294,7 +309,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _terminalLiveOutput.value = ""
             _terminalCurrentCommand.value = null
             _isTerminalRunning.value = false
+            terminalProcess = null
         }
+    }
+
+    fun sendTerminalInput(text: String) {
+        sendProcessInput(terminalProcess, text)
+    }
+
+    fun interruptTerminalCommand() {
+        interruptProcess(terminalProcess)
     }
 
     fun clearTerminal() {
@@ -407,6 +431,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun sendProjectTerminalInput(text: String) {
+        sendProcessInput(projectTerminalProcess, text)
+    }
+
+    fun interruptProjectTerminalCommand() {
+        interruptProcess(projectTerminalProcess)
+    }
+
     fun clearProjectTerminal() {
         val project = _state.value.activeProject ?: return
         if (_state.value.projectTerminalRunning) return
@@ -423,9 +455,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val workspace = projectWorkspaceRoot(project)
         val guestWorkspacePath = projectGuestRoot(project)
         val marker = "__POCKETDEV_CWD_${UUID.randomUUID()}__"
+        val preparedCommand = prepareInteractiveShellCommand(command)
         val script = """
             cd -- ${shellQuote(cwd)} || exit 1
-            $command
+            $preparedCommand
             pocket_status=${'$'}?
             printf '\n$marker%s\n' "${'$'}PWD"
             exit ${'$'}pocket_status
@@ -438,9 +471,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             guestCommand = listOf("/usr/bin/bash", "-lc", script),
             guestWorkspacePath = guestWorkspacePath,
         )
-        // Commands are one-shot. Servers keep running normally, while programs
-        // waiting for terminal input receive EOF instead of hanging the session.
-        process.outputStream.close()
         projectTerminalProcess = process
         projectTerminalProjectId = projectId
         if (projectTerminalStopRequested) process.destroy()
@@ -448,6 +478,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: return ProjectTerminalResult("Unsupported terminal process.", 1, cwd)
         var offset = 0L
         val output = StringBuilder()
+        var autoConfirmed = false
         while (process.isAlive || native.outputFile.length() > offset) {
             val available = native.outputFile.length() - offset
             if (available <= 0) {
@@ -462,7 +493,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (count > 0) {
                 offset += count
                 output.append(bytes.decodeToString(0, count))
-                val visible = output.toString().substringBefore(marker).takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
+                    .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
+                    process.outputStream.write("y\n".toByteArray())
+                    process.outputStream.flush()
+                    autoConfirmed = true
+                }
                 val detectedPreviewUrl = detectPreviewUrl(visible)
                 _state.update { current ->
                     if (current.activeProject?.id == projectId) {
@@ -476,6 +513,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val exitCode = process.waitFor()
+        runCatching { process.outputStream.close() }
         val raw = output.toString()
         val cwdAfter = raw.substringAfter(marker, "")
             .lineSequence()
@@ -483,8 +521,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?.trim()
             ?.takeIf { it == guestWorkspacePath || it.startsWith("$guestWorkspacePath/") }
             ?: cwd
-        val cleanOutput = raw.substringBefore(marker).trim().takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+        val cleanOutput = sanitizeTerminalOutput(raw.substringBefore(marker))
+            .trim()
+            .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
         return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
+    }
+
+    private fun sendProcessInput(process: Process?, text: String) {
+        if (process?.isAlive != true || text.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                process.outputStream.write((text + "\n").toByteArray())
+                process.outputStream.flush()
+            }.onFailure {
+                _state.update { current -> current.copy(toastMessage = "This process is no longer accepting input.") }
+            }
+        }
+    }
+
+    private fun interruptProcess(process: Process?) {
+        if (process?.isAlive != true) return
+        viewModelScope.launch(Dispatchers.IO) {
+            (process as? NativeSpawnProcess)?.interrupt() ?: process.destroy()
+        }
+    }
+
+    /**
+     * Package management must never block on Y/N, locale, timezone, service-restart,
+     * or config-file dialogs in the phone UI. Other commands remain interactive and
+     * can receive input through [sendProcessInput].
+     */
+    private fun prepareInteractiveShellCommand(command: String): String {
+        val normalizedApt = command
+            .replace(Regex("(?<![\\w-])sudo\\s+apt(?:-get)?\\s+"), "apt-get ")
+            .replace(Regex("(?<![\\w-])apt\\s+"), "apt-get ")
+            .replace(
+                Regex("(?<![\\w-])apt-get\\s+(install|upgrade|full-upgrade|dist-upgrade|remove|autoremove|fix-broken)\\b"),
+                "apt-get -y -o Dpkg::Options::=--force-confold $1",
+            )
+        return "export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none UCF_FORCE_CONFFOLD=1 NEEDRESTART_MODE=a TZ=Etc/UTC LC_ALL=C.UTF-8; $normalizedApt"
+    }
+
+    private fun shouldAutoConfirmPackageCommand(command: String, output: String): Boolean {
+        val packageCommand = Regex("(?i)(^|[;&|]\\s*)(sudo\\s+)?(apt|apt-get|dpkg)\\b").containsMatchIn(command)
+        if (!packageCommand) return false
+        val tail = output.takeLast(500)
+        return Regex("(?i)(do you want to continue|continue\\?)\\s*\\[[Yy]/[Nn]\\]").containsMatchIn(tail)
     }
 
     private fun isDestructiveTerminalCommand(command: String): Boolean {

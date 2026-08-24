@@ -418,19 +418,16 @@ private fun SettingsAccordion(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
-        color = if (expanded) PocketOrange.copy(alpha = 0.035f) else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            if (expanded) 1.5.dp else 1.dp,
-            if (expanded) PocketOrange.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
-        ),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
             Row(
                 Modifier.fillMaxWidth().clickable(onClick = onClick).padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(shape = RoundedCornerShape(11.dp), color = PocketOrange.copy(alpha = 0.12f), modifier = Modifier.size(40.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp), tint = PocketOrange) }
+                Surface(shape = RoundedCornerShape(11.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), modifier = Modifier.size(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) }
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -440,12 +437,12 @@ private fun SettingsAccordion(
                 Icon(
                     if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     if (expanded) "Collapse" else "Expand",
-                    tint = if (expanded) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             AnimatedVisibility(expanded) {
                 Column {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
                 }
             }

@@ -90,6 +90,8 @@ fun TerminalScreen(
     lines: List<TerminalOutputLine>,
     isRunning: Boolean,
     onRun: (String) -> Unit,
+    onInput: (String) -> Unit = {},
+    onInterrupt: (() -> Unit)? = null,
     onClear: () -> Unit,
     onToggleTheme: () -> Unit,
     themeMode: AppThemeMode,
@@ -109,7 +111,7 @@ fun TerminalScreen(
     var commandHistory by remember { mutableStateOf(emptyList<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
     var altActive by rememberSaveable { mutableStateOf(false) }
-    var cursorVisible by rememberSaveable { mutableStateOf(true) }
+    var ctrlActive by rememberSaveable { mutableStateOf(false) }
     val terminalScrollState = rememberScrollState()
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -123,19 +125,16 @@ fun TerminalScreen(
         }
     }
     val submitCommand = {
-        if (commandInput.text.isNotBlank() && !isRunning) {
+        if (commandInput.text.isNotBlank()) {
             val submitted = commandInput.text
-            onRun(submitted)
-            commandHistory = (commandHistory + submitted).takeLast(50)
-            historyIndex = -1
+            if (isRunning) {
+                onInput(submitted)
+            } else {
+                onRun(submitted)
+                commandHistory = (commandHistory + submitted).takeLast(50)
+                historyIndex = -1
+            }
             commandInput = TextFieldValue()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(550)
-            cursorVisible = !cursorVisible
         }
     }
 
@@ -247,7 +246,7 @@ fun TerminalScreen(
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        enabled = !isRunning,
+                        enabled = true,
                     ) { openTerminalKeyboard() },
                 color = Color(0xFF090D14),
                 shape = RoundedCornerShape(12.dp),
@@ -275,7 +274,7 @@ fun TerminalScreen(
                                     TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command)
                                     if (item.output.isNotEmpty()) {
                                         Text(
-                                            text = item.output,
+                                            text = sanitizeTerminalOutput(item.output),
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 12.sp,
                                             lineHeight = 18.sp,
@@ -292,7 +291,7 @@ fun TerminalScreen(
 
                             if (liveOutput.isNotBlank()) {
                                 Text(
-                                    liveOutput,
+                                    sanitizeTerminalOutput(liveOutput),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     lineHeight = 18.sp,
@@ -300,18 +299,14 @@ fun TerminalScreen(
                                 )
                             }
 
-                            if (isRunning && cursorVisible) {
-                                Text(
-                                    "▌",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    color = PocketOrange,
-                                )
-                            }
                         }
                     }
-                    if (!isRunning) {
-                        val prefix = "root@pocket:$terminalPromptPath# "
+                    run {
+                        // While a process is running, keep the input surface visually
+                        // empty until the user types. A permanent prompt/cursor here
+                        // changed the console height and made auto-scroll look like a
+                        // full terminal refresh on every blink.
+                        val prefix = if (isRunning) "" else "root@pocket:$terminalPromptPath# "
                         val prefixVisualTransformation = remember(prefix) {
                             VisualTransformation { text ->
                                 val transformed = buildAnnotatedString {
@@ -335,7 +330,29 @@ fun TerminalScreen(
 
                         BasicTextField(
                             value = commandInput,
-                            onValueChange = { commandInput = it },
+                            onValueChange = { next ->
+                                if (ctrlActive && next.text.length > commandInput.text.length) {
+                                    val inserted = next.text.substring(
+                                        commandInput.selection.start.coerceAtMost(next.text.length),
+                                        next.selection.end.coerceAtMost(next.text.length),
+                                    )
+                                    if (inserted.any { it.equals('c', ignoreCase = true) }) {
+                                        if (isRunning) {
+                                            onInterrupt?.invoke()
+                                        } else {
+                                            // A shell with no foreground process uses
+                                            // Ctrl+C to cancel the current command line.
+                                            commandInput = TextFieldValue()
+                                        }
+                                        ctrlActive = false
+                                    } else {
+                                        commandInput = next
+                                        ctrlActive = false
+                                    }
+                                } else {
+                                    commandInput = next
+                                }
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .focusRequester(inputFocusRequester),
@@ -349,8 +366,12 @@ fun TerminalScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFFF0F6FC),
                             ),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { submitCommand() }),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(
+                                onSend = { submitCommand() },
+                                onDone = { submitCommand() },
+                                onGo = { submitCommand() },
+                            ),
                         )
                     }
                     Spacer(Modifier.height(24.dp))
@@ -385,10 +406,11 @@ fun TerminalScreen(
                 TerminalIconKeyButton(Icons.Default.ArrowForward, "Move cursor right") {
                     commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
                 }
-                TerminalKeyButton(if (altActive) "ALT ✓" else "ALT", "Alt modifier") { altActive = !altActive }
+                TerminalKeyButton("ALT", "Alt modifier", active = altActive, fixedWidth = true) { altActive = !altActive }
                 TerminalKeyButton("ESC", "Escape") { commandInput = TextFieldValue() }
-                TerminalKeyButton("CTRL", "Control (Ctrl+C stops a running command)") {
-                    if (isRunning && onStop != null) onStop()
+                TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
+                    ctrlActive = !ctrlActive
+                    if (ctrlActive) openTerminalKeyboard()
                 }
             }
         }
@@ -396,12 +418,33 @@ fun TerminalScreen(
 }
 
 @Composable
-private fun TerminalKeyButton(label: String, description: String, onClick: () -> Unit) {
+private fun TerminalKeyButton(
+    label: String,
+    description: String,
+    active: Boolean = false,
+    fixedWidth: Boolean = false,
+    onClick: () -> Unit,
+) {
     androidx.compose.material3.OutlinedButton(
         onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-        modifier = Modifier.height(34.dp),
-    ) { Text(label, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        modifier = Modifier.height(34.dp).then(if (fixedWidth) Modifier.width(78.dp) else Modifier),
+        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+            containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else Color.Transparent,
+            contentColor = if (active) PocketOrange else MaterialTheme.colorScheme.onSurface,
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (active) PocketOrange else MaterialTheme.colorScheme.outlineVariant,
+        ),
+    ) {
+        Text(
+            if (active) "$label ✓" else label,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable

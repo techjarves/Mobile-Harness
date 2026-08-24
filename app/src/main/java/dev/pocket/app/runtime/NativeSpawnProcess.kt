@@ -34,6 +34,11 @@ internal class NativeSpawnProcess private constructor(
         NativeSpawn.kill(pid, 15)
     }
 
+    /** Send the same interrupt signal produced by Ctrl+C in a real terminal. */
+    internal fun interrupt() {
+        NativeSpawn.kill(pid, 2)
+    }
+
     override fun destroyForcibly(): Process {
         NativeSpawn.kill(pid, 9)
         return this

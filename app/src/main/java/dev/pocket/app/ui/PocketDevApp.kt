@@ -224,20 +224,36 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         }
     }
     when {
-        state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(state)
+        state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(
+            state = state,
+            themeMode = state.themeMode,
+            onToggleTheme = viewModel::toggleTheme,
+        )
         !state.backgroundSetupComplete && state.startupStage == StartupStage.SETUP_REQUIRED ->
-            BackgroundTaskSetupScreen(onContinue = viewModel::finishBackgroundSetup)
+            BackgroundTaskSetupScreen(
+                themeMode = state.themeMode,
+                onToggleTheme = viewModel::toggleTheme,
+                onContinue = viewModel::finishBackgroundSetup,
+            )
         state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(
             selectedStacks = state.selectedDevStacks,
+            themeMode = state.themeMode,
+            onToggleTheme = viewModel::toggleTheme,
             onToggleStack = viewModel::toggleDevStack,
             onDownload = viewModel::startRuntimeSetup,
         )
         state.startupStage == StartupStage.INSTALLING ||
-            state.startupStage == StartupStage.INITIALIZING -> StartupLoadingScreen(state)
+            state.startupStage == StartupStage.INITIALIZING -> StartupLoadingScreen(
+            state = state,
+            themeMode = state.themeMode,
+            onToggleTheme = viewModel::toggleTheme,
+        )
         state.startupStage == StartupStage.ERROR -> StartupErrorScreen(
             message = state.startupError,
             isOffline = state.startupErrorIsOffline,
             logs = state.startupLogs,
+            themeMode = state.themeMode,
+            onToggleTheme = viewModel::toggleTheme,
             onRetry = viewModel::retryStartup,
         )
         state.startupStage == StartupStage.MODEL_SETUP -> ProviderSetupScreen(
@@ -247,9 +263,15 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onSave = viewModel::finishOnboarding,
             onDiscover = viewModel::discoverModels,
             onValidate = viewModel::validateProvider,
+            onToggleTheme = viewModel::toggleTheme,
+            themeMode = state.themeMode,
         )
         state.startupStage == StartupStage.READY && !state.backgroundSetupComplete ->
-            BackgroundTaskSetupScreen(onContinue = viewModel::finishBackgroundSetup)
+            BackgroundTaskSetupScreen(
+                themeMode = state.themeMode,
+                onToggleTheme = viewModel::toggleTheme,
+                onContinue = viewModel::finishBackgroundSetup,
+            )
         state.activeProject != null -> WorkspaceScreen(
             state = state,
             onBack = viewModel::closeProject,
@@ -266,6 +288,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onCreateChat = viewModel::createChat,
             onSwitchChat = viewModel::switchChat,
             onTerminalRun = viewModel::requestProjectTerminalCommand,
+            onTerminalInput = viewModel::sendProjectTerminalInput,
+            onTerminalInterrupt = viewModel::interruptProjectTerminalCommand,
             onTerminalPrepare = viewModel::prepareProjectTerminalCommand,
             onTerminalDraftConsumed = viewModel::consumeProjectTerminalDraft,
             onTerminalOpened = viewModel::openProjectTerminal,
@@ -283,8 +307,13 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
+private fun BackgroundTaskSetupScreen(
+    themeMode: AppThemeMode = AppThemeMode.DARK,
+    onToggleTheme: () -> Unit = {},
+    onContinue: () -> Unit,
+) {
     val context = LocalContext.current
     val powerManager = context.getSystemService(PowerManager::class.java)
     fun notificationsAllowed(): Boolean {
@@ -348,7 +377,29 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
         else -> taskProtectionConfirmed
     }
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BrandMark(compact = true)
+                        Spacer(Modifier.width(9.dp))
+                        Text("Pocket Dev", fontWeight = FontWeight.Bold)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Toggle theme",
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        },
+    ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
@@ -356,9 +407,7 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
                 .padding(horizontal = 24.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Spacer(Modifier.height(28.dp))
-            BrandMark()
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(8.dp))
             Text("Prepare for reliable setup", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
@@ -374,14 +423,14 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                color = Color(0xFF101722),
-                border = BorderStroke(1.dp, Color(0xFF263247)),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column {
                     PermissionSummaryRow(Icons.Default.Notifications, "Notifications", notificationGranted, currentStep == 0)
-                    HorizontalDivider(modifier = Modifier.padding(start = 58.dp), color = Color(0xFF202A3A))
+                    HorizontalDivider(modifier = Modifier.padding(start = 58.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     PermissionSummaryRow(Icons.Default.BatterySaver, "Background", batteryGranted, currentStep == 1)
-                    HorizontalDivider(modifier = Modifier.padding(start = 58.dp), color = Color(0xFF202A3A))
+                    HorizontalDivider(modifier = Modifier.padding(start = 58.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     PermissionSummaryRow(Icons.Default.Shield, "Task protection", taskProtectionConfirmed, currentStep == 2)
                 }
             }
@@ -404,17 +453,17 @@ private fun BackgroundTaskSetupScreen(onContinue: () -> Unit) {
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text("STEP ${currentStep + 1} OF 3", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
-                            Text(currentTitle, color = Color(0xFFE6EDF3), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text(currentTitle, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         }
                         if (currentGranted) Icon(Icons.Default.Check, "Granted", tint = PocketGreen)
                     }
                     Spacer(Modifier.height(14.dp))
-                    Text(currentDescription, color = Color(0xFFCBD3DF), fontSize = 13.sp, lineHeight = 18.sp)
+                    Text(currentDescription, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.Top) {
-                        Icon(Icons.Default.Shield, null, tint = Color(0xFF8F9AAA), modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.Shield, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(7.dp))
-                        Text(currentPrivacyNote, color = Color(0xFF8F9AAA), fontSize = 11.sp, lineHeight = 15.sp)
+                        Text(currentPrivacyNote, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, lineHeight = 15.sp)
                     }
                     Spacer(Modifier.height(18.dp))
                     Button(
@@ -509,22 +558,28 @@ private fun PermissionSummaryRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else Color.Transparent)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             icon,
             null,
-            tint = if (active) MaterialTheme.colorScheme.primary else Color(0xFF8F9AAA),
+            tint = if (active) MaterialTheme.colorScheme.primary else if (complete) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.width(12.dp))
-        Text(title, modifier = Modifier.weight(1f), color = Color(0xFFD7DEE8), fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+        )
         when {
             complete -> Icon(Icons.Default.Check, "Complete", tint = PocketGreen, modifier = Modifier.size(18.dp))
-            active -> Text("Required", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-            else -> Text("Next", color = Color(0xFF6F7A8C), fontSize = 10.sp)
+            active -> Text("Required", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            else -> Text("Next", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         }
     }
 }
@@ -563,9 +618,12 @@ private fun getDevStackVisuals(stack: DevStack): DevStackVisuals = when (stack) 
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RuntimeSetupPromptScreen(
     selectedStacks: Set<DevStack>,
+    themeMode: AppThemeMode = AppThemeMode.DARK,
+    onToggleTheme: () -> Unit = {},
     onToggleStack: (DevStack) -> Unit,
     onDownload: () -> Unit,
 ) {
@@ -587,7 +645,36 @@ private fun RuntimeSetupPromptScreen(
         BackHandler { currentStep = 0 }
     }
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BrandMark(compact = true)
+                        Spacer(Modifier.width(9.dp))
+                        Text("Pocket Dev", fontWeight = FontWeight.Bold)
+                    }
+                },
+                navigationIcon = {
+                    if (currentStep > 0) {
+                        IconButton(onClick = { currentStep = 0 }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Toggle theme",
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        },
+    ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
@@ -595,19 +682,15 @@ private fun RuntimeSetupPromptScreen(
                 .padding(horizontal = 22.dp)
                 .verticalScroll(setupScrollState),
         ) {
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
 
             if (currentStep == 0) {
                 // Step 0: Device Compatibility & Verification
-                BrandMark()
-
-                Spacer(Modifier.height(20.dp))
-
                 Text(
                     text = "Set up your phone for coding",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFF0F6FC),
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -617,13 +700,13 @@ private fun RuntimeSetupPromptScreen(
                     lineHeight = 19.sp,
                 )
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
 
                 // Hardware & Compatibility Specs Card
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF10141D),
-                    border = BorderStroke(1.dp, Color(0xFF222B3D)),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -636,7 +719,7 @@ private fun RuntimeSetupPromptScreen(
                                 Icon(
                                     Icons.Default.Speed,
                                     null,
-                                    tint = Color(0xFF9AA6B6),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.width(8.dp))
@@ -644,7 +727,7 @@ private fun RuntimeSetupPromptScreen(
                                     "System Compatibility",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
-                                    color = Color(0xFFE6EDF3),
+                                    color = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
                             Surface(
@@ -662,7 +745,7 @@ private fun RuntimeSetupPromptScreen(
                             }
                         }
 
-                        HorizontalDivider(color = Color(0xFF1F2737), thickness = 1.dp)
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), thickness = 1.dp)
 
                         SpecRow(
                             icon = Icons.Default.Memory,
@@ -692,8 +775,8 @@ private fun RuntimeSetupPromptScreen(
                 // Zero-Root Security Callout
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFF101722),
-                    border = BorderStroke(1.dp, Color(0xFF263247)),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(
@@ -703,13 +786,13 @@ private fun RuntimeSetupPromptScreen(
                         Box(
                             modifier = Modifier
                                 .size(32.dp)
-                                .background(Color(0xFF192231), RoundedCornerShape(8.dp)),
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 Icons.Default.Shield,
                                 contentDescription = null,
-                                tint = Color(0xFF9AA6B6),
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(18.dp),
                             )
                         }
@@ -719,14 +802,14 @@ private fun RuntimeSetupPromptScreen(
                                 "Zero-Root Isolated Environment",
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp,
-                                color = Color(0xFFF1F5F9),
+                                color = MaterialTheme.colorScheme.onSurface,
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 "Everything is installed in Pocket Dev's private app storage. No Termux, ADB root, or OS modifications required.",
                                 fontSize = 12.sp,
                                 lineHeight = 16.sp,
-                                color = Color(0xFF94A3B8),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -742,10 +825,10 @@ private fun RuntimeSetupPromptScreen(
                         .height(54.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = PocketOrange,
-                        contentColor = Color(0xFF1A0C00),
-                        disabledContainerColor = Color(0xFF222A38),
-                        disabledContentColor = Color(0xFF5B697F),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
                 ) {
                     Row(
@@ -766,26 +849,19 @@ private fun RuntimeSetupPromptScreen(
                     }
                 }
             } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { currentStep = 0 }, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color(0xFFE6EDF3))
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "TOOLCHAIN SETUP",
-                        color = PocketOrange,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                    )
-                }
-
-                Spacer(Modifier.height(14.dp))
+                Text(
+                    "TOOLCHAIN SETUP",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                )
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = "Choose your tools",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFF0F6FC),
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -799,37 +875,37 @@ private fun RuntimeSetupPromptScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF101722),
-                    border = BorderStroke(1.dp, Color(0xFF263247)),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
-                            modifier = Modifier.size(36.dp).background(Color(0xFF192231), RoundedCornerShape(10.dp)),
+                            modifier = Modifier.size(36.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Default.Terminal, null, tint = Color(0xFF9AA6B6), modifier = Modifier.size(19.dp))
+                            Icon(Icons.Default.Terminal, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
                         }
                         Spacer(Modifier.width(11.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Core tools included", color = Color(0xFFE6EDF3), fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
-                            Text("Claude Code  ·  Node.js  ·  npm  ·  Git", color = Color(0xFF8F9AAA), fontSize = 11.sp)
+                            Text("Core tools included", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                            Text("Claude Code  ·  Node.js  ·  npm  ·  Git", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                         }
                         Icon(Icons.Default.Check, "Included", tint = PocketGreen, modifier = Modifier.size(20.dp))
                     }
                 }
 
                 Spacer(Modifier.height(18.dp))
-                Text("OPTIONAL TOOLCHAINS", color = Color(0xFF8F9AAA), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
+                Text("OPTIONAL TOOLCHAINS", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
                 Spacer(Modifier.height(8.dp))
 
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
-                    color = Color(0xFF101722),
-                    border = BorderStroke(1.dp, Color(0xFF263247)),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Column {
                         DevStack.entries.forEachIndexed { index, stack ->
@@ -839,7 +915,7 @@ private fun RuntimeSetupPromptScreen(
                                 onClick = { onToggleStack(stack) },
                             )
                             if (index != DevStack.entries.lastIndex) {
-                                HorizontalDivider(modifier = Modifier.padding(start = 62.dp), color = Color(0xFF202A3A))
+                                HorizontalDivider(modifier = Modifier.padding(start = 62.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                             }
                         }
                     }
@@ -847,12 +923,12 @@ private fun RuntimeSetupPromptScreen(
 
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Storage, null, tint = Color(0xFF8F9AAA), modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(7.dp))
                     Text(
                         if (selectedStacks.isEmpty()) "Core runtime only · smallest download"
                         else "${selectedStacks.size} optional toolchain${if (selectedStacks.size == 1) "" else "s"} selected",
-                        color = Color(0xFF8F9AAA),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
                 }
@@ -866,10 +942,10 @@ private fun RuntimeSetupPromptScreen(
                         .height(54.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = PocketOrange,
-                        contentColor = Color(0xFF1A0C00),
-                        disabledContainerColor = Color(0xFF222A38),
-                        disabledContentColor = Color(0xFF5B697F),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
                 ) {
                     Row(
@@ -918,7 +994,7 @@ private fun DevStackChoiceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) PocketOrange.copy(alpha = 0.08f) else Color.Transparent)
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -926,31 +1002,31 @@ private fun DevStackChoiceRow(
         Box(
             modifier = Modifier
                 .size(34.dp)
-                .background(Color(0xFF192231), RoundedCornerShape(10.dp)),
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(visuals.icon, null, tint = Color(0xFF9AA6B6), modifier = Modifier.size(19.dp))
+            Icon(visuals.icon, null, tint = visuals.accentColor, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
-            Text(stack.label, color = Color(0xFFE6EDF3), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text(stack.label, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(Modifier.height(1.dp))
-            Text(conciseDescription, color = Color(0xFF8F9AAA), fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(conciseDescription, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(10.dp))
         Box(
             modifier = Modifier
                 .size(21.dp)
-                .background(if (selected) PocketOrange else Color.Transparent, RoundedCornerShape(6.dp))
+                .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(6.dp))
                 .border(
                     1.5.dp,
-                    if (selected) PocketOrange else Color(0xFF536077),
+                    if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                     RoundedCornerShape(6.dp),
                 ),
             contentAlignment = Alignment.Center,
         ) {
             if (selected) {
-                Icon(Icons.Default.Check, "Selected", tint = Color(0xFF1A0C00), modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Check, "Selected", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
             }
         }
     }
@@ -968,9 +1044,9 @@ private fun SpecRow(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Icon(
-        imageVector = icon,
-        contentDescription = null,
-            tint = if (statusOk) Color(0xFF9AA6B6) else MaterialTheme.colorScheme.error,
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
             modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(10.dp))
@@ -984,19 +1060,38 @@ private fun SpecRow(
             text = value,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            color = Color(0xFFE6EDF3),
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun StartupLoadingScreen(state: AppUiState) {
+private fun StartupLoadingScreen(
+    state: AppUiState,
+    themeMode: AppThemeMode = AppThemeMode.DARK,
+    onToggleTheme: () -> Unit = {},
+) {
     val installing = state.startupStage == StartupStage.INSTALLING
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(if (installing) "Set up Pocket Dev" else "Pocket Dev") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BrandMark(compact = true)
+                        Spacer(Modifier.width(9.dp))
+                        Text(if (installing) "Set up Pocket Dev" else "Pocket Dev", fontWeight = FontWeight.Bold)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Toggle theme",
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -1053,35 +1148,35 @@ private fun StartupLoadingScreen(state: AppUiState) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                color = Color(0xFF101722),
-                border = BorderStroke(1.dp, Color(0xFF263247)),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Installation progress", color = Color(0xFFE6EDF3), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Installation progress", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.weight(1f))
-                        Text("${(state.startupProgress * 100).toInt()}%", color = Color(0xFFE6EDF3), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("${(state.startupProgress * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(12.dp))
                     LinearProgressIndicator(
                         progress = { state.startupProgress.coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(6.dp),
-                        color = PocketOrange,
-                        trackColor = Color(0xFF202A3A),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
                     )
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth().height(18.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             if (installing) "Usually 10–12 minutes" else "Starting local tools",
-                            color = Color(0xFF8F9AAA),
-                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.5.sp,
                         )
                         Spacer(Modifier.weight(1f))
                         state.startupBytes?.let { (downloaded, total) ->
                             Text(
                                 "${formatMegabytes(downloaded)} / ${formatMegabytes(total)}",
-                                color = Color(0xFF8F9AAA),
-                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.5.sp,
                             )
                         }
                     }
@@ -1129,16 +1224,16 @@ private fun SetupLogPanel(logs: List<String>) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded },
-        color = Color(0xFF101722),
+        color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, Color(0xFF263247)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.Terminal,
                     contentDescription = null,
-                    tint = PocketOrange,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(8.dp))
@@ -1147,21 +1242,21 @@ private fun SetupLogPanel(logs: List<String>) {
                     modifier = Modifier.weight(1f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
-                    color = Color(0xFFC9D1D9),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Icon(
                     if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = if (expanded) "Collapse setup details" else "Expand setup details",
-                    tint = Color(0xFF8B949E),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             if (expanded) {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 8.dp),
-                    color = Color(0xFF273244),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                 )
                 Column(
                     modifier = Modifier
@@ -1176,14 +1271,14 @@ private fun SetupLogPanel(logs: List<String>) {
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
-                            color = Color(0xFFC9D1D9),
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
                     Text(
                         text = "▌",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
-                        color = PocketOrange,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
                 if (!followLatest) {
@@ -1200,11 +1295,41 @@ private fun SetupLogPanel(logs: List<String>) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StartupErrorScreen(message: String?, isOffline: Boolean, logs: List<String>, onRetry: () -> Unit) {
+private fun StartupErrorScreen(
+    message: String?,
+    isOffline: Boolean,
+    logs: List<String>,
+    themeMode: AppThemeMode = AppThemeMode.DARK,
+    onToggleTheme: () -> Unit = {},
+    onRetry: () -> Unit,
+) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    Scaffold { padding ->
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BrandMark(compact = true)
+                        Spacer(Modifier.width(9.dp))
+                        Text("Pocket Dev", fontWeight = FontWeight.Bold)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Toggle theme",
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        },
+    ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(28.dp),
             verticalArrangement = Arrangement.Center,
@@ -1317,6 +1442,8 @@ private fun RootScreenHost(
                     lines = terminalLines,
                     isRunning = isTerminalRunning,
                     onRun = viewModel::runTerminalCommand,
+                    onInput = viewModel::sendTerminalInput,
+                    onInterrupt = viewModel::interruptTerminalCommand,
                     onClear = viewModel::clearTerminal,
                     onToggleTheme = viewModel::toggleTheme,
                     themeMode = state.themeMode,
@@ -1447,7 +1574,7 @@ private fun StepDots(step: Int) {
         repeat(3) { index ->
             Box(
                 Modifier.height(5.dp).weight(1f)
-                    .background(if (index <= step) PocketOrange else MaterialTheme.colorScheme.surfaceVariant, CircleShape),
+                    .background(if (index <= step) PocketOrange else MaterialTheme.colorScheme.outlineVariant, CircleShape),
             )
         }
     }
@@ -1534,8 +1661,8 @@ private fun ProviderChoiceStep(selected: ProviderKind, onSelected: (ProviderKind
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(18.dp),
-            color = Color(0xFF101722),
-            border = BorderStroke(1.dp, Color(0xFF263247)),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 itemsIndexed(ProviderKind.entries) { index, provider ->
@@ -1547,7 +1674,7 @@ private fun ProviderChoiceStep(selected: ProviderKind, onSelected: (ProviderKind
                     if (index != ProviderKind.entries.lastIndex) {
                         HorizontalDivider(
                             modifier = Modifier.padding(start = 68.dp),
-                            color = Color(0xFF202A3A),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                         )
                     }
                 }
@@ -1571,8 +1698,8 @@ private fun ProviderChoiceStep(selected: ProviderKind, onSelected: (ProviderKind
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 14.dp).height(52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = PocketOrange,
-                contentColor = Color(0xFF1A0C00),
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
             ),
         ) {
             Text("Continue", fontWeight = FontWeight.Bold)
@@ -1608,7 +1735,7 @@ private fun ProviderChoiceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) PocketOrange.copy(alpha = 0.08f) else Color.Transparent)
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1629,18 +1756,18 @@ private fun ProviderChoiceRow(
                     provider.title,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
-                    color = Color(0xFFE6EDF3),
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (provider.experimental) {
                     Spacer(Modifier.width(6.dp))
                     Surface(
-                        color = PocketOrange.copy(alpha = 0.10f),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                         shape = RoundedCornerShape(5.dp),
                     ) {
                         Text(
                             "Beta",
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-                            color = PocketOrange,
+                            color = MaterialTheme.colorScheme.primary,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -1650,7 +1777,7 @@ private fun ProviderChoiceRow(
             Spacer(Modifier.height(1.dp))
             Text(
                 provider.subtitle,
-                color = Color(0xFF8F9AAA),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 10.5.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1662,12 +1789,12 @@ private fun ProviderChoiceRow(
                 .size(19.dp)
                 .border(
                     width = if (selected) 2.dp else 1.dp,
-                    color = if (selected) PocketOrange else Color(0xFF596579),
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                     shape = CircleShape,
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (selected) Box(Modifier.size(8.dp).background(PocketOrange, CircleShape))
+            if (selected) Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
         }
     }
 }
@@ -1977,24 +2104,50 @@ private fun ProjectsScreen(
                 Spacer(Modifier.height(12.dp))
                 ApiStatusChip(state = state, onSettings = onSettings, onPing = onPing)
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Button(
                         onClick = onCreateQuickProject,
-                        modifier = Modifier.weight(1f).height(50.dp),
+                        modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
-                        Icon(Icons.Default.Chat, null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Quick project", fontWeight = FontWeight.SemiBold)
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Quick project",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
                     }
                     OutlinedButton(
                         onClick = { showCreate = true },
-                        modifier = Modifier.weight(1f).height(50.dp),
+                        modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
-                        Icon(Icons.Default.Add, null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("New project", fontWeight = FontWeight.SemiBold)
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "New project",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
                     }
                 }
             }
@@ -2221,6 +2374,8 @@ private fun WorkspaceScreen(
     onCreateChat: () -> Unit,
     onSwitchChat: (String) -> Unit,
     onTerminalRun: (String) -> Unit,
+    onTerminalInput: (String) -> Unit,
+    onTerminalInterrupt: () -> Unit,
     onTerminalPrepare: (String) -> Unit,
     onTerminalDraftConsumed: () -> Unit,
     onTerminalOpened: () -> Unit,
@@ -2246,16 +2401,32 @@ private fun WorkspaceScreen(
         onResult = onAddAttachments,
     )
     val chatListState = rememberLazyListState()
+    var userScrolledUp by rememberSaveable { mutableStateOf(false) }
+
     val chatItemCount = state.messages.size +
         (if (state.liveProcess.isNotEmpty() || state.liveThinking) 1 else 0) +
         (if (state.pendingApproval != null) 1 else 0)
 
     LaunchedEffect(state.activeChatId) {
+        userScrolledUp = false
         if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
     }
-    // Follow new output only while the reader is already looking at the latest
-    // messages. If the user scrolls up to read history, streaming must never
-    // drag them back down; the "Latest" chip lets them jump back when ready.
+
+    // When the user actively scrolls/touches the screen, detect if they scrolled up to read thinking/messages.
+    LaunchedEffect(chatListState.isScrollInProgress) {
+        if (chatListState.isScrollInProgress) {
+            if (chatListState.canScrollForward) {
+                userScrolledUp = true
+            }
+        } else {
+            // If user scrolled back down to the very bottom, re-enable follow mode
+            if (!chatListState.canScrollForward) {
+                userScrolledUp = false
+            }
+        }
+    }
+
+    // Follow new tokens/updates only when user is at the bottom and has not scrolled up to read.
     LaunchedEffect(
         state.messages.size,
         state.messages.lastOrNull()?.text?.length,
@@ -2263,11 +2434,9 @@ private fun WorkspaceScreen(
         state.liveProcess.lastOrNull()?.detail,
         state.pendingApproval,
     ) {
-        if (!state.isRunning || chatItemCount <= 0) return@LaunchedEffect
-        val lastVisibleIndex = chatListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
-        val readerIsNearBottom = lastVisibleIndex >= chatItemCount - 3
-        if (readerIsNearBottom) {
-            chatListState.animateScrollToItem(chatItemCount - 1)
+        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress) return@LaunchedEffect
+        if (!chatListState.canScrollForward) {
+            chatListState.scrollToItem(chatItemCount - 1)
         }
     }
 
@@ -2368,7 +2537,7 @@ private fun WorkspaceScreen(
         },
         bottomBar = {
             if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                WorkspaceTab.entries.forEach { tab ->
+                WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
                     NavigationBarItem(
                         selected = selectedTab == tab,
                         onClick = {
@@ -2429,6 +2598,8 @@ private fun WorkspaceScreen(
                     lines = state.projectTerminalLines,
                     isRunning = state.projectTerminalRunning,
                     onRun = onTerminalRun,
+                    onInput = onTerminalInput,
+                    onInterrupt = onTerminalInterrupt,
                     onClear = onTerminalClear,
                     onToggleTheme = {},
                     themeMode = state.themeMode,
@@ -2785,9 +2956,7 @@ private fun ChatTab(
     // True while the newest item (message, live panel, or approval card) is on screen.
     val readerAtBottom by remember {
         derivedStateOf {
-            val info = listState.layoutInfo
-            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf true
-            lastVisible >= info.totalItemsCount - 3
+            !listState.canScrollForward
         }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -2818,7 +2987,7 @@ private fun ChatTab(
                 }
                 approval?.let { request -> item { ApprovalCard(request, onApproval) } }
             }
-            if (isRunning && !readerAtBottom) {
+            if (!readerAtBottom) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -3221,14 +3390,26 @@ private fun ActivitySummaryRow(
 
 @Composable
 private fun ActivityExpandedDetail(item: ActivityItem?, detail: String) {
-    Text(
-        detail,
-        modifier = Modifier.fillMaxWidth().padding(start = 25.dp, end = 8.dp, bottom = 8.dp),
-        fontSize = 12.sp,
-        lineHeight = 17.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontFamily = if (item?.isCommand == true) FontFamily.Monospace else FontFamily.Default,
-    )
+    if (item?.isCommand == true) {
+        Text(
+            detail,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 25.dp, end = 8.dp, bottom = 8.dp),
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = FontFamily.Monospace,
+        )
+    } else {
+        MarkdownText(
+            markdown = detail,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 25.dp, end = 8.dp, bottom = 8.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 private fun compactActivityText(item: ActivityItem): String = "${activityName(item)} · ${activityDetail(item).replace(Regex("\\s+"), " ").take(105)}"
