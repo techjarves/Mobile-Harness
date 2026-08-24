@@ -12,8 +12,6 @@ val testSecrets = Properties().apply {
 }
 val playBuild = providers.gradleProperty("playBuild").orNull?.toBoolean() == true ||
     providers.gradleProperty("playFeasibility").orNull?.toBoolean() == true
-val appVersionCode = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 2
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "1.0.1"
 val privacyPolicyUrl = providers.gradleProperty("privacyPolicyUrl").orNull
     ?: "https://github.com/techjarves/Mobile-Harness/blob/main/PRIVACY.md"
 val uploadStorePath = providers.environmentVariable("MH_UPLOAD_STORE_FILE").orNull
@@ -51,8 +49,12 @@ android {
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
-        versionCode = appVersionCode
-        versionName = appVersionName
+        // Keep literal defaults so F-Droid's static manifest parser can detect
+        // the tagged release. Gradle properties may still override Play builds.
+        versionCode = 3
+        versionName = "1.0.2"
+        providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
+        providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
         ndk.abiFilters += "arm64-v8a"
 
