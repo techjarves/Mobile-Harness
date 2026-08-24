@@ -78,8 +78,11 @@ class ClaudeRuntimeBridge(
     @Volatile private var lastForegroundProgressAt: Long = 0L
     @Volatile private var foregroundResultPosted: Boolean = false
     private val streamedText = StringBuilder()
+    private val streamedThinking = StringBuilder()
     private var lastReasoningTokens = 0
     private var lastReasoningUpdateAt = 0L
+    private var lastThinkingUpdateAt = 0L
+    private var currentThinkingBlockId = 0L
 
     override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
@@ -94,6 +97,9 @@ class ClaudeRuntimeBridge(
         seenToolCalls.clear()
         lastReasoningTokens = 0
         lastReasoningUpdateAt = 0L
+        lastThinkingUpdateAt = 0L
+        currentThinkingBlockId = 0L
+        streamedThinking.clear()
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
         pushForegroundProgress("Starting Claude Code…")
         val secret = secretFor(provider).orEmpty()
@@ -138,6 +144,7 @@ class ClaudeRuntimeBridge(
                 add(contextPrompt)
                 add("--output-format")
                 add("stream-json")
+                add("--include-partial-messages")
                 add("--verbose")
                 add("--model")
                 add(provider.model)
@@ -372,7 +379,13 @@ class ClaudeRuntimeBridge(
 
     private suspend fun consumeClaudeEvent(sessionId: String, line: String): Boolean {
         val json = runCatching { JSONObject(line) }.getOrNull() ?: return false
+        consumeClaudeJsonEvent(sessionId, json)
+        return true
+    }
+
+    private suspend fun consumeClaudeJsonEvent(sessionId: String, json: JSONObject) {
         when (json.optString("type")) {
+            "stream_event" -> json.optJSONObject("event")?.let { consumeClaudeJsonEvent(sessionId, it) }
             "system" -> when (json.optString("subtype")) {
                 "init" -> Unit
                 "thinking_tokens" -> emitReasoningProgress(sessionId, json.optInt("estimated_tokens"))
@@ -385,30 +398,61 @@ class ClaudeRuntimeBridge(
                 )
             }
             "content_block_start" -> {
-                // New content block starting — reset streamed text tracker
-                streamedText.clear()
+                val block = json.optJSONObject("content_block")
+                when (block?.optString("type")) {
+                    "thinking" -> {
+                        currentThinkingBlockId += 1
+                        streamedThinking.clear()
+                        emitReasoningSummary(sessionId, "", startsNewBlock = true)
+                        block.optString("thinking").takeIf(String::isNotBlank)?.let {
+                            streamedThinking.append(it)
+                            emitReasoningSummary(sessionId, it, force = true)
+                        }
+                    }
+                    "text" -> streamedText.clear()
+                }
             }
             "content_block_delta" -> {
-                // Streaming text delta — emit immediately for real-time display
                 val delta = json.optJSONObject("delta")
-                val text = delta?.optString("text")?.takeIf(String::isNotEmpty)
-                if (text != null) {
-                    streamedText.append(text)
-                    eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, text))
+                when (delta?.optString("type")) {
+                    "thinking_delta" -> delta.optString("thinking").takeIf(String::isNotEmpty)?.let {
+                        streamedThinking.append(it)
+                        emitReasoningSummary(sessionId, streamedThinking.toString())
+                    }
+                    "text_delta", "" -> delta.optString("text").takeIf(String::isNotEmpty)?.let {
+                        streamedText.append(it)
+                        eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, it))
+                    }
                 }
             }
             "content_block_stop" -> {
-                // Content block finished — nothing to do, text already streamed
+                if (streamedThinking.isNotBlank()) {
+                    emitReasoningSummary(sessionId, streamedThinking.toString(), force = true, isFinal = true)
+                }
             }
             "assistant" -> {
-                val message = json.optJSONObject("message") ?: return true
-                val content = message.optJSONArray("content") ?: return true
+                val message = json.optJSONObject("message") ?: return
+                val content = message.optJSONArray("content") ?: return
                 for (index in 0 until content.length()) {
                     val block = content.optJSONObject(index) ?: continue
                     when (block.optString("type")) {
                         "text" -> if (streamedText.isEmpty()) {
                             block.optString("text").takeIf(String::isNotBlank)?.let {
                                 eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, it))
+                            }
+                        }
+                        "thinking" -> block.optString("thinking").takeIf(String::isNotBlank)?.let {
+                            if (currentThinkingBlockId == 0L || streamedThinking.toString() != it) {
+                                currentThinkingBlockId += 1
+                                streamedThinking.clear()
+                                streamedThinking.append(it)
+                                emitReasoningSummary(
+                                    sessionId,
+                                    it,
+                                    force = true,
+                                    startsNewBlock = true,
+                                    isFinal = true,
+                                )
                             }
                         }
                         "tool_use" -> emitToolStarted(sessionId, block)
@@ -424,7 +468,7 @@ class ClaudeRuntimeBridge(
                 }
             }
             "user" -> {
-                val content = json.optJSONObject("message")?.optJSONArray("content") ?: return true
+                val content = json.optJSONObject("message")?.optJSONArray("content") ?: return
                 for (index in 0 until content.length()) {
                     val block = content.optJSONObject(index) ?: continue
                     if (block.optString("type") == "tool_result") {
@@ -448,7 +492,31 @@ class ClaudeRuntimeBridge(
                 terminateActiveProcessGracefully()
             }
         }
-        return true
+    }
+
+    private suspend fun emitReasoningSummary(
+        sessionId: String,
+        text: String,
+        force: Boolean = false,
+        startsNewBlock: Boolean = false,
+        isFinal: Boolean = false,
+    ) {
+        val summary = sanitizeForDisplay(text).trim().take(2_000)
+        if (summary.isBlank() && !startsNewBlock) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (startsNewBlock || isFinal || force || now - lastThinkingUpdateAt >= 150) {
+            lastThinkingUpdateAt = now
+            eventBus.emit(
+                RuntimeEvent.ReasoningSummary(
+                    sessionId = sessionId,
+                    summary = summary,
+                    blockId = currentThinkingBlockId,
+                    startsNewBlock = startsNewBlock,
+                    isFinal = isFinal,
+                ),
+            )
+            pushForegroundProgress("Thinking…")
+        }
     }
 
     private suspend fun emitReasoningProgress(sessionId: String, tokens: Int) {

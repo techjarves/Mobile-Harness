@@ -157,6 +157,13 @@ sealed interface RuntimeEvent {
     data class SessionStarted(override val sessionId: String) : RuntimeEvent
     data class AssistantDelta(override val sessionId: String, val text: String) : RuntimeEvent
     data class ReasoningProgress(override val sessionId: String, val estimatedTokens: Int) : RuntimeEvent
+    data class ReasoningSummary(
+        override val sessionId: String,
+        val summary: String,
+        val blockId: Long,
+        val startsNewBlock: Boolean = false,
+        val isFinal: Boolean = false,
+    ) : RuntimeEvent
     data class ToolStarted(
         override val sessionId: String,
         val toolName: String,

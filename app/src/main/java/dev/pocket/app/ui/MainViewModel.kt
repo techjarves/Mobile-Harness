@@ -110,6 +110,7 @@ data class AppUiState(
     val activity: List<ActivityItem> = emptyList(),
     val liveProcess: List<ActivityItem> = emptyList(),
     val liveThinking: Boolean = false,
+    val activeThinkingBlockId: Long? = null,
     val taskStartedAtMillis: Long? = null,
     val taskFinishedAtMillis: Long? = null,
     val workSegmentStartedAtMillis: Long? = null,
@@ -1462,6 +1463,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activity = listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity,
                 liveProcess = listOf(ActivityItem("Think", requestPlanningSummary(requestText), false)),
                 liveThinking = true,
+                activeThinkingBlockId = null,
                 taskStartedAtMillis = startedAt,
                 taskFinishedAtMillis = null,
                 workSegmentStartedAtMillis = startedAt,
@@ -1608,6 +1610,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             messages = current.messages + block,
             liveProcess = emptyList(),
             liveThinking = false,
+            activeThinkingBlockId = null,
             workSegmentStartedAtMillis = null,
         )
     }
@@ -1647,6 +1650,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 is RuntimeEvent.ReasoningProgress -> {
                     val existingIndex = current.liveProcess.indexOfLast { it.title == "Think" }
+                    // The request-level Think summary is seeded once in sendPrompt.
+                    // After that segment has been committed to the timeline, later
+                    // agent turns must not repeat the same request summary.
+                    if (existingIndex < 0) return@update current
                     val reasoning = ActivityItem(
                         title = "Think",
                         detail = current.liveProcess.getOrNull(existingIndex)?.detail
@@ -1664,16 +1671,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                     )
                 }
+                is RuntimeEvent.ReasoningSummary -> {
+                    val summary = event.summary.trim()
+                    val process = current.liveProcess.toMutableList()
+                    val existingIndex = process.indexOfLast { !it.isComplete && it.title == "Think" }
+                    if (event.startsNewBlock) {
+                        process.indices.forEach { index ->
+                            if (!process[index].isComplete) process[index] = process[index].copy(isComplete = true)
+                        }
+                        val initial = summary.ifBlank { "Thinking…" }
+                        val replaceFallback = current.activeThinkingBlockId == null &&
+                            process.size == 1 && process.first().title == "Think"
+                        if (replaceFallback) {
+                            process[0] = ActivityItem("Think", initial, event.isFinal)
+                        } else {
+                            process += ActivityItem("Think", initial, event.isFinal)
+                        }
+                    } else if (current.activeThinkingBlockId == event.blockId && existingIndex >= 0 && summary.isNotBlank()) {
+                        process[existingIndex] = process[existingIndex].copy(
+                            detail = summary,
+                            isComplete = event.isFinal,
+                        )
+                    } else {
+                        return@update current
+                    }
+                    current.copy(
+                        liveProcess = process,
+                        liveThinking = !event.isFinal,
+                        activeThinkingBlockId = if (event.isFinal) null else event.blockId,
+                        workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
+                    )
+                }
                 is RuntimeEvent.ToolStarted -> {
                     val planned = current.copy(
                         liveProcess = current.liveProcess.map { item ->
-                            if (item.title == "Think") {
-                                item.copy(
-                                    detail = requestPlanningSummary(current.currentTaskRequest.orEmpty(), event.toolName, event.detail),
-                                    isComplete = true,
-                                )
-                            } else item
+                            if (!item.isComplete) item.copy(isComplete = true) else item
                         },
+                        liveThinking = false,
+                        activeThinkingBlockId = null,
                         activity = listOf(
                             ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
                         ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
