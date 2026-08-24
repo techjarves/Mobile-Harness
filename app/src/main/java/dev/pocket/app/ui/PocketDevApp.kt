@@ -56,6 +56,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -65,6 +66,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -142,9 +144,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -2851,46 +2855,138 @@ private fun ChatTab(
                 }
             }
         }
-        HorizontalDivider()
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            if (pendingAttachments.isNotEmpty()) {
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+        Surface(
+            color = MaterialTheme.colorScheme.background,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                if (pendingAttachments.isNotEmpty()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        pendingAttachments.forEach { attachment ->
+                            AttachmentChip(
+                                attachment = attachment,
+                                onOpen = null,
+                                onRemove = { onRemoveAttachment(attachment.id) },
+                            )
+                        }
+                    }
+                }
+
+                val canSend = prompt.isNotBlank() || pendingAttachments.isNotEmpty()
+
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color(0xFF121722),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (canSend) PocketOrange.copy(alpha = 0.55f) else Color(0xFF222C3E),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    pendingAttachments.forEach { attachment ->
-                        AttachmentChip(attachment = attachment, onOpen = null, onRemove = { onRemoveAttachment(attachment.id) })
-                    }
-                }
-            }
-            Row(verticalAlignment = Alignment.Bottom) {
-                IconButton(onClick = onAttach, enabled = !isRunning && pendingAttachments.size < 5) {
-                    Icon(Icons.Default.AttachFile, "Attach files", tint = MaterialTheme.colorScheme.primary)
-                }
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    placeholder = { Text("Message Claude…") },
-                    modifier = Modifier.weight(1f).heightIn(min = 56.dp, max = 160.dp),
-                    minLines = 1,
-                    maxLines = 6,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                )
-                Spacer(Modifier.width(8.dp))
-                if (isRunning) {
-                    IconButton(
-                        onClick = onStop,
-                        modifier = Modifier.background(MaterialTheme.colorScheme.error, CircleShape),
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.Bottom,
                     ) {
-                        Icon(Icons.Default.Stop, "Stop AI task", tint = MaterialTheme.colorScheme.onError)
-                    }
-                } else {
-                    IconButton(
-                        onClick = { onSend(prompt); prompt = "" },
-                        enabled = prompt.isNotBlank() || pendingAttachments.isNotEmpty(),
-                        modifier = Modifier.background(PocketOrange, CircleShape),
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Color.Black)
+                        IconButton(
+                            onClick = onAttach,
+                            enabled = !isRunning && pendingAttachments.size < 5,
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AttachFile,
+                                contentDescription = "Attach files",
+                                modifier = Modifier.size(20.dp),
+                                tint = if (pendingAttachments.isNotEmpty()) PocketOrange else Color(0xFF8B98AD),
+                            )
+                        }
+
+                        BasicTextField(
+                            value = prompt,
+                            onValueChange = { prompt = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp, vertical = 10.dp)
+                                .heightIn(min = 20.dp, max = 130.dp),
+                            textStyle = TextStyle(
+                                color = Color(0xFFF0F6FC),
+                                fontSize = 15.sp,
+                                lineHeight = 20.sp,
+                            ),
+                            cursorBrush = SolidColor(PocketOrange),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                            decorationBox = { innerTextField ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (prompt.isEmpty()) {
+                                        Text(
+                                            text = "Message Claude…",
+                                            color = Color(0xFF6B7A90),
+                                            fontSize = 15.sp,
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                        )
+
+                        Spacer(Modifier.width(4.dp))
+
+                        if (isRunning) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(
+                                        color = Color(0xFFEF4444),
+                                        shape = CircleShape,
+                                    )
+                                    .clickable(onClick = onStop),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Stop,
+                                    contentDescription = "Stop AI task",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(
+                                        color = if (canSend) PocketOrange else Color(0xFF1C2433),
+                                        shape = CircleShape,
+                                    )
+                                    .clickable(
+                                        enabled = canSend,
+                                        onClick = {
+                                            if (canSend) {
+                                                onSend(prompt)
+                                                prompt = ""
+                                            }
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowUpward,
+                                    contentDescription = "Send",
+                                    tint = if (canSend) Color(0xFF1A0C00) else Color(0xFF55647A),
+                                    modifier = Modifier.size(19.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }
