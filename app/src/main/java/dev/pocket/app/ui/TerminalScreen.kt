@@ -3,6 +3,7 @@ package dev.pocket.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -286,19 +287,25 @@ fun TerminalScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             }
 
+            val isDark = when (themeMode) {
+                AppThemeMode.DARK -> true
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            val terminalBg = if (isDark) Color(0xFF090D14) else MaterialTheme.colorScheme.surface
+            val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
+            val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
+            val outputTextColor = if (isDark) Color(0xFFC9D1D9) else MaterialTheme.colorScheme.onSurface
+            val emptyStateColor = if (isDark) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant
+
             // Console output area
             Surface(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        enabled = true,
-                    ) { openTerminalKeyboard() },
-                color = Color(0xFF090D14),
+                    .border(1.dp, if (isDark) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                color = terminalBg,
                 shape = RoundedCornerShape(12.dp),
             ) {
                 Column(
@@ -311,24 +318,24 @@ fun TerminalScreen(
                     SelectionContainer {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (lines.isEmpty()) {
-                            Text(
-                                "Pocket Dev Terminal ready.\nType a bash command below or tap a quick command chip above.",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                color = Color(0xFF6E7681),
-                            )
+                                Text(
+                                    "Pocket Dev Terminal ready.\nType a bash command below or tap a quick command chip above.",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = emptyStateColor,
+                                )
                             }
 
                             lines.forEach { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command)
+                                    TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command, isDark = isDark)
                                     if (item.output.isNotEmpty()) {
                                         Text(
                                             text = sanitizeTerminalOutput(item.output),
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 12.sp,
                                             lineHeight = 18.sp,
-                                            color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else Color(0xFFC9D1D9),
+                                            color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else outputTextColor,
                                             modifier = Modifier.padding(start = 8.dp),
                                         )
                                     }
@@ -336,7 +343,7 @@ fun TerminalScreen(
                             }
 
                             if (isRunning && currentCommand != null) {
-                                TerminalCommandPrompt(promptPath = terminalPromptPath, command = currentCommand)
+                                TerminalCommandPrompt(promptPath = terminalPromptPath, command = currentCommand, isDark = isDark)
                             }
 
                             if (liveOutput.isNotBlank()) {
@@ -345,7 +352,7 @@ fun TerminalScreen(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     lineHeight = 18.sp,
-                                    color = Color(0xFFC9D1D9),
+                                    color = outputTextColor,
                                 )
                             }
 
@@ -357,13 +364,13 @@ fun TerminalScreen(
                         // changed the console height and made auto-scroll look like a
                         // full terminal refresh on every blink.
                         val prefix = if (isRunning) "" else "root@pocket:$terminalPromptPath# "
-                        val prefixVisualTransformation = remember(prefix) {
+                        val prefixVisualTransformation = remember(prefix, isDark) {
                             VisualTransformation { text ->
                                 val transformed = buildAnnotatedString {
-                                    withStyle(SpanStyle(color = PocketGreen, fontWeight = FontWeight.Bold)) {
+                                    withStyle(SpanStyle(color = promptGreen, fontWeight = FontWeight.Bold)) {
                                         append(prefix)
                                     }
-                                    withStyle(SpanStyle(color = Color(0xFFF0F6FC), fontWeight = FontWeight.SemiBold)) {
+                                    withStyle(SpanStyle(color = commandTextColor, fontWeight = FontWeight.SemiBold)) {
                                         append(text.text)
                                     }
                                 }
@@ -408,13 +415,13 @@ fun TerminalScreen(
                                 .focusRequester(inputFocusRequester),
                             singleLine = false,
                             visualTransformation = prefixVisualTransformation,
-                            cursorBrush = SolidColor(PocketGreen),
+                            cursorBrush = SolidColor(promptGreen),
                             textStyle = androidx.compose.ui.text.TextStyle(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp,
                                 lineHeight = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFF0F6FC),
+                                color = commandTextColor,
                             ),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(
@@ -505,13 +512,15 @@ private fun TerminalIconKeyButton(icon: androidx.compose.ui.graphics.vector.Imag
 }
 
 @Composable
-private fun TerminalCommandPrompt(promptPath: String, command: String) {
-    val promptText = remember(promptPath, command) {
+private fun TerminalCommandPrompt(promptPath: String, command: String, isDark: Boolean = true) {
+    val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
+    val commandColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
+    val promptText = remember(promptPath, command, isDark) {
         buildAnnotatedString {
-            withStyle(SpanStyle(color = PocketGreen, fontWeight = FontWeight.Bold)) {
+            withStyle(SpanStyle(color = promptGreen, fontWeight = FontWeight.Bold)) {
                 append("root@pocket:$promptPath# ")
             }
-            withStyle(SpanStyle(color = Color(0xFFF0F6FC), fontWeight = FontWeight.SemiBold)) {
+            withStyle(SpanStyle(color = commandColor, fontWeight = FontWeight.SemiBold)) {
                 append(command)
             }
         }
