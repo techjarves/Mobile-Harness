@@ -1,0 +1,1 @@
+Build the complete PRoot native runtime from pinned source for F-Droid compliance.
