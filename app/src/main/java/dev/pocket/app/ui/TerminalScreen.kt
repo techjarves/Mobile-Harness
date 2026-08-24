@@ -205,9 +205,30 @@ fun TerminalScreen(
                 }
             } else {
                 TopAppBar(
+                    modifier = Modifier.padding(top = 8.dp),
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(22.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(9.dp),
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                        shape = RoundedCornerShape(9.dp),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Terminal,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(17.dp),
+                                )
+                            }
                             Spacer(Modifier.width(10.dp))
                             Column {
                                 Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
