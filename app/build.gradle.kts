@@ -31,6 +31,9 @@ fun buildConfigString(value: String): String =
 android {
     namespace = "com.jarves.mh"
     compileSdk = 36
+    // F-Droid's r26b recipe installs 26.1.10909125. Keep AGP from selecting
+    // its newer default NDK; local developers may override this explicitly.
+    ndkVersion = providers.gradleProperty("mhNdkVersion").orNull ?: "26.1.10909125"
 
     signingConfigs {
         if (hasUploadSigning) {
