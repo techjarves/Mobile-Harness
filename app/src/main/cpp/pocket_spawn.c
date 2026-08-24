@@ -12,7 +12,7 @@
 static void close_pair(int pair[2]) { close(pair[0]); close(pair[1]); }
 
 JNIEXPORT jintArray JNICALL
-Java_dev_pocket_app_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectArray java_argv,
+Java_com_jarves_mh_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectArray java_argv,
                                                jobjectArray java_env, jstring java_cwd,
                                                jstring java_output) {
     (void)self;
@@ -46,6 +46,9 @@ Java_dev_pocket_app_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobject
     if (pipe(in_pipe) != 0) return NULL;
     pid_t pid = fork();
     if (pid == 0) {
+        // Give every runtime launch its own process group so stopping the wrapper
+        // also stops Claude Code and commands spawned underneath it.
+        setpgid(0, 0);
         close(in_pipe[1]);
         int output_fd = open(output_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
         if (output_fd < 0) _exit(126);
@@ -60,6 +63,7 @@ Java_dev_pocket_app_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobject
         dprintf(STDERR_FILENO, "Pocket native exec failed: %s\n", strerror(errno));
         _exit(127);
     }
+    if (pid > 0) setpgid(pid, pid);
     close(in_pipe[0]);
     for (jsize i = 0; i < argc; i++) free(argv[i]);
     for (jsize i = 0; i < envc; i++) free(envp[i]);
@@ -72,7 +76,7 @@ Java_dev_pocket_app_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobject
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_pocket_app_runtime_NativeSpawn_waitFor(JNIEnv *env, jobject self, jint pid, jboolean no_hang) {
+Java_com_jarves_mh_runtime_NativeSpawn_waitFor(JNIEnv *env, jobject self, jint pid, jboolean no_hang) {
     (void)env; (void)self;
     int status = 0;
     pid_t value = waitpid(pid, &status, no_hang ? WNOHANG : 0);
@@ -84,7 +88,11 @@ Java_dev_pocket_app_runtime_NativeSpawn_waitFor(JNIEnv *env, jobject self, jint 
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_pocket_app_runtime_NativeSpawn_kill(JNIEnv *env, jobject self, jint pid, jint signal) {
+Java_com_jarves_mh_runtime_NativeSpawn_kill(JNIEnv *env, jobject self, jint pid, jint signal) {
     (void)env; (void)self;
-    return kill(pid, signal);
+    // Negative pid targets the whole runtime process group. Fall back to the
+    // wrapper pid for devices where group creation raced with an early exit.
+    int result = kill(-pid, signal);
+    if (result != 0 && errno == ESRCH) result = kill(pid, signal);
+    return result;
 }

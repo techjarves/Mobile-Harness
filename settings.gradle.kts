@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PocketDev"
+rootProject.name = "MobileHarness"
 include(":app")

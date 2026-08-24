@@ -1,0 +1,6 @@
+Initial release of Mobile Harness (v1.0.0):
+- Autonomous AI coding agent with Claude Code, OpenAI & OpenRouter integration
+- Embedded ARM64 Ubuntu 24.04 PRoot Linux environment
+- Interactive bash terminal with quick command chips
+- Real-time project file browser and diff viewer
+- Built-in local web server preview

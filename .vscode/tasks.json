@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Mobile Harness on Device",
+      "type": "shell",
+      "command": "./gradlew installDebug && adb shell am start -n com.jarves.mh/.MainActivity",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Unit Tests",
+      "type": "shell",
+      "command": "./gradlew test",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

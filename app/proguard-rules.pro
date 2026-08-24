@@ -1,1 +1,1 @@
-# Pocket Dev alpha: release shrinking is intentionally disabled.
+# Mobile Harness alpha: release shrinking is intentionally disabled.
