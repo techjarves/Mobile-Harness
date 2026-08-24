@@ -1,1 +1,1 @@
-Autonomous AI Coding Agent & Full Linux Development Environment on Android
+AI coding, Linux terminal, files, diffs, and previews on Android

@@ -1,11 +1,16 @@
-Mobile Harness brings a full-stack, local AI software engineering environment directly to your Android device.
+Mobile Harness is a local-first AI development workspace built for ARM64 Android phones.
 
-By combining an embedded ARM64 Ubuntu PRoot Linux runtime with autonomous coding agents (Claude Code, OpenAI, OpenRouter, and custom LLM providers), Mobile Harness allows you to code, build, test, and run real projects on your phone—without needing Termux, root access, or remote server dependencies.
+Create persistent projects or start a Quick Project, chat with a coding agent, inspect files, run Linux commands, review changes, and preview local web apps—without installing Termux or rooting your phone.
 
 Features:
-• Autonomous Coding Agent: Native Claude Code bridge with streaming thoughts, tool execution, and granular approval cards.
-• Embedded Linux Environment: ARM64 Ubuntu 24.04 PRoot sandbox with native JNI process management.
-• Interactive Terminal: Full Linux terminal with quick commands and virtual modifier keys (CTRL, ALT, ESC, TAB).
-• Multi-Provider AI Support: Anthropic, OpenRouter, OpenAI, Kimi / Moonshot, and custom OpenAI/Anthropic-compatible endpoints.
-• Project Workspace: File browser with real-time sync, live preview container, and foreground execution service.
-• Privacy & Security: API keys encrypted via hardware-backed Android Keystore.
+• Persistent projects and friendly, instantly created Quick Projects
+• Streaming AI chat with visible tool activity and multiple sessions
+• Project-scoped and global Linux terminals
+• Collapsible file browser with locally stored attachments
+• File diffs, task checkpoints, and rollback controls
+• Browser-style preview for local web servers
+• Guided Ubuntu 20.04 ARM64 runtime setup with live progress
+• Anthropic API and experimental Anthropic-compatible gateways
+• API-key encryption backed by Android Keystore
+
+Important: Mobile Harness is experimental alpha software. PRoot is not a hardened security sandbox. Open only projects and dependencies you trust. Provider capabilities vary, and some models may not support every Claude Code tool or streaming event.
