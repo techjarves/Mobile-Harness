@@ -286,7 +286,7 @@ fun SettingsScreen(
                         onProvider = { kind ->
                             selectedKind = kind
                             baseUrl = if (kind == ProviderKind.CUSTOM || kind == ProviderKind.ANTHROPIC) "https://api.deepseek.com/anthropic" else kind.defaultBaseUrl
-                            model = if (kind == ProviderKind.CUSTOM) "deepseek-chat" else kind.defaultModel
+                            model = if (kind == ProviderKind.CUSTOM) "deepseek-v4-flash" else kind.defaultModel
                             apiKey = getSavedApiKey(kind)
                             models = emptyList()
                             status = null

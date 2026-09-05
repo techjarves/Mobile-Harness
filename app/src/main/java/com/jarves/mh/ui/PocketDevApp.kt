@@ -1486,7 +1486,7 @@ private fun ProviderSetupScreen(
     var step by rememberSaveable { mutableIntStateOf(initialStep) }
     var selected by rememberSaveable { mutableStateOf(initial.kind) }
     var baseUrl by rememberSaveable { mutableStateOf(initial.baseUrl.ifBlank { "https://api.deepseek.com/anthropic" }) }
-    var model by rememberSaveable { mutableStateOf(initial.model.ifBlank { "deepseek-chat" }) }
+    var model by rememberSaveable { mutableStateOf(initial.model.ifBlank { "deepseek-v4-flash" }) }
     var apiKey by rememberSaveable { mutableStateOf("") }
 
     val handleBack: (() -> Unit)? = when {
@@ -1541,7 +1541,7 @@ private fun ProviderSetupScreen(
                             } else {
                                 it.defaultBaseUrl
                             }
-                            model = if (it == ProviderKind.CUSTOM) "deepseek-chat" else it.defaultModel
+                            model = if (it == ProviderKind.CUSTOM) "deepseek-v4-flash" else it.defaultModel
                             apiKey = ""
                         }
                     },
