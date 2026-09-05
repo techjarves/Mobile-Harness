@@ -17,8 +17,12 @@ Chat with a coding agent, edit files, run Linux commands, review changes, and pr
 <br />
 
 <p align="center">
-  <img src="assets/readme/product-workspace.png" alt="Mobile Harness projects, Linux terminal, and settings screens" width="880" />
+  <a href="https://youtu.be/QzAau52Z7yQ">
+    <img src="https://img.youtube.com/vi/QzAau52Z7yQ/maxresdefault.jpg" alt="Watch the Mobile Harness setup and product demo" width="880" />
+  </a>
 </p>
+
+<p align="center"><sub>▶ Watch the setup and product demo</sub></p>
 
 > [!IMPORTANT]
 > Mobile Harness is alpha software for ARM64 Android devices. Its PRoot environment is not a hardened security sandbox. Only open projects you own or trust.
@@ -26,6 +30,10 @@ Chat with a coding agent, edit files, run Linux commands, review changes, and pr
 ## Your development environment, in your pocket
 
 Mobile Harness pairs a native Jetpack Compose interface with a private Ubuntu environment. The result is a focused mobile workspace that feels approachable on the surface and runs real development tools underneath—without root access or a separate Termux installation.
+
+<p align="center">
+  <img src="assets/readme/product-workspace.png" alt="Mobile Harness projects, Linux terminal, and settings screens" width="880" />
+</p>
 
 | | |
 | --- | --- |
