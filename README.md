@@ -7,6 +7,7 @@
 Chat with a coding agent, inspect files, run Linux commands, review changes, and preview local web apps—without installing Termux.
 
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-FF914D?style=flat-square)](#project-status)
+[![Release](https://img.shields.io/github/v/release/techjarves/Mobile-Harness?label=release&style=flat-square&logo=github)](https://github.com/techjarves/Mobile-Harness/releases/latest)
 [![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](#build-from-source)
 [![Runtime](https://img.shields.io/badge/runtime-Ubuntu%20ARM64-E95420?style=flat-square&logo=ubuntu&logoColor=white)](#how-it-works)
@@ -32,6 +33,17 @@ The app currently provides:
 - A browser-style preview for local web servers
 - Guided runtime installation with live logs and recovery
 - Configurable Anthropic-compatible model providers
+
+## Download
+
+Signed direct APK builds are published under [GitHub Releases](https://github.com/techjarves/Mobile-Harness/releases):
+
+| Release | Version | Asset | Architecture | Target SDK |
+| --- | --- | --- | --- | --- |
+| **Latest** | [**v1.0.2**](https://github.com/techjarves/Mobile-Harness/releases/tag/v1.0.2) | [`mobile-harness-v1.0.2.apk`](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.2/mobile-harness-v1.0.2.apk) | ARM64 (`arm64-v8a`) | API 28 (PRoot runtime compatible) |
+
+> [!TIP]
+> Always verify that your device meets the [minimum requirements](#requirements) (ARM64 Android device with at least 4 GB RAM).
 
 ## Product experience
 
@@ -199,7 +211,7 @@ Release builds must not contain test API keys, debug provider defaults, or priva
 
 ## Distribution and Google Play
 
-Mobile Harness is currently intended for signed direct APK distribution and private testing.
+Mobile Harness is distributed as a signed direct APK via [GitHub Releases](https://github.com/techjarves/Mobile-Harness/releases) for private testing and direct sideloading.
 
 The Play-oriented build now targets API 36, emits ARM64-only native code, supports 16 KB page alignment, uses upload-key signing, and includes the required store metadata and declaration worksheets. Submission still requires Play Console enrollment, listing declarations, reviewer access, pre-launch testing, and approval of the downloadable local-runtime architecture. A future Play edition may need to package approved runtime assets differently or move execution to a remote service.
 
