@@ -32,7 +32,11 @@ Chat with a coding agent, edit files, run Linux commands, review changes, and pr
 Mobile Harness pairs a native Jetpack Compose interface with a private Ubuntu environment. The result is a focused mobile workspace that feels approachable on the surface and runs real development tools underneath—without root access or a separate Termux installation.
 
 <p align="center">
-  <img src="assets/readme/product-workspace.png" alt="Mobile Harness projects, Linux terminal, and settings screens" width="880" />
+  <img src="assets/readme/projects.png" alt="Mobile Harness projects screen" width="30%" />
+  &nbsp;
+  <img src="assets/readme/terminal.png" alt="Mobile Harness Linux terminal screen" width="30%" />
+  &nbsp;
+  <img src="assets/readme/settings.png" alt="Mobile Harness settings screen" width="30%" />
 </p>
 
 | | |
@@ -87,7 +91,11 @@ The initial setup usually takes 10–12 minutes, depending on the device and net
 ## First run
 
 <p align="center">
-  <img src="assets/readme/setup-flow.png" alt="Mobile Harness notification, toolchain, and AI provider setup screens" width="880" />
+  <img src="assets/readme/setup-notifications.png" alt="Mobile Harness notification setup screen" width="30%" />
+  &nbsp;
+  <img src="assets/readme/setup-toolchains.png" alt="Mobile Harness toolchain selection screen" width="30%" />
+  &nbsp;
+  <img src="assets/readme/setup-provider.png" alt="Mobile Harness AI provider setup screen" width="30%" />
 </p>
 
 1. Complete the device compatibility check.
