@@ -16,6 +16,16 @@ Chat with a coding agent, inspect files, run Linux commands, review changes, and
 
 </div>
 
+<p align="center">
+  🎥 <strong>Watch the Setup & Demo Video:</strong> <a href="https://youtu.be/QzAau52Z7yQ">https://youtu.be/QzAau52Z7yQ</a>
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/QzAau52Z7yQ">
+    <img src="https://img.youtube.com/vi/QzAau52Z7yQ/maxresdefault.jpg" alt="Mobile Harness Setup & Demo Video" width="800" style="border-radius: 8px;" />
+  </a>
+</p>
+
 > [!IMPORTANT]
 > Mobile Harness is an experimental alpha for ARM64 Android devices. Its PRoot environment is not a hardened security sandbox. Open only projects you own or trust, and do not use the app for sensitive or untrusted code.
 
