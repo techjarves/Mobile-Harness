@@ -9,6 +9,7 @@ Chat with a coding agent, edit files, run Linux commands, review changes, and pr
 [![Release](https://img.shields.io/github/v/release/techjarves/Mobile-Harness?style=flat&label=release&color=111111)](https://github.com/techjarves/Mobile-Harness/releases/latest)
 [![Android](https://img.shields.io/badge/Android-9%2B-111111?style=flat&logo=android&logoColor=white)](#requirements)
 [![License](https://img.shields.io/badge/license-MIT-111111?style=flat)](LICENSE)
+[![YouTube](https://img.shields.io/badge/YouTube-Tech_Jarves-FF0000?style=flat&logo=youtube&logoColor=white)](https://www.youtube.com/techjarves)
 
 [Download](https://github.com/techjarves/Mobile-Harness/releases/latest) · [Watch the demo](https://youtu.be/QzAau52Z7yQ) · [Build from source](#build-from-source)
 
