@@ -26,9 +26,6 @@ Chat with a coding agent, inspect files, run Linux commands, review changes, and
   </a>
 </p>
 
-> [!IMPORTANT]
-> Mobile Harness is an experimental alpha for ARM64 Android devices. Its PRoot environment is not a hardened security sandbox. Open only projects you own or trust, and do not use the app for sensitive or untrusted code.
-
 ## Overview
 
 Mobile Harness brings a practical coding workspace to an Android phone. The Android interface stays beginner-friendly while an app-private Ubuntu environment runs the command-line tools behind it.
