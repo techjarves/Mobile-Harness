@@ -25,7 +25,7 @@ Chat with a coding agent, edit files, run Linux commands, review changes, and pr
 <p align="center"><sub>▶ Watch the setup and product demo</sub></p>
 
 > [!IMPORTANT]
-> Mobile Harness is alpha software for ARM64 Android devices. Its PRoot environment is not a hardened security sandbox. Only open projects you own or trust.
+> Mobile Harness runs on ARM64 Android devices. Its PRoot environment is not a hardened security sandbox, so only open projects you own or trust.
 
 ## Your development environment, in your pocket
 
@@ -173,7 +173,7 @@ Read the full [privacy policy](PRIVACY.md).
 
 ## Project status
 
-Mobile Harness is under active development and should be treated as alpha software. Interfaces, runtime versions, provider behavior, and storage formats may change as device support and reliability improve.
+Mobile Harness is stable and actively maintained. Updates continue to improve performance, device compatibility, and the development experience.
 
 Direct APK releases are intended for private testing and sideloading. Google Play distribution still depends on store review, policy declarations, pre-launch testing, and approval of the downloadable runtime architecture.
 
