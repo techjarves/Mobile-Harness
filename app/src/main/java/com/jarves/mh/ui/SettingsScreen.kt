@@ -112,7 +112,7 @@ private fun LegacySettingsScreen(
         mutableStateOf(state.provider.baseUrl.ifBlank { "https://api.deepseek.com/anthropic" })
     }
     var model by rememberSaveable(state.provider.model) {
-        mutableStateOf(state.provider.model.ifBlank { "deepseek-chat" })
+        mutableStateOf(state.provider.model.ifBlank { "deepseek-v4-flash" })
     }
     var apiKey by rememberSaveable { mutableStateOf(getSavedApiKey(state.provider.kind)) }
     var keyVisible by rememberSaveable { mutableStateOf(false) }
@@ -344,7 +344,7 @@ private fun LegacySettingsScreen(
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                state.provider.model.ifBlank { "deepseek-chat" },
+                                state.provider.model.ifBlank { "deepseek-v4-flash" },
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 15.sp,
                             )
@@ -421,7 +421,7 @@ private fun LegacySettingsScreen(
                                         } else {
                                             kind.defaultBaseUrl
                                         }
-                                        model = if (kind == ProviderKind.CUSTOM) "deepseek-chat" else kind.defaultModel
+                                        model = if (kind == ProviderKind.CUSTOM) "deepseek-v4-flash" else kind.defaultModel
                                         val saved = getSavedApiKey(kind)
                                         apiKey = saved
                                         validationStatus = null
