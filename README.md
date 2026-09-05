@@ -31,13 +31,31 @@ Chat with a coding agent, edit files, run Linux commands, review changes, and pr
 
 Mobile Harness pairs a native Jetpack Compose interface with a private Ubuntu environment. The result is a focused mobile workspace that feels approachable on the surface and runs real development tools underneath—without root access or a separate Termux installation.
 
-<p align="center">
-  <img src="assets/readme/projects.png" alt="Mobile Harness projects screen" width="30%" />
-  &nbsp;
-  <img src="assets/readme/terminal.png" alt="Mobile Harness Linux terminal screen" width="30%" />
-  &nbsp;
-  <img src="assets/readme/settings.png" alt="Mobile Harness settings screen" width="30%" />
-</p>
+### Everything you need to build
+
+<table>
+  <tr>
+    <th width="33%">Projects</th>
+    <th width="33%">Linux terminal</th>
+    <th width="33%">Settings</th>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="assets/readme/projects.png" alt="Mobile Harness projects screen" width="100%" />
+    </td>
+    <td align="center" valign="top">
+      <img src="assets/readme/terminal.png" alt="Mobile Harness Linux terminal screen" width="100%" />
+    </td>
+    <td align="center" valign="top">
+      <img src="assets/readme/settings.png" alt="Mobile Harness settings screen" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Create, organize, and resume local workspaces.</sub></td>
+    <td align="center"><sub>Run real Linux commands inside your project.</sub></td>
+    <td align="center"><sub>Manage providers, tools, appearance, and runtime.</sub></td>
+  </tr>
+</table>
 
 | | |
 | --- | --- |
@@ -90,13 +108,31 @@ The initial setup usually takes 10–12 minutes, depending on the device and net
 
 ## First run
 
-<p align="center">
-  <img src="assets/readme/setup-notifications.png" alt="Mobile Harness notification setup screen" width="30%" />
-  &nbsp;
-  <img src="assets/readme/setup-toolchains.png" alt="Mobile Harness toolchain selection screen" width="30%" />
-  &nbsp;
-  <img src="assets/readme/setup-provider.png" alt="Mobile Harness AI provider setup screen" width="30%" />
-</p>
+### A guided setup, from start to finish
+
+<table>
+  <tr>
+    <th width="33%">1 · Stay informed</th>
+    <th width="33%">2 · Choose your tools</th>
+    <th width="33%">3 · Connect your AI</th>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="assets/readme/setup-notifications.png" alt="Mobile Harness notification setup screen" width="100%" />
+    </td>
+    <td align="center" valign="top">
+      <img src="assets/readme/setup-toolchains.png" alt="Mobile Harness toolchain selection screen" width="100%" />
+    </td>
+    <td align="center" valign="top">
+      <img src="assets/readme/setup-provider.png" alt="Mobile Harness AI provider setup screen" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Keep long-running work visible.</sub></td>
+    <td align="center"><sub>Install only the toolchains you need.</sub></td>
+    <td align="center"><sub>Configure your preferred model provider.</sub></td>
+  </tr>
+</table>
 
 1. Complete the device compatibility check.
 2. Choose the core runtime and any optional toolchains.
