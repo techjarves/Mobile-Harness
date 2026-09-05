@@ -49,9 +49,7 @@ android {
     defaultConfig {
         applicationId = "com.jarves.mh"
         minSdk = 28
-        // The direct APK retains the proven target-28 PRoot execution path. The
-        // Play build targets current Android while its runtime path is validated.
-        targetSdk = if (playBuild) 36 else 28
+        targetSdk = 36
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
         versionCode = 3
