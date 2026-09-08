@@ -98,7 +98,7 @@ class AntigravityBridgeTest {
     }
 
     @Test
-    fun `headless command uses streaming resume timeout and explicit auto approve`() {
+    fun `headless command uses exact model configuration without conflicting effort`() {
         val command = antigravityCommand("gemini-model", "high", "conversation-1")
         assertTrue(command.containsAll(listOf(
             "--input-format", "stream-json",
@@ -106,17 +106,18 @@ class AntigravityBridgeTest {
             "--print-timeout", "60m",
             "--dangerously-skip-permissions",
             "--model", "gemini-model",
-            "--effort", "high",
             "--conversation", "conversation-1",
         )))
+        assertTrue("--effort" !in command)
         assertTrue("--new-project" !in command)
     }
 
     @Test
     fun `new headless conversation creates an official project`() {
-        val command = antigravityCommand("gemini-model", "high", null)
+        val command = antigravityCommand("", "high", null)
         assertTrue("--new-project" in command)
         assertTrue("--conversation" !in command)
+        assertTrue(command.containsAll(listOf("--effort", "high")))
     }
 
     @Test

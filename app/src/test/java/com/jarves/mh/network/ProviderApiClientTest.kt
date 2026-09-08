@@ -7,7 +7,7 @@ import org.junit.Test
 
 class ProviderApiClientTest {
     @Test
-    fun openAiResponsesProbeUsesProviderCompatibleOutputMinimum() {
+    fun openAiResponsesProbeUsesStructuredInputWithoutOutputCap() {
         val body = JSONObject(
             ProviderApiClient().validationBody(
                 model = "muse-spark-1.3-contributor-free",
@@ -16,7 +16,11 @@ class ProviderApiClientTest {
         )
 
         assertEquals("muse-spark-1.3-contributor-free", body.getString("model"))
-        assertEquals(16, body.getInt("max_output_tokens"))
-        assertEquals("Reply OK", body.getString("input"))
+        val message = body.getJSONArray("input").getJSONObject(0)
+        assertEquals("user", message.getString("role"))
+        val content = message.getJSONArray("content").getJSONObject(0)
+        assertEquals("input_text", content.getString("type"))
+        assertEquals("Hello, reply with 1 word.", content.getString("text"))
+        assertEquals(false, body.has("max_output_tokens"))
     }
 }

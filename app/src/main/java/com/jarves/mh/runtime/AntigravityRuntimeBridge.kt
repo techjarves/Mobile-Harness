@@ -14,10 +14,12 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 
 enum class AntigravityAuthStatus { SIGNED_OUT, STARTING, AWAITING_CODE, COMPLETING, SIGNED_IN, ERROR }
@@ -131,6 +133,7 @@ private fun redactToolDetail(value: String): String = value
     .take(500)
 
 /** Official Antigravity CLI bridge. OAuth and credentials remain owned by agy. */
+private const val HELLO_TIMEOUT_MILLIS = 90_000L
 class AntigravityRuntimeBridge(
     private val context: Context,
     private val model: () -> String,
@@ -149,6 +152,111 @@ class AntigravityRuntimeBridge(
     @Volatile private var foregroundResultPosted = false
 
     fun configureProjectRoot(projectId: String, rootPath: String) = checkpoints.configureProjectRoot(projectId, rootPath)
+
+    /**
+     * Lightweight connectivity probe: sends a tiny hello to agy and returns its
+     * reply text. No foreground service, no checkpoints, no saved conversation.
+     * The timeout is intentionally internal — callers only see success/failure.
+     */
+    suspend fun hello(timeoutMillis: Long = HELLO_TIMEOUT_MILLIS): String = withContext(Dispatchers.IO) {
+        if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
+            throw IllegalStateException("Antigravity CLI is not installed.")
+        }
+        try {
+            withTimeout(timeoutMillis) {
+                val installed = installer.installedRuntime()
+                val probeDir = File(context.cacheDir, "agy-hello").apply { mkdirs() }
+                val command = buildList {
+                    add(RuntimeInstaller.AGY_GUEST_PATH)
+                    addAll(listOf("--input-format", "stream-json"))
+                    addAll(listOf("--output-format", "stream-json"))
+                    addAll(listOf("--print-timeout", "2m"))
+                    add("--dangerously-skip-permissions")
+                    addAntigravitySelection(model(), effort())
+                    add("--new-project")
+                }
+                val outputFile = File(context.cacheDir, "agy-hello-${System.nanoTime()}.log")
+                val process = installer.process(
+                    installed.proot,
+                    installed.rootfs,
+                    probeDir,
+                    emptyMap(),
+                    command,
+                    guestWorkspacePath = "/workspace/hello",
+                    emulateHardLinks = false,
+                    outputFile = outputFile,
+                )
+                try {
+                    val request = JSONObject()
+                        .put("event", "user")
+                        .put("message", JSONObject().put("content", "Reply with exactly: ok"))
+                        .toString() + "\n"
+                    process.outputStream.write(request.toByteArray())
+                    process.outputStream.flush()
+                    process.outputStream.close()
+                    var offset = 0L
+                    val pending = StringBuilder()
+                    var reply: String? = null
+                    fun handleLine(line: String): Boolean {
+                        when (val event = AntigravityEventParser.parse(line)) {
+                            is AntigravityParsedEvent.Text -> if (reply == null && event.value.isNotBlank()) reply = event.value
+                            is AntigravityParsedEvent.Result -> {
+                                if (event.status.equals("SUCCESS", ignoreCase = true)) {
+                                    if (reply == null && !event.response.isNullOrBlank()) reply = event.response
+                                    return true
+                                }
+                                throw AntigravitySessionException(friendlyError(event.error ?: event.status))
+                            }
+                            else -> Unit
+                        }
+                        return false
+                    }
+                    var done = false
+                    while (!done && (process.isAlive || outputFile.length() > offset)) {
+                        val available = outputFile.length() - offset
+                        if (available <= 0) {
+                            delay(100)
+                            continue
+                        }
+                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+                        val count = RandomAccessFile(outputFile, "r").use { file ->
+                            file.seek(offset)
+                            file.read(bytes)
+                        }
+                        if (count <= 0) continue
+                        offset += count
+                        pending.append(bytes.decodeToString(0, count))
+                        var newline = pending.indexOf("\n")
+                        while (newline >= 0) {
+                            val line = pending.substring(0, newline).trimEnd('\r')
+                            pending.delete(0, newline + 1)
+                            if (handleLine(line)) {
+                                done = true
+                                break
+                            }
+                            newline = pending.indexOf("\n")
+                        }
+                    }
+                    pending.toString().trim().takeIf(String::isNotEmpty)?.let { if (!done) done = handleLine(it) }
+                    // Drain process exit without hanging past the timeout.
+                    withContext(NonCancellable) {
+                        runCatching { process.waitFor() }
+                    }
+                    check(done) { friendlyError(pending.toString().takeLast(500).ifBlank { "Antigravity exited without answering" }) }
+                    reply?.trim().takeUnless { it.isNullOrEmpty() } ?: "ok"
+                } finally {
+                    runCatching { process.destroy() }
+                    runCatching {
+                        if (process.isAlive) process.destroyForcibly()
+                    }
+                    runCatching { outputFile.delete() }
+                    runCatching { probeDir.deleteRecursively() }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AntigravitySessionException("Antigravity did not answer. Try again.")
+        }
+    }
 
     override suspend fun startSession(
         projectId: String,
@@ -409,11 +517,25 @@ internal fun antigravityCommand(model: String, effort: String, conversationId: S
     // This is intentionally explicit and covered by tests. Antigravity tool calls
     // do not pass through PocketDev approval dialogs while this mode is enabled.
     add("--dangerously-skip-permissions")
-    model.takeIf(String::isNotBlank)?.let { addAll(listOf("--model", it)) }
-    effort.takeIf { it in setOf("low", "medium", "high") }?.let { addAll(listOf("--effort", it)) }
+    addAntigravitySelection(model, effort)
     conversationId?.takeIf(String::isNotBlank)?.let {
         addAll(listOf("--conversation", it))
     } ?: add("--new-project")
+}
+
+/**
+ * `agy models` returns complete configuration IDs such as
+ * `gemini-3.8-flash-medium`. Supplying a second, different --effort makes the
+ * official CLI reject an otherwise valid model as conflicting. An explicit
+ * model ID therefore owns its effort; --effort is used only with agy's default
+ * model selection.
+ */
+private fun MutableList<String>.addAntigravitySelection(model: String, effort: String) {
+    if (model.isNotBlank()) {
+        addAll(listOf("--model", model))
+    } else if (effort in setOf("low", "medium", "high")) {
+        addAll(listOf("--effort", effort))
+    }
 }
 
 internal fun antigravityWorkspacePrompt(projectSlug: String, prompt: String): String = """

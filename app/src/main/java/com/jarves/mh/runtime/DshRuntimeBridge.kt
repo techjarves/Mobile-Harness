@@ -692,13 +692,13 @@ internal object DshRouteMapper {
                 name = "mh-kimi",
                 keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
                 defaultModel = model,
-                custom = DshCustomRoute("anthropic-messages", profile.resolvedBaseUrl),
+                custom = DshCustomRoute(profile.dshApi.ifBlank { "anthropic-messages" }, profile.resolvedBaseUrl),
             )
             ProviderKind.OPENCODE_ZEN -> DshRoute(
                 name = "opencode-zen",
                 keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
                 defaultModel = model,
-                custom = DshCustomRoute("openai-responses", profile.resolvedBaseUrl),
+                custom = DshCustomRoute(profile.dshApi.ifBlank { "openai-responses" }, profile.resolvedBaseUrl),
             )
             ProviderKind.CUSTOM -> DshRoute(
                 name = "mh-custom",

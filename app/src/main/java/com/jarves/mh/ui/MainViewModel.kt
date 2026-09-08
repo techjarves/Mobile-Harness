@@ -93,6 +93,16 @@ internal fun sanitizeTerminalOutput(text: String): String = text
     .replace(ANSI_TERMINAL_SEQUENCE, "")
     .filter { it == '\n' || it == '\r' || it == '\t' || it.code >= 0x20 }
 
+private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
+
+private fun antigravityEffortFromModel(model: String): String? =
+    ANTIGRAVITY_MODEL_EFFORT.matchEntire(model)?.groupValues?.get(2)
+
+private fun antigravityModelWithEffort(model: String, effort: String): String? {
+    val match = ANTIGRAVITY_MODEL_EFFORT.matchEntire(model) ?: return null
+    return "${match.groupValues[1]}-$effort"
+}
+
 private data class ProjectTerminalSnapshot(
     val lines: List<TerminalOutputLine> = emptyList(),
     val cwd: String = "/workspace",
@@ -1268,6 +1278,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 agentKind = kind,
                 provider = provider,
                 activeApiKeyName = vault.list(provider.kind.name).firstOrNull(ApiKeyInfo::isActive)?.name,
+                // Ping results belong to the previous agent; never leak them across.
+                apiPingStatus = ApiPingStatus.IDLE,
+                apiPingMessage = null,
             )
         }
     }
@@ -1411,13 +1424,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAntigravityModel(model: String) {
         preferences.antigravityModel = model
-        _state.update { it.copy(antigravityModel = model) }
+        val modelEffort = antigravityEffortFromModel(model)
+        if (modelEffort != null) preferences.antigravityEffort = modelEffort
+        _state.update {
+            it.copy(
+                antigravityModel = model,
+                antigravityEffort = modelEffort ?: it.antigravityEffort,
+            )
+        }
     }
 
     fun setAntigravityEffort(effort: String) {
         if (effort !in setOf("low", "medium", "high")) return
+        val current = _state.value
+        val matchingModel = antigravityModelWithEffort(current.antigravityModel, effort)
+            ?.takeIf { candidate -> current.antigravityModels.isEmpty() || candidate in current.antigravityModels }
+        if (current.antigravityModel.isNotBlank() &&
+            antigravityEffortFromModel(current.antigravityModel) != null &&
+            matchingModel == null
+        ) {
+            _state.update { it.copy(toastMessage = "This model does not offer ${effort.replaceFirstChar(Char::uppercase)} reasoning") }
+            return
+        }
         preferences.antigravityEffort = effort
-        _state.update { it.copy(antigravityEffort = effort) }
+        matchingModel?.let { preferences.antigravityModel = it }
+        _state.update {
+            it.copy(
+                antigravityEffort = effort,
+                antigravityModel = matchingModel ?: it.antigravityModel,
+            )
+        }
     }
 
     fun refreshAntigravityModels() {
@@ -1450,13 +1486,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.Main) {
                 _state.update { current ->
                     result.fold(
-                        onSuccess = { models -> current.copy(
-                            antigravityModelsLoading = false,
-                            antigravityModels = models,
-                            antigravityModel = current.antigravityModel.ifBlank { models.first() },
-                        ).also {
-                            if (current.antigravityModel.isBlank()) preferences.antigravityModel = models.first()
-                        } },
+                        onSuccess = { models ->
+                            val preferred = antigravityModelWithEffort(
+                                current.antigravityModel,
+                                current.antigravityEffort,
+                            )?.takeIf(models::contains)
+                            val selected = preferred
+                                ?: current.antigravityModel.takeIf(models::contains)
+                                ?: models.first()
+                            val selectedEffort = antigravityEffortFromModel(selected) ?: current.antigravityEffort
+                            preferences.antigravityModel = selected
+                            preferences.antigravityEffort = selectedEffort
+                            current.copy(
+                                antigravityModelsLoading = false,
+                                antigravityModels = models,
+                                antigravityModel = selected,
+                                antigravityEffort = selectedEffort,
+                            )
+                        },
                         onFailure = { error -> current.copy(
                             antigravityModelsLoading = false,
                             toastMessage = error.message ?: "Could not load Antigravity models",
@@ -1560,13 +1607,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pingApi() {
         if (_state.value.agentKind == AgentKind.ANTIGRAVITY) {
-            val connected = _state.value.antigravityAuth.status == AntigravityAuthStatus.SIGNED_IN
-            _state.update {
-                it.copy(
-                    apiPingStatus = if (connected) ApiPingStatus.OK else ApiPingStatus.FAILED,
-                    apiPingMessage = if (connected) "Antigravity Google account connected" else "Antigravity needs Google sign-in",
-                )
-            }
+            testAntigravityConnection()
             return
         }
         val profile = _state.value.provider
@@ -1584,6 +1625,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = result.message)
                 }
             }
+        }
+    }
+
+    /** Sends a tiny hello to the agy CLI to prove it actually answers. Silent timeout inside. */
+    fun testAntigravityConnection() {
+        if (_state.value.agentKind != AgentKind.ANTIGRAVITY) return
+        if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
+        if (_state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
+            _state.update {
+                it.copy(
+                    apiPingStatus = ApiPingStatus.FAILED,
+                    apiPingMessage = "Antigravity needs Google sign-in",
+                )
+            }
+            return
+        }
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = "Saying hello to Antigravity…") }
+        viewModelScope.launch {
+            val result = runCatching { antigravityRuntime.hello() }
+            result.onSuccess {
+                _state.update {
+                    it.copy(
+                        apiPingStatus = ApiPingStatus.OK,
+                        apiPingMessage = "Antigravity is Working!",
+                    )
+                }
+            }.onFailure { error ->
+                _state.update {
+                    it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(error.message.orEmpty()))
+                }
+            }
+        }
+    }
+
+    private fun helloFailureMessage(raw: String): String {
+        val value = raw.replace(Regex("\\s+"), " ").trim()
+        return when {
+            value.contains("not installed", true) -> "Antigravity CLI is not installed. Install it from the Coding agent section."
+            value.contains("sign-in", true) || value.contains("not signed in", true) ||
+                value.contains("authentication", true) -> "Antigravity needs Google sign-in. Reconnect from the Google connection section."
+            value.contains("did not answer", true) -> "Antigravity did not answer. Try again."
+            value.isBlank() -> "Antigravity did not answer. Try again."
+            else -> value.take(200)
         }
     }
 

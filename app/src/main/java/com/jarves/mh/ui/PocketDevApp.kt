@@ -20,6 +20,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -32,8 +33,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -138,6 +144,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -172,6 +179,7 @@ import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
+import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.DiffLine
 import com.jarves.mh.model.DiffLineType
 import com.jarves.mh.model.Project
@@ -191,6 +199,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.jarves.mh.network.ConnectionValidation
@@ -206,11 +215,13 @@ import kotlinx.coroutines.launch
 
 
 import com.jarves.mh.ui.theme.AppThemeMode
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.ExtendedFloatingActionButton
 
 private enum class RootScreen(val label: String, val icon: ImageVector) {
     PROJECTS("Projects", Icons.Default.Folder),
-    TERMINAL("Terminal", Icons.Default.Terminal),
+    AGENT("Agent", Icons.Default.SmartToy),
     SETTINGS("Settings", Icons.Default.Settings),
 }
 private enum class WorkspaceTab(val label: String, val icon: ImageVector) {
@@ -1863,6 +1874,7 @@ private fun StartupErrorScreen(
 
 private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1_048_576.0)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RootScreenHost(
     state: AppUiState,
@@ -1870,6 +1882,7 @@ private fun RootScreenHost(
     projectsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
+    var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
@@ -1895,6 +1908,17 @@ private fun RootScreenHost(
                 }
             }
         },
+        floatingActionButton = {
+            if (screen == RootScreen.PROJECTS && !keyboardVisible && !showQuickTerminal) {
+                ExtendedFloatingActionButton(
+                    onClick = { showQuickTerminal = true },
+                    icon = { Icon(Icons.Default.Terminal, contentDescription = null) },
+                    text = { Text("Terminal", fontWeight = FontWeight.SemiBold) },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+        },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (screen) {
@@ -1918,17 +1942,28 @@ private fun RootScreenHost(
                     onToggleTheme = viewModel::toggleTheme,
                     onInstallUpdate = viewModel::installAppUpdate,
                 )
-                RootScreen.TERMINAL -> TerminalScreen(
-                    lines = terminalLines,
-                    isRunning = isTerminalRunning,
-                    onRun = viewModel::runTerminalCommand,
-                    onInput = viewModel::sendTerminalInput,
-                    onInterrupt = viewModel::interruptTerminalCommand,
-                    onClear = viewModel::clearTerminal,
-                    onToggleTheme = viewModel::toggleTheme,
-                    themeMode = state.themeMode,
-                    liveOutput = terminalLiveOutput,
-                    currentCommand = terminalCurrentCommand,
+                RootScreen.AGENT -> AgentScreen(
+                    state = state,
+                    onSaveProvider = { profile, key ->
+                        viewModel.updateProvider(profile, key)
+                    },
+                    onDiscoverModels = viewModel::discoverModels,
+                    onValidateProvider = viewModel::validateProvider,
+                    onPing = viewModel::pingApi,
+                    getSavedApiKey = viewModel::getSavedApiKey,
+                    getSavedApiKeys = viewModel::getSavedApiKeys,
+                    onAddApiKey = viewModel::addApiKey,
+                    onActivateApiKey = viewModel::activateApiKey,
+                    onRemoveApiKey = viewModel::removeApiKey,
+                    onInstallAgent = viewModel::installAgent,
+                    onCheckAgentUpdates = viewModel::checkAgentUpdates,
+                    onUpdateAgent = viewModel::updateAgent,
+                    onStartAntigravityLogin = viewModel::startAntigravityLogin,
+                    onSubmitAntigravityCode = viewModel::submitAntigravityCode,
+                    onLogoutAntigravity = viewModel::logoutAntigravity,
+                    onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
+                    onSetAntigravityModel = viewModel::setAntigravityModel,
+                    onSetAntigravityEffort = viewModel::setAntigravityEffort,
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
@@ -1959,6 +1994,97 @@ private fun RootScreenHost(
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
                 )
+            }
+        }
+    }
+    if (showQuickTerminal) {
+        QuickTerminalSheet(
+            onDismiss = { showQuickTerminal = false },
+        ) {
+            TerminalScreen(
+                lines = terminalLines,
+                isRunning = isTerminalRunning,
+                onRun = viewModel::runTerminalCommand,
+                onInput = viewModel::sendTerminalInput,
+                onInterrupt = viewModel::interruptTerminalCommand,
+                onClear = viewModel::clearTerminal,
+                onToggleTheme = viewModel::toggleTheme,
+                themeMode = state.themeMode,
+                liveOutput = terminalLiveOutput,
+                currentCommand = terminalCurrentCommand,
+                showThemeAction = false,
+                showQuickCommands = true,
+                compactHeader = true,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickTerminalSheet(
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val anchors = listOf(0.40f, 0.45f, 0.85f)
+    val fraction = remember { Animatable(0.45f) }
+    val scope = rememberCoroutineScope()
+    BackHandler(onBack = onDismiss)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val maxHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+        Box(Modifier.fillMaxSize()) {
+            // Dimmed backdrop — tap to dismiss.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onDismiss,
+                    ),
+            )
+            // Distinct elevated surface so the sheet never blends into the screen.
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .fillMaxHeight(fraction.value)
+                    .imePadding(),
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                shadowElevation = 16.dp,
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    // Drag handle — the only resize affordance, so terminal
+                    // scroll gestures inside never fight the sheet drag.
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onVerticalDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val next = (fraction.value - dragAmount / maxHeightPx).coerceIn(0.40f, 0.85f)
+                                        scope.launch { fraction.snapTo(next) }
+                                    },
+                                    onDragEnd = {
+                                        val target = anchors.minByOrNull { kotlin.math.abs(it - fraction.value) } ?: 0.45f
+                                        scope.launch { fraction.animateTo(target, tween(280)) }
+                                    },
+                                    onDragCancel = {
+                                        val target = anchors.minByOrNull { kotlin.math.abs(it - fraction.value) } ?: 0.45f
+                                        scope.launch { fraction.animateTo(target, tween(280)) }
+                                    },
+                                )
+                            }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(Modifier.width(44.dp).height(5.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), CircleShape))
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+                }
             }
         }
     }
@@ -2543,7 +2669,7 @@ private fun ProviderCredentialsStep(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (agentKind == AgentKind.DEEPSEEK_HARNESS && provider == ProviderKind.CUSTOM) {
+                    if (agentKind == AgentKind.DEEPSEEK_HARNESS && provider in DSH_PROTOCOL_PROVIDERS) {
                         DshApiProtocolPicker(selected = dshApi, onSelected = { onDshApi(it); status = null })
                     }
                     OutlinedTextField(
@@ -2656,6 +2782,7 @@ private fun ProjectsScreen(
     var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
     var showGitDialog by rememberSaveable { mutableStateOf(false) }
     var showGitHubDialog by rememberSaveable { mutableStateOf(false) }
+    var importExpanded by rememberSaveable { mutableStateOf(false) }
     var gitUrl by rememberSaveable { mutableStateOf("") }
     var repositorySearch by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
@@ -2688,9 +2815,7 @@ private fun ProjectsScreen(
             item {
                 Text("Build from your phone", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("Chat, review changes, and preview your project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(12.dp))
-                ApiStatusChip(state = state, onSettings = onSettings, onPing = onPing)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2738,64 +2863,92 @@ private fun ProjectsScreen(
                     }
                 }
                 Spacer(Modifier.height(10.dp))
+                val isImportExpanded = importExpanded || state.projectImporting || state.gitCloneRunning
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
                 ) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Column {
-                            Text("Bring an existing project", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                            Text("Import files or clone complete Git history", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                            ImportSourceButton(
-                                icon = Icons.Default.Download,
-                                title = if (state.projectImporting) "Importing…" else "ZIP file",
-                                enabled = !state.projectImporting && !state.gitCloneRunning,
-                                modifier = Modifier.weight(1f),
-                                onClick = { importZipLauncher.launch("*/*") },
-                                loading = state.projectImporting,
-                            )
-                            ImportSourceButton(
-                                icon = Icons.Default.Code,
-                                title = if (state.gitCloneRunning) "Cloning…" else "Git URL",
-                                enabled = !state.projectImporting && !state.gitCloneRunning,
-                                modifier = Modifier.weight(1f),
-                                onClick = { showGitDialog = true },
-                                loading = state.gitCloneRunning,
-                            )
-                        }
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = !state.gitCloneRunning) {
-                                showGitHubDialog = true
-                                if (state.githubAuthStatus == GitHubAuthStatus.CONNECTED && state.githubRepositories.isEmpty()) onRefreshGitHub()
-                            },
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(13.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { importExpanded = !importExpanded }
+                                .padding(horizontal = 14.dp, vertical = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Code, null, tint = PocketOrange, modifier = Modifier.size(19.dp))
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        state.githubLogin?.let { "GitHub · @$it" } ?: "Connect GitHub",
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                            Column(Modifier.weight(1f)) {
+                                Text("Bring an existing project", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (isImportExpanded) "Import files or clone complete Git history" else "ZIP file, Git repository, or GitHub",
+                                    fontSize = 10.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                imageVector = if (isImportExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = if (isImportExpanded) "Collapse" else "Expand",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        AnimatedVisibility(visible = isImportExpanded) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    ImportSourceButton(
+                                        icon = Icons.Default.Download,
+                                        title = if (state.projectImporting) "Importing…" else "ZIP file",
+                                        enabled = !state.projectImporting && !state.gitCloneRunning,
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { importZipLauncher.launch("*/*") },
+                                        loading = state.projectImporting,
                                     )
-                                    Text(
-                                        if (state.githubLogin != null) "Browse public and private repositories" else "Sign in to access your repositories",
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    ImportSourceButton(
+                                        icon = Icons.Default.Code,
+                                        title = if (state.gitCloneRunning) "Cloning…" else "Git URL",
+                                        enabled = !state.projectImporting && !state.gitCloneRunning,
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { showGitDialog = true },
+                                        loading = state.gitCloneRunning,
                                     )
                                 }
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth().clickable(enabled = !state.gitCloneRunning) {
+                                        showGitHubDialog = true
+                                        if (state.githubAuthStatus == GitHubAuthStatus.CONNECTED && state.githubRepositories.isEmpty()) onRefreshGitHub()
+                                    },
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(13.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                ) {
+                                    Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Code, null, tint = PocketOrange, modifier = Modifier.size(19.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                state.githubLogin?.let { "GitHub · @$it" } ?: "Connect GitHub",
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            Text(
+                                                if (state.githubLogin != null) "Browse public and private repositories" else "Sign in to access your repositories",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                (state.projectImportMessage ?: state.gitCloneMessage)?.let { message ->
+                                    Text(message, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.primary)
+                                }
                             }
-                        }
-                        (state.projectImportMessage ?: state.gitCloneMessage)?.let { message ->
-                            Text(message, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }

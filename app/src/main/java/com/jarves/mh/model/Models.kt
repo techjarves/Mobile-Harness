@@ -24,8 +24,8 @@ enum class ProviderKind(
     DEEPSEEK("DeepSeek", "Use your DeepSeek API key", ProviderProtocol.ANTHROPIC_GATEWAY, "https://api.deepseek.com/anthropic", "deepseek-v4-flash"),
     KIMI("Kimi", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "https://api.moonshot.ai/anthropic", "kimi-k2.6", true),
     OPENCODE_ZEN(
-        "OpenCode Zen · DeepSeek",
-        "DeepSeek via OpenCode Zen gateway",
+        "OpenCode Zen",
+        "Models through the OpenCode Zen gateway",
         ProviderProtocol.OPENAI_RESPONSES,
         "https://opencode.ai/zen/v1",
         "deepseek-v4-flash",
@@ -83,6 +83,17 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.CUSTOM,
 )
 
+val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
+    ProviderKind.KIMI,
+    ProviderKind.OPENCODE_ZEN,
+    ProviderKind.CUSTOM,
+)
+
+fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
+    ProviderKind.OPENCODE_ZEN -> "openai-responses"
+    else -> "anthropic-messages"
+}
+
 /** Provider choices shown for the selected coding agent. */
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
@@ -96,7 +107,7 @@ data class ProviderProfile(
     val model: String = kind.defaultModel,
     val hasSecret: Boolean = false,
     /** dsh custom-route wire protocol for CUSTOM: anthropic-messages | openai-completions | openai-responses. */
-    val dshApi: String = "anthropic-messages",
+    val dshApi: String = defaultDshApiForProvider(kind),
 ) {
     /** Effective base URL: fixed kinds always resolve to their constant, ignoring stored drift. */
     val resolvedBaseUrl: String get() = if (kind.fixedBaseUrl) kind.defaultBaseUrl else baseUrl

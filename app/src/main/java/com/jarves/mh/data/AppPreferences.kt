@@ -9,6 +9,7 @@ import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.defaultDshApiForProvider
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.providersForAgent
 import org.json.JSONArray
@@ -153,8 +154,23 @@ class AppPreferences(private val context: Context) {
         val storedKind = runCatching {
             ProviderKind.valueOf(preferences.getString("${sourcePrefix}kind", null).orEmpty())
         }.getOrNull()
+        val storedBaseUrl = storedKind?.let {
+            preferences.getString("${sourcePrefix}base_url", it.defaultBaseUrl) ?: it.defaultBaseUrl
+        }.orEmpty()
+        val storedModel = storedKind?.let {
+            preferences.getString("${sourcePrefix}model", it.defaultModel) ?: it.defaultModel
+        }.orEmpty()
+        // Older builds copied the global Claude/Anthropic default into a new
+        // DeepSeek Harness profile. Treat that untouched, keyless placeholder
+        // as unconfigured so DeepSeek opens on its own official provider.
+        val legacyClaudeDefaultInDeepSeek = agent == AgentKind.DEEPSEEK_HARNESS &&
+            storedKind == ProviderKind.ANTHROPIC &&
+            !vault.contains(ProviderKind.ANTHROPIC.name) &&
+            storedBaseUrl == ProviderKind.ANTHROPIC.defaultBaseUrl &&
+            storedModel == ProviderKind.ANTHROPIC.defaultModel
         val kind = when {
             agent == null -> storedKind ?: ProviderKind.ANTHROPIC
+            agent == AgentKind.DEEPSEEK_HARNESS && (!hasAgentProfile || legacyClaudeDefaultInDeepSeek) -> ProviderKind.DEEPSEEK
             storedKind != null && storedKind in providersForAgent(agent) -> storedKind
             agent == AgentKind.DEEPSEEK_HARNESS -> ProviderKind.DEEPSEEK
             else -> ProviderKind.ANTHROPIC
@@ -174,9 +190,10 @@ class AppPreferences(private val context: Context) {
             },
             hasSecret = vault.contains(kind.name),
             dshApi = if (useStoredValues) {
-                preferences.getString("${sourcePrefix}dsh_api", "anthropic-messages") ?: "anthropic-messages"
+                preferences.getString("${sourcePrefix}dsh_api", defaultDshApiForProvider(kind))
+                    ?: defaultDshApiForProvider(kind)
             } else {
-                "anthropic-messages"
+                defaultDshApiForProvider(kind)
             },
         )
     }

@@ -5,6 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -97,6 +98,11 @@ class ProviderApiClient {
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Authorization", "Bearer $apiKey")
+                if (endpoint.startsWith("https://opencode.ai/zen/")) {
+                    // OpenCode Zen expects requests to identify the OpenCode client and session.
+                    setRequestProperty("User-Agent", "opencode/1.18.20")
+                    setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
+                }
                 if (protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
                     setRequestProperty("x-api-key", apiKey)
                     setRequestProperty("anthropic-version", "2023-06-01")
@@ -136,10 +142,21 @@ class ProviderApiClient {
     internal fun validationBody(model: String, protocol: ProviderProtocol): String = when (protocol) {
         ProviderProtocol.OPENAI_RESPONSES -> JSONObject()
             .put("model", model)
-            // OpenCode Zen and some Responses-compatible providers reject values below 16.
-            // Keep the probe small while remaining valid for those providers.
-            .put("max_output_tokens", 16)
-            .put("input", "Reply OK")
+            .put(
+                "input",
+                JSONArray().put(
+                    JSONObject()
+                        .put("role", "user")
+                        .put(
+                            "content",
+                            JSONArray().put(
+                                JSONObject()
+                                    .put("type", "input_text")
+                                    .put("text", "Hello, reply with 1 word."),
+                            ),
+                        ),
+                ),
+            )
             .toString()
         ProviderProtocol.OPENAI_CHAT -> JSONObject()
             .put("model", model)
