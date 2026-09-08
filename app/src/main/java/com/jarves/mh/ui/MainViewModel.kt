@@ -209,6 +209,9 @@ data class AppUiState(
     val agentInstalling: AgentKind? = null,
     val agentMessage: String? = null,
     val agentProgress: Float = 0f,
+    val agentDownloadedBytes: Long? = null,
+    val agentTotalBytes: Long? = null,
+    val agentBytesPerSecond: Long? = null,
     val agentUpdates: Map<AgentKind, AgentUpdateInfo> = emptyMap(),
     val agentUpdatesChecking: Boolean = false,
     val agentUpdating: AgentKind? = null,
@@ -1296,15 +1299,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectAgent(kind)
             return
         }
-        _state.update { it.copy(agentInstalling = kind, agentMessage = "Preparing ${kind.title}…", agentProgress = 0f) }
+        _state.update {
+            it.copy(
+                agentInstalling = kind,
+                agentMessage = "Preparing ${kind.title}…",
+                agentProgress = 0f,
+                agentDownloadedBytes = null,
+                agentTotalBytes = null,
+                agentBytesPerSecond = null,
+            )
+        }
         viewModelScope.launch {
+            var sampleBytes = 0L
+            var sampleAt = SystemClock.elapsedRealtime()
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     agentRegistry.require(kind).install(installer) { progress ->
+                        val now = SystemClock.elapsedRealtime()
+                        val bytes = progress.downloadedBytes
+                        val elapsed = now - sampleAt
+                        val speed = if (bytes != null && elapsed >= 500L) {
+                            ((bytes - sampleBytes).coerceAtLeast(0L) * 1_000L / elapsed.coerceAtLeast(1L)).also {
+                                sampleBytes = bytes
+                                sampleAt = now
+                            }
+                        } else _state.value.agentBytesPerSecond
                         _state.update { current ->
                             current.copy(
                                 agentMessage = progress.message,
                                 agentProgress = progress.fraction.coerceIn(0f, 1f),
+                                agentDownloadedBytes = bytes ?: current.agentDownloadedBytes,
+                                agentTotalBytes = progress.totalBytes ?: current.agentTotalBytes,
+                                agentBytesPerSecond = speed,
                             )
                         }
                     }
@@ -1319,6 +1345,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     installedAgentVersions = installer.installedAgentVersions(),
                     agentInstalling = null,
                     agentProgress = 0f,
+                    agentDownloadedBytes = null,
+                    agentTotalBytes = null,
+                    agentBytesPerSecond = null,
                     agentMessage = result.fold(
                         onSuccess = { "${kind.title} is ready" },
                         onFailure = { _ -> result.exceptionOrNull()?.message?.take(200) ?: "Could not install ${kind.title}" },

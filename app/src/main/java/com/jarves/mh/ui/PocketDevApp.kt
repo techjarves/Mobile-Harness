@@ -1022,12 +1022,12 @@ private fun RuntimeSetupPromptScreen(
                         Spacer(Modifier.width(11.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) "Core tools included" else "Core runtime · 149 MB download",
+                                if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) "Core runtime · 68.8 MB" else "Core runtime · 68.8 MB download",
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.5.sp,
                             )
-                            Text("Claude Code  ·  Node.js  ·  npm  ·  Git", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            Text("Ubuntu  ·  Node.js  ·  npm  ·  Git", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                         }
                         Icon(Icons.Default.Check, "Included", tint = PocketGreen, modifier = Modifier.size(20.dp))
                     }
@@ -1096,7 +1096,7 @@ private fun RuntimeSetupPromptScreen(
                     Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        toolchainDownloadSummary(selectedStacks),
+                        toolchainDownloadSummary(selectedStacks, selectedAgent),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
@@ -1145,7 +1145,10 @@ private fun RuntimeSetupPromptScreen(
     }
 }
 
-private const val CORE_RUNTIME_DOWNLOAD_MB = 149
+private const val CORE_RUNTIME_DOWNLOAD_MB = 69
+private const val CLAUDE_RUNTIME_DOWNLOAD_MB = 72
+private const val DSH_RUNTIME_DOWNLOAD_MB = 27
+private const val AGY_RUNTIME_DOWNLOAD_MB = 40
 private const val PYTHON_RUNTIME_DOWNLOAD_MB = 55
 private const val ANDROID_RUNTIME_DOWNLOAD_MB = 570
 
@@ -1179,9 +1182,14 @@ private fun stackDownloadLabel(stack: DevStack): String = when {
     else -> ""
 }
 
-private fun toolchainDownloadSummary(selected: Set<DevStack>): String {
+private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind): String {
     if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) return "All selected bundles are included in this offline app"
     val total = CORE_RUNTIME_DOWNLOAD_MB +
+        when (agent) {
+            AgentKind.CLAUDE_CODE -> CLAUDE_RUNTIME_DOWNLOAD_MB
+            AgentKind.DEEPSEEK_HARNESS -> DSH_RUNTIME_DOWNLOAD_MB
+            AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
+        } +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
     val laterPackages = selected.intersect(setOf(DevStack.CPP, DevStack.PHP))

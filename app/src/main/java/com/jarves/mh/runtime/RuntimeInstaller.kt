@@ -2,7 +2,6 @@ package com.jarves.mh.runtime
 
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.system.Os
 import com.jarves.mh.BuildConfig
 import java.io.BufferedInputStream
@@ -27,8 +26,6 @@ import org.json.JSONObject
 data class InstalledRuntime(
     val proot: File,
     val rootfs: File,
-    val claude: File,
-    val version: String,
 )
 
 data class RuntimeInstallProgress(
@@ -59,7 +56,9 @@ class RuntimeInstaller(private val context: Context) {
     private val runtimeDir = File(context.filesDir, "runtime")
     private val rootfs = File(runtimeDir, "ubuntu")
     private val downloads = File(context.cacheDir, "runtime-downloads")
-    private val marker = File(rootfs, ".pocket-runtime-ready")
+    private val coreReadyMarker = File(rootfs, ".pocket-runtime-ready")
+    private val claudeMarker = File(rootfs, ".pocket-claude-version")
+    // Read only for migration from Core bundles that embedded Claude Code.
     private val bundledClaudeMarker = File(rootfs, ".pocket-bundled-claude-version")
     private val rootfsMarker = File(rootfs, ".pocket-rootfs-version")
     private val languageToolsMarker = File(rootfs, ".pocket-language-tools-version")
@@ -77,15 +76,13 @@ class RuntimeInstaller(private val context: Context) {
         // Devices set up before staged toolchains keep working through the legacy marker;
         // fresh installs require the new core-tools marker instead.
         val legacyLanguageTools = languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION
-        val coreToolsReady = File(rootfs, "usr/bin/git").exists() &&
-            coreToolsMarker.readTextOrNull() == CORE_TOOLS_VERSION
+        val coreToolsReady = File(rootfs, "usr/bin/git").exists() && isSupportedCoreToolsVersion()
         val ready = proot.canExecute() &&
             File(rootfs, "usr/bin/bash").exists() &&
             rootfsMarker.readTextOrNull() == ROOTFS_VERSION &&
-            File(rootfs, "usr/local/bin/claude").exists() &&
             File(rootfs, "usr/local/bin/node").exists() &&
             (legacyLanguageTools || coreToolsReady) &&
-            marker.exists()
+            coreReadyMarker.exists()
         if (ready) repairLegacyMacosMetadata()
         return ready
     }
@@ -111,8 +108,6 @@ class RuntimeInstaller(private val context: Context) {
         return InstalledRuntime(
             proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so"),
             rootfs = rootfs,
-            claude = File(rootfs, "usr/local/bin/claude"),
-            version = marker.readText().trim(),
         )
     }
 
@@ -164,67 +159,18 @@ class RuntimeInstaller(private val context: Context) {
             extractZstdTar(archive, staging)
             stripMacosMetadataArtifacts(staging)
             require(File(staging, "usr/bin/bash").isFile) { "Core bundle is missing Bash" }
-            require(File(staging, "usr/local/bin/claude").isFile) { "Core bundle is missing Claude Code" }
             rootfs.deleteRecursively()
             check(staging.renameTo(rootfs)) { "Could not activate the Linux environment" }
             writeResolver()
             if (archive.parentFile == downloads) archive.delete()
         }
 
-        val claude = File(rootfs, "usr/local/bin/claude")
-        check(claude.isFile) { "The Core runtime does not contain Claude Code" }
-        if (!marker.isFile) {
-            val bundledVersion = bundledClaudeMarker.readTextOrNull()
-            require(bundledVersion?.matches(CLAUDE_VERSION_PATTERN) == true) {
-                "The bundled Claude Code version is missing"
-            }
-            marker.writeText(bundledVersion)
-        }
+        migrateLegacyClaudeMarker()
         ensureSettingsAndHooks()
-
-        // DeepSeek Harness users never launch Claude Code: the binary baked into the
-        // Core bundle stays as a standby copy and no update is downloaded for it.
-        val wantsClaudeUpdate = agent == com.jarves.mh.model.AgentKind.CLAUDE_CODE
-        if (wantsClaudeUpdate && hasInternetConnection()) {
-            onProgress(RuntimeInstallProgress("Checking the latest Claude Code release", 0.32f))
-            runCatching {
-                val latestVersion = fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")
-                    .let { JSONObject(it).getString("version") }
-                    .also { require(it.matches(CLAUDE_VERSION_PATTERN)) }
-                if (marker.readText().trim() != latestVersion) {
-                    onProgress(RuntimeInstallProgress("Downloading Claude Code $latestVersion from Anthropic", 0.35f))
-                    val base = "https://downloads.claude.ai/claude-code-releases/$latestVersion"
-                    val manifest = JSONObject(fetchText("$base/manifest.json"))
-                    val checksum = manifest.getJSONObject("platforms").getJSONObject("linux-arm64").getString("checksum")
-                    val downloaded = File(downloads, "claude-$latestVersion")
-                    downloadVerified("$base/linux-arm64/claude", downloaded, checksum) { bytes, total ->
-                        val ratio = if (total > 0) bytes.toFloat() / total else 0f
-                        onProgress(RuntimeInstallProgress("Downloading Claude Code $latestVersion", 0.35f + ratio * 0.20f, bytes, total.takeIf { it > 0 }))
-                    }
-                    onProgress(RuntimeInstallProgress("Verifying Claude Code", 0.56f))
-                    claude.parentFile?.mkdirs()
-                    val staged = File(claude.parentFile, ".claude-$latestVersion.installing")
-                    downloaded.inputStream().use { input -> FileOutputStream(staged).use { input.copyTo(it) } }
-                    Os.chmod(staged.absolutePath, 0b111101101)
-                    Os.rename(staged.absolutePath, claude.absolutePath)
-                    downloaded.delete()
-                    marker.writeText(latestVersion)
-                }
-            }.onFailure {
-                onProgress(RuntimeInstallProgress("Using bundled Claude Code ${marker.readText().trim()}", 0.56f))
-            }
-        } else if (wantsClaudeUpdate) {
-            onProgress(RuntimeInstallProgress("Offline — using bundled Claude Code ${marker.readText().trim()}", 0.56f))
-        } else {
-            onProgress(RuntimeInstallProgress("Bundled Claude Code kept as standby", 0.56f))
-        }
-
-        val version = marker.readText().trim()
 
         // Node.js and Git are always available in the Core runtime. Python,
         // C/C++, PHP, and Android remain opt-in stacks during onboarding.
-        val coreNeeded = !File(rootfs, "usr/bin/git").exists() ||
-            coreToolsMarker.readTextOrNull() != CORE_TOOLS_VERSION
+        val coreNeeded = !File(rootfs, "usr/bin/git").exists() || !isSupportedCoreToolsVersion()
         if (coreNeeded) {
             installNodeIfNeeded(proot, 0.58f, 0.66f, onProgress)
         }
@@ -252,22 +198,19 @@ class RuntimeInstaller(private val context: Context) {
             applyStack(proot, stack, from, from + slice, onProgress)
         }
 
-        // The binary and version manifest were already checksum-verified above. Running a
-        // separate `claude --version` probe under PRoot can leave inherited output pipes
-        // open on some Android kernels, so the real user session is the launch check.
-        if (agent == com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS) {
-            ensureDshInstalled(proot, 0.985f, onProgress)
-        } else if (agent == com.jarves.mh.model.AgentKind.ANTIGRAVITY) {
-            ensureAgyInstalled(proot, 0.985f, onProgress)
+        when (agent) {
+            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
+            com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
+            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
         }
         onProgress(RuntimeInstallProgress("Setup complete", 1f))
-        return InstalledRuntime(proot, rootfs, claude, version)
+        return InstalledRuntime(proot, rootfs)
     }
 
     /**
      * Installs one coding agent on demand. Safe to call again: an already-installed
-     * agent returns immediately without network access. Claude Code always ships
-     * inside the Core bundle; other agents are fetched only when selected.
+     * agent returns immediately without network access. Every coding agent is a
+     * separate overlay and is fetched or loaded only when selected.
      */
     suspend fun ensureAgentInstalled(
         agent: com.jarves.mh.model.AgentKind,
@@ -275,7 +218,7 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         val runtime = installedRuntime()
         when (agent) {
-            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> Unit
+            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
         }
@@ -284,7 +227,11 @@ class RuntimeInstaller(private val context: Context) {
 
     fun isAgentInstalled(agent: com.jarves.mh.model.AgentKind): Boolean {
         return when (agent) {
-            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> isInstalled()
+            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> {
+                migrateLegacyClaudeMarker()
+                isInstalled() && File(rootfs, CLAUDE_GUEST_PATH.removePrefix("/")).canExecute() &&
+                    !claudeMarker.readTextOrNull().isNullOrBlank()
+            }
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> isInstalled() &&
                 // /usr/local/bin/dsh is an absolute guest symlink. File.exists() follows it
                 // against Android's host root and therefore reports false outside PRoot.
@@ -297,6 +244,11 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     val dshVersion: String get() = dshMarker.readTextOrNull().orEmpty()
+
+    val claudeVersion: String get() {
+        migrateLegacyClaudeMarker()
+        return claudeMarker.readTextOrNull().orEmpty()
+    }
 
     val agyVersion: String get() = agyMarker.readTextOrNull().orEmpty()
 
@@ -360,9 +312,10 @@ class RuntimeInstaller(private val context: Context) {
      * would subsequently offer an agent update.
      */
     fun installedAgentVersions(): Map<com.jarves.mh.model.AgentKind, String> = buildMap {
-        marker.readTextOrNull()
+        migrateLegacyClaudeMarker()
+        claudeMarker.readTextOrNull()
             ?.trim()
-            ?.takeIf { isInstalled() && it.matches(CLAUDE_VERSION_PATTERN) }
+            ?.takeIf { isAgentInstalled(com.jarves.mh.model.AgentKind.CLAUDE_CODE) && it.matches(CLAUDE_VERSION_PATTERN) }
             ?.let { put(com.jarves.mh.model.AgentKind.CLAUDE_CODE, it) }
 
         dshMarker.readTextOrNull()
@@ -432,13 +385,15 @@ class RuntimeInstaller(private val context: Context) {
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
             onProgress(RuntimeInstallProgress("Downloading Claude Code $latest", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
-        val staged = File(runtime.claude.parentFile, ".claude-$latest.installing")
+        val claude = File(rootfs, CLAUDE_GUEST_PATH.removePrefix("/"))
+        claude.parentFile?.mkdirs()
+        val staged = File(claude.parentFile, ".claude-$latest.installing")
         downloaded.copyTo(staged, overwrite = true)
         Os.chmod(staged.absolutePath, 0b111101101)
-        Os.rename(staged.absolutePath, runtime.claude.absolutePath)
+        Os.rename(staged.absolutePath, claude.absolutePath)
         downloaded.delete()
-        verifyGuest(runtime.proot, "${runtime.claude.path.removePrefix(rootfs.path)} --version", "Claude Code update verification failed")
-        marker.writeText(latest)
+        verifyGuest(runtime.proot, "$CLAUDE_GUEST_PATH --version", "Claude Code update verification failed")
+        claudeMarker.writeText(latest)
     }
 
     private suspend fun updateAgy(
@@ -519,6 +474,47 @@ class RuntimeInstaller(private val context: Context) {
             if (comparison != 0) return comparison > 0
         }
         return candidate != current && !candidate.contains("alpha", true) && !candidate.contains("rc", true)
+    }
+
+    /**
+     * Older Core bundles stored Claude Code and its version in Core-owned markers.
+     * Preserve that verified installation when upgrading the app, while all fresh
+     * installs use the independent Claude overlay and marker.
+     */
+    private fun migrateLegacyClaudeMarker() {
+        if (claudeMarker.isFile) return
+        val claude = File(rootfs, CLAUDE_GUEST_PATH.removePrefix("/"))
+        if (!claude.isFile) return
+        val legacyVersion = sequenceOf(
+            coreReadyMarker.readTextOrNull(),
+            bundledClaudeMarker.readTextOrNull(),
+        ).mapNotNull { it?.trim() }.firstOrNull { it.matches(CLAUDE_VERSION_PATTERN) } ?: return
+        claudeMarker.writeText(legacyVersion)
+    }
+
+    private fun isSupportedCoreToolsVersion(): Boolean = coreToolsMarker.readTextOrNull() in setOf(
+        CORE_TOOLS_VERSION,
+        LEGACY_CORE_TOOLS_VERSION,
+    )
+
+    private suspend fun ensureClaudeInstalled(
+        proot: File,
+        fraction: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        migrateLegacyClaudeMarker()
+        if (isAgentInstalled(com.jarves.mh.model.AgentKind.CLAUDE_CODE)) return
+        installRuntimeOverlay(
+            bundle = CLAUDE_BUNDLE,
+            message = "Installing Claude Code $CLAUDE_BUNDLED_VERSION",
+            from = fraction,
+            to = 0.995f,
+            onProgress = onProgress,
+        )
+        verifyGuest(proot, "$CLAUDE_GUEST_PATH --version", "Claude Code verification failed")
+        require(claudeMarker.readTextOrNull() == CLAUDE_BUNDLED_VERSION) {
+            "The Claude Code runtime bundle is incomplete"
+        }
     }
 
     private suspend fun ensureAgyInstalled(
@@ -1256,23 +1252,14 @@ class RuntimeInstaller(private val context: Context) {
 
     suspend fun initializeExisting(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
         val installed = installedRuntime()
-        val proot = installed.proot
-        val claude = installed.claude
-        val version = installed.version
         onProgress(RuntimeInstallProgress("Checking private runtime files", 0.15f))
         writeResolver()
         ensureSettingsAndHooks()
         File(context.filesDir, "runtime-bridge").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         onProgress(RuntimeInstallProgress("Preparing the Android runtime bridge", 0.42f))
-        val probe = process(proot, rootfs, File(rootfs, "root"), emptyMap(), listOf("/usr/local/bin/claude", "--version"))
-        onProgress(RuntimeInstallProgress("Starting Claude Code $version", 0.68f))
-        withTimeout(20_000) {
-            while (probe.isAlive) delay(50)
-        }
-        val exit = probe.waitFor()
-        val output = (probe as? NativeSpawnProcess)?.outputFile?.readText().orEmpty().trim()
-        check(exit == 0) { output.ifBlank { "Claude Code initialization failed (exit $exit)" } }
-        onProgress(RuntimeInstallProgress("Claude Code is ready", 1f))
+        check(File(rootfs, "usr/local/bin/node").canExecute()) { "Core runtime is missing Node.js" }
+        check(File(rootfs, "usr/bin/git").canExecute()) { "Core runtime is missing Git" }
+        onProgress(RuntimeInstallProgress("Private runtime is ready", 1f))
         return installed
     }
 
@@ -1443,14 +1430,6 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         val dns = manager.getLinkProperties(manager.activeNetwork)?.dnsServers.orEmpty()
         val servers = dns.mapNotNull { it.hostAddress }.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
         File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
-    }
-
-    private fun hasInternetConnection(): Boolean {
-        val manager = context.getSystemService(ConnectivityManager::class.java)
-        val network = manager.activeNetwork ?: return false
-        val capabilities = manager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun extractRootfs(archive: File, destination: File) {
@@ -1679,7 +1658,8 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val ROOTFS_SHA256 = "f9b999afb4c4b10193087ea8c11be36d688f19e609b05179b571f29357954b52"
         private const val NODE_VERSION = "v24.19.0"
         private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
-        private const val CORE_TOOLS_VERSION = "core-bundle-2026.09.4"
+        private const val CORE_TOOLS_VERSION = "core-bundle-2026.09.5"
+        private const val LEGACY_CORE_TOOLS_VERSION = "core-bundle-2026.09.4"
         private const val SYSTEM_UPGRADE_VERSION = "ubuntu-maintenance-v1"
         private const val ANDROID_TOOLS_VERSION = "sdk36-build-tools35-gradle8.14.3-maven-2026.09"
         private const val ANDROID_ASSET_BASE = "https://appdevforall.org/dev-assets/debug"
@@ -1698,9 +1678,17 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val DSH_ANDROID_COMPATIBILITY_VERSION = "copyfile-excl-v1"
         private val CORE_BUNDLE = RuntimeBundle(
             label = "Core",
-            fileName = "pocketdev-core-arm64-2026.09.4.tar.zst",
-            sha256 = "6b60d21c3441fe0b127baadded253371fa585525e60871fb814ca29b4fed0de0",
-            compressedBytes = 148_844_879L,
+            fileName = "pocketdev-core-arm64-2026.09.5.tar.zst",
+            sha256 = "df0cf7251c74f82d424231e3804114a4ca66b16130eea9abab11e220dc7ac012",
+            compressedBytes = 72_185_773L,
+        )
+        private const val CLAUDE_BUNDLED_VERSION = "2.1.263"
+        private const val CLAUDE_GUEST_PATH = "/usr/local/bin/claude"
+        private val CLAUDE_BUNDLE = RuntimeBundle(
+            label = "Claude Code",
+            fileName = "pocketdev-claude-arm64-2026.09.1.tar.zst",
+            sha256 = "0f68e15630e8c0fc941afe3f61ab5a3eb4407b334018de6dbdabfa5eca627724",
+            compressedBytes = 75_289_800L,
         )
         private val PYTHON_BUNDLE = RuntimeBundle(
             label = "Python",

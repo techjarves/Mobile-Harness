@@ -4,19 +4,28 @@
   "minimumAndroidApi": 26,
   "bundles": {
     "core": {
-      "version": "2026.09.4",
-      "file": "pocketdev-core-arm64-2026.09.4.tar.zst",
-      "sha256": "6b60d21c3441fe0b127baadded253371fa585525e60871fb814ca29b4fed0de0",
-      "compressedBytes": 148844879,
-      "uncompressedBytes": 584540160,
+      "version": "2026.09.5",
+      "file": "pocketdev-core-arm64-2026.09.5.tar.zst",
+      "sha256": "df0cf7251c74f82d424231e3804114a4ca66b16130eea9abab11e220dc7ac012",
+      "compressedBytes": 72185773,
+      "uncompressedBytes": 369172480,
       "base": "Ubuntu 20.04.5 ARM64",
       "includes": [
         "Node.js 24.19.0",
         "npm 11.17.0",
         "Git 2.25.1",
-        "Claude Code 2.1.261 ARM64",
+        "No coding agents",
         "No optional language stacks"
       ]
+    },
+    "claude": {
+      "version": "2026.09.1",
+      "file": "pocketdev-claude-arm64-2026.09.1.tar.zst",
+      "sha256": "0f68e15630e8c0fc941afe3f61ab5a3eb4407b334018de6dbdabfa5eca627724",
+      "compressedBytes": 75289800,
+      "uncompressedBytes": 215224320,
+      "includes": ["Claude Code 2.1.263 ARM64", "Version marker"],
+      "excludes": ["Authentication", "Settings", "Conversations", "Projects", "Device data"]
     },
     "python": {
       "version": "2026.09.2",

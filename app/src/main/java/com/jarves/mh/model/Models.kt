@@ -37,8 +37,7 @@ enum class ProviderKind(
 
 /**
  * Coding agent engine installed in the private Linux runtime.
- * CLAUDE_CODE is the pre-existing default; DEEPSEEK_HARNESS is the
- * official DeepSeek Harness (`dsh`) installed on demand.
+ * Each coding agent is installed independently on demand over the shared Core runtime.
  */
 enum class AgentKind(
     val stableId: String,
@@ -50,13 +49,13 @@ enum class AgentKind(
         "claude-code",
         "Claude Code",
         "Anthropic's coding agent · broad provider support",
-        "Included in the Core runtime",
+        "71.8 MB",
     ),
     DEEPSEEK_HARNESS(
         "deepseek-harness",
         "DeepSeek Harness",
         "Official DeepSeek coding agent · API-key providers",
-        "Additional ~28 MB runtime bundle",
+        "26.5 MB",
     ),
     ANTIGRAVITY(
         "antigravity",

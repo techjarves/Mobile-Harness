@@ -108,6 +108,8 @@ import kotlinx.coroutines.launch
 private data class KeyConnectionStatus(
     val message: String,
     val successful: Boolean? = null,
+    val providerMessage: String? = null,
+    val label: String = if (successful == true) "Verified" else "Failed",
 )
 
 /** Formats Antigravity model identifiers into clean, human-friendly names. */
@@ -189,6 +191,7 @@ fun AgentScreen(
     var isValidating by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
+    var statusProviderMessage by remember { mutableStateOf<String?>(null) }
     var keyConnectionStatuses by remember(selectedKind) {
         mutableStateOf<Map<String, KeyConnectionStatus>>(emptyMap())
     }
@@ -238,6 +241,7 @@ fun AgentScreen(
         if (effectiveKey.isBlank() && !supportsPublicDiscovery) {
             status = "Please enter or save an API key first to discover models."
             statusOk = false
+            statusProviderMessage = null
             newKeyVisible = true
             showModels = true
             return
@@ -246,6 +250,7 @@ fun AgentScreen(
             isDiscovering = true
             status = "Discovering models from ${selectedKind.title}…"
             statusOk = true
+            statusProviderMessage = null
             val kind = selectedKind
             val url = if (kind.fixedBaseUrl) kind.defaultBaseUrl else baseUrl.trim()
             val profile = ProviderProfile(kind, url, model.trim(), dshApi = dshApi)
@@ -262,11 +267,13 @@ fun AgentScreen(
                     }
                     status = "Discovered ${result.models.size} models from ${selectedKind.title}."
                     statusOk = true
+                    statusProviderMessage = null
                     showModels = true
                 }
                 is ModelDiscoveryResult.Failure -> {
                     status = result.message
                     statusOk = false
+                    statusProviderMessage = result.providerMessage
                 }
             }
             isDiscovering = false
@@ -460,10 +467,8 @@ fun AgentScreen(
                         ),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                             if (isDiscovering) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(15.dp),
@@ -486,6 +491,16 @@ fun AgentScreen(
                                 color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.weight(1f),
                             )
+                            }
+                            statusProviderMessage?.let { providerMessage ->
+                                Text(
+                                    "Provider: $providerMessage",
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 23.dp, top = 5.dp),
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(12.dp))
@@ -844,6 +859,29 @@ fun AgentScreen(
                                     progress = { state.agentProgress.coerceIn(0f, 1f) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
+                                val downloaded = state.agentDownloadedBytes
+                                val total = state.agentTotalBytes
+                                if (downloaded != null || total != null) {
+                                    Spacer(Modifier.height(6.dp))
+                                    Row(Modifier.fillMaxWidth()) {
+                                        Text(
+                                            buildString {
+                                                append(formatAgentBytes(downloaded ?: 0L))
+                                                total?.let { append(" / ${formatAgentBytes(it)}") }
+                                            },
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Text(
+                                            state.agentBytesPerSecond?.takeIf { it > 0L }
+                                                ?.let { "${formatAgentBytes(it)}/s" }
+                                                ?: "${(state.agentProgress * 100).toInt()}%",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -878,6 +916,7 @@ fun AgentScreen(
                         isValidating = isValidating,
                         status = status,
                         statusOk = statusOk,
+                        statusProviderMessage = statusProviderMessage,
                         keyConnectionStatuses = keyConnectionStatuses,
                         savedKeys = savedKeys,
                         newKeyName = newKeyName,
@@ -894,10 +933,11 @@ fun AgentScreen(
                             newKeyName = ""
                             newApiKey = ""
                             status = null
+                            statusProviderMessage = null
                         },
-                        onBaseUrl = { baseUrl = it; models = emptyList(); status = null; keyConnectionStatuses = emptyMap() },
-                        onModel = { model = it; status = null; keyConnectionStatuses = emptyMap() },
-                        onDshApi = { dshApi = it; status = null; keyConnectionStatuses = emptyMap() },
+                        onBaseUrl = { baseUrl = it; models = emptyList(); status = null; statusProviderMessage = null; keyConnectionStatuses = emptyMap() },
+                        onModel = { model = it; status = null; statusProviderMessage = null; keyConnectionStatuses = emptyMap() },
+                        onDshApi = { dshApi = it; status = null; statusProviderMessage = null; keyConnectionStatuses = emptyMap() },
                         onNewKeyName = { newKeyName = it },
                         onNewApiKey = { newApiKey = it },
                         onToggleNewKey = { newKeyVisible = !newKeyVisible },
@@ -946,7 +986,7 @@ fun AgentScreen(
                                         onSaveProvider(profile, apiKey.trim())
                                         if (activeKeyId != null) {
                                             keyConnectionStatuses = keyConnectionStatuses +
-                                                (activeKeyId to KeyConnectionStatus(result.message, true))
+                                                (activeKeyId to KeyConnectionStatus(result.message, true, label = "Verified"))
                                         } else {
                                             status = result.message
                                             statusOk = true
@@ -955,10 +995,11 @@ fun AgentScreen(
                                     is ConnectionValidation.Failure -> {
                                         if (activeKeyId != null) {
                                             keyConnectionStatuses = keyConnectionStatuses +
-                                                (activeKeyId to KeyConnectionStatus(result.message, false))
+                                                (activeKeyId to KeyConnectionStatus(result.message, false, result.providerMessage, result.label))
                                         } else {
                                             status = result.message
                                             statusOk = false
+                                            statusProviderMessage = result.providerMessage
                                         }
                                     }
                                 }
@@ -1355,6 +1396,7 @@ private fun AgentProviderCard(
     isValidating: Boolean,
     status: String?,
     statusOk: Boolean,
+    statusProviderMessage: String?,
     keyConnectionStatuses: Map<String, KeyConnectionStatus>,
     savedKeys: List<ApiKeyInfo>,
     newKeyName: String,
@@ -1376,7 +1418,9 @@ private fun AgentProviderCard(
 ) {
     val visibleKinds = remember(state.agentKind) { providersForAgent(state.agentKind) }
     var connectionExpanded by rememberSaveable(selectedKind) { mutableStateOf(false) }
-    var endpointExpanded by rememberSaveable(selectedKind) { mutableStateOf(false) }
+    // Keep this state across provider changes so selecting Custom API can
+    // immediately reveal its required setup instead of resetting on recomposition.
+    var endpointExpanded by rememberSaveable(state.agentKind) { mutableStateOf(false) }
     var keysExpanded by rememberSaveable(selectedKind, savedKeys.isEmpty()) { mutableStateOf(savedKeys.isEmpty()) }
     var addKeyExpanded by rememberSaveable(savedKeys.isEmpty()) { mutableStateOf(savedKeys.isEmpty()) }
     val activeKey = savedKeys.firstOrNull { it.isActive }
@@ -1419,6 +1463,7 @@ private fun AgentProviderCard(
                                         .clickable {
                                             onProvider(kind)
                                             connectionExpanded = false
+                                            endpointExpanded = kind == ProviderKind.CUSTOM
                                         }
                                         .padding(horizontal = 13.dp, vertical = 11.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1460,6 +1505,14 @@ private fun AgentProviderCard(
                     modifier = Modifier.padding(top = 8.dp, bottom = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (selectedKind == ProviderKind.CUSTOM) {
+                        Text(
+                            "Enter the provider endpoint, then add its API key under Credentials.",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     OutlinedTextField(
                         value = baseUrl,
                         onValueChange = { if (!selectedKind.fixedBaseUrl) onBaseUrl(it) },
@@ -1516,13 +1569,15 @@ private fun AgentProviderCard(
             )
 
             if (status != null) {
-                Row(
-                    modifier = Modifier.padding(start = 48.dp, end = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(if (statusOk) Icons.Default.Info else Icons.Default.Warning, null, tint = if (statusOk) PocketOrange else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text(status, fontSize = 10.sp, lineHeight = 14.sp, color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.padding(start = 48.dp, end = 8.dp, bottom = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (statusOk) Icons.Default.Info else Icons.Default.Warning, null, tint = if (statusOk) PocketOrange else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(status, fontSize = 10.sp, lineHeight = 14.sp, color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                    }
+                    statusProviderMessage?.let { providerMessage ->
+                        Text("Provider: $providerMessage", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 21.dp, top = 4.dp))
+                    }
                 }
             }
 
@@ -1536,7 +1591,7 @@ private fun AgentProviderCard(
                     if (activeKey != null) append(" · Active")
                     activeKeyStatus?.let {
                         append(" · ")
-                        append(when (it.successful) { true -> "Verified"; false -> "Rejected"; null -> "Checking" })
+                        append(when (it.successful) { true -> "Verified"; false -> it.label; null -> "Checking" })
                     }
                 },
                 positive = activeKeyStatus?.successful == true,
@@ -1558,6 +1613,15 @@ private fun AgentProviderCard(
                         },
                         modifier = Modifier.padding(start = 48.dp, end = 8.dp, bottom = 8.dp),
                     )
+                    keyStatus.providerMessage?.let { providerMessage ->
+                        Text(
+                            "Provider: $providerMessage",
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 48.dp, end = 8.dp, bottom = 8.dp),
+                        )
+                    }
                 }
             }
 
@@ -1598,7 +1662,12 @@ private fun AgentProviderCard(
                                         if (it.successful == null) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp)
                                         else Icon(if (it.successful) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (it.successful) Color(0xFF2E9D72) else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(7.dp))
-                                        Text(it.message, fontSize = 10.sp, lineHeight = 14.sp, color = if (it.successful == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(it.message, fontSize = 10.sp, lineHeight = 14.sp, color = if (it.successful == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                                            it.providerMessage?.let { providerMessage ->
+                                                Text("Provider: $providerMessage", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1799,6 +1868,12 @@ private fun AgentUpdateBlock(
             }
         }
     }
+}
+
+private fun formatAgentBytes(bytes: Long): String = when {
+    bytes >= 1_048_576L -> "%.1f MB".format(bytes / 1_048_576.0)
+    bytes >= 1_024L -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "$bytes B"
 }
 
 /**

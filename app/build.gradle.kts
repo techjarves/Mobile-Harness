@@ -39,7 +39,8 @@ val prepareBundledAgentAssets = tasks.register<Sync>("prepareBundledAgentAssets"
 
 val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAssets") {
     from(
-        runtimeBundleDir.file("pocketdev-core-arm64-2026.09.4.tar.zst"),
+        runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
+        runtimeBundleDir.file("pocketdev-claude-arm64-2026.09.1.tar.zst"),
         runtimeBundleDir.file("pocketdev-python-arm64-2026.09.2.tar.zst"),
         runtimeBundleDir.file("pocketdev-android-arm64-2026.09.1.tar.zst"),
         runtimeBundleDir.file("pocketdev-dsh-arm64-2026.09.1.tar.zst"),

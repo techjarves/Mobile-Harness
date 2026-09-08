@@ -13,12 +13,16 @@ data class DiscoveredModel(val id: String, val displayName: String = id, val isF
 
 sealed interface ModelDiscoveryResult {
     data class Success(val models: List<DiscoveredModel>, val endpoint: String) : ModelDiscoveryResult
-    data class Failure(val message: String) : ModelDiscoveryResult
+    data class Failure(val message: String, val providerMessage: String? = null) : ModelDiscoveryResult
 }
 
 sealed interface ConnectionValidation {
     data class Success(val message: String) : ConnectionValidation
-    data class Failure(val message: String) : ConnectionValidation
+    data class Failure(
+        val message: String,
+        val providerMessage: String? = null,
+        val label: String = "Failed",
+    ) : ConnectionValidation
 }
 
 class ProviderApiClient {
@@ -33,20 +37,35 @@ class ProviderApiClient {
 
         var authError = false
         var lastMessage = "This provider did not expose a model list. You can enter a custom model name."
+        var lastProviderMessage: String? = null
         for (endpoint in modelEndpoints(baseUrl, protocol)) {
-            val response = request(endpoint, "GET", apiKey, protocol = protocol)
+            // OpenRouter's complete catalog is public. Fetch it anonymously even when
+            // OpenRouter is configured through Custom API so an account-scoped key does
+            // not reduce discovery to the models allowed by that key's preferences.
+            // The saved key is still used for validation and all inference requests.
+            val discoveryKey = if (isOpenRouterCatalogEndpoint(endpoint)) "" else apiKey
+            val response = request(endpoint, "GET", discoveryKey, protocol = protocol)
             when {
-                response.code == 401 || response.code == 403 -> authError = true
+                response.code == 401 || response.code == 403 -> {
+                    authError = true
+                    lastProviderMessage = providerErrorMessage(response.body)
+                }
                 response.code in 200..299 -> {
                     val models = ModelResponseParser.parse(response.body)
                     if (models.isNotEmpty()) return@withContext ModelDiscoveryResult.Success(models, endpoint)
                     lastMessage = "The provider replied, but its model list was empty or unsupported."
                 }
-                response.code > 0 && response.code != 404 -> lastMessage = friendlyHttpError(response.code)
+                response.code > 0 && response.code != 404 -> {
+                    lastMessage = friendlyHttpError(response.code)
+                    lastProviderMessage = providerErrorMessage(response.body)
+                }
                 response.error != null -> lastMessage = response.error
             }
         }
-        ModelDiscoveryResult.Failure(if (authError) "The API key was rejected. Check the key and try again." else lastMessage)
+        ModelDiscoveryResult.Failure(
+            if (authError) "Check the saved API key, then try refreshing again." else lastMessage,
+            lastProviderMessage,
+        )
     }
 
     suspend fun validate(
@@ -70,14 +89,44 @@ class ProviderApiClient {
                     "Connection successful. Claude Code settings are ready."
                 },
             )
-            response.code == 401 || response.code == 403 -> ConnectionValidation.Failure("The API key was rejected.")
-            response.code == 404 -> ConnectionValidation.Failure("The API endpoint was not found. Check the base URL.")
+            response.code == 401 || response.code == 403 -> ConnectionValidation.Failure(
+                "Check this API key or select another saved key.",
+                providerErrorMessage(response.body),
+                "Rejected",
+            )
+            response.code == 404 -> ConnectionValidation.Failure(
+                "Check the Base URL and selected gateway protocol.",
+                providerErrorMessage(response.body),
+                "Endpoint error",
+            )
             response.code == 400 && response.body.contains("model", ignoreCase = true) ->
-                ConnectionValidation.Failure("The provider did not accept model '$model'. Choose a listed model or check its exact name.")
-            response.code > 0 -> ConnectionValidation.Failure(friendlyHttpError(response.code))
+                ConnectionValidation.Failure(
+                    "Refresh the model list or select a different model.",
+                    providerErrorMessage(response.body),
+                    "Model error",
+                )
+            response.code == 429 -> ConnectionValidation.Failure(
+                "Wait a moment, then retry or use another API key.",
+                providerErrorMessage(response.body),
+                "Rate limited",
+            )
+            response.code in 500..599 -> ConnectionValidation.Failure(
+                "The provider is temporarily unavailable. Try again shortly.",
+                providerErrorMessage(response.body),
+                "Provider error",
+            )
+            response.code > 0 -> ConnectionValidation.Failure(
+                "Review the model, protocol, and endpoint settings.",
+                providerErrorMessage(response.body),
+                "Request failed",
+            )
             response.error?.contains("timed out", ignoreCase = true) == true ->
-                ConnectionValidation.Failure("Connection timed out after 10 seconds.")
-            else -> ConnectionValidation.Failure(response.error ?: "Could not connect to the provider.")
+                ConnectionValidation.Failure("Check your connection and try again.", response.error, "Timed out")
+            else -> ConnectionValidation.Failure(
+                "Check your internet connection and provider settings.",
+                response.error,
+                "Network error",
+            )
         }
     }
 
@@ -141,6 +190,12 @@ class ProviderApiClient {
         }
     }
 
+    private fun isOpenRouterCatalogEndpoint(endpoint: String): Boolean = runCatching {
+        val url = URL(endpoint)
+        url.host.equals("openrouter.ai", ignoreCase = true) &&
+            url.path.trimEnd('/').endsWith("/models")
+    }.getOrDefault(false)
+
     internal fun validationBody(model: String, protocol: ProviderProtocol): String = when (protocol) {
         ProviderProtocol.OPENAI_RESPONSES -> JSONObject()
             .put("model", model)
@@ -176,6 +231,25 @@ class ProviderApiClient {
         429 -> "The provider rate limit was reached. Wait a moment and try again."
         in 500..599 -> "The provider is temporarily unavailable (HTTP $code)."
         else -> "The provider returned HTTP $code. Check the URL and account access."
+    }
+
+    private fun providerErrorMessage(body: String): String? {
+        if (body.isBlank()) return null
+        val extracted = runCatching {
+            val root = JSONObject(body)
+            when (val error = root.opt("error")) {
+                is JSONObject -> error.optString("message").ifBlank { error.optString("detail") }
+                is String -> error
+                else -> root.optString("message").ifBlank { root.optString("detail") }
+            }
+        }.getOrNull().orEmpty()
+        if (extracted.isBlank()) return null
+        return extracted
+            .replace(Regex("(?i)bearer\\s+\\S+"), "Bearer ••••")
+            .replace(Regex("(?i)sk-[a-z0-9_-]{8,}"), "sk-••••")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(280)
     }
 
     private data class HttpResult(val code: Int, val body: String, val error: String? = null)
