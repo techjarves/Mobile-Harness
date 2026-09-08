@@ -110,10 +110,10 @@ private fun LegacySettingsScreen(
     val scope = rememberCoroutineScope()
     var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
     var baseUrl by rememberSaveable(state.provider.baseUrl) {
-        mutableStateOf(state.provider.baseUrl.ifBlank { "https://api.deepseek.com/anthropic" })
+        mutableStateOf(state.provider.baseUrl.ifBlank { state.provider.kind.defaultBaseUrl })
     }
     var model by rememberSaveable(state.provider.model) {
-        mutableStateOf(state.provider.model.ifBlank { "deepseek-chat" })
+        mutableStateOf(state.provider.model.ifBlank { state.provider.kind.defaultModel })
     }
     var apiKey by rememberSaveable { mutableStateOf(getSavedApiKey(state.provider.kind)) }
     var keyVisible by rememberSaveable { mutableStateOf(false) }
@@ -353,7 +353,7 @@ private fun LegacySettingsScreen(
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                state.provider.model.ifBlank { "deepseek-chat" },
+                                state.provider.model.ifBlank { state.provider.kind.defaultModel },
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 15.sp,
                             )

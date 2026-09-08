@@ -162,6 +162,7 @@ fun AgentScreen(
     onAddApiKey: (ProviderKind, String, String) -> List<ApiKeyInfo>,
     onActivateApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
     onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
+    onSelectAgent: (AgentKind) -> Unit = {},
     onInstallAgent: (AgentKind) -> Unit = {},
     onCheckAgentUpdates: () -> Unit = {},
     onUpdateAgent: (AgentKind) -> Unit = {},
@@ -199,6 +200,13 @@ fun AgentScreen(
     var showAntigravityModelSheet by rememberSaveable { mutableStateOf(false) }
     var antigravitySearch by rememberSaveable { mutableStateOf("") }
     var antigravityCode by rememberSaveable { mutableStateOf("") }
+    var viewedAgent by rememberSaveable { mutableStateOf(state.agentKind) }
+
+    val orderedAgents = remember(state.primaryAgentKind) {
+        listOf(state.primaryAgentKind) + AgentKind.entries.filterNot { it == state.primaryAgentKind }
+    }
+    val viewedAgentInstalled = viewedAgent == state.agentKind ||
+        state.installedAgentVersions.containsKey(viewedAgent)
 
     val providerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val antigravitySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -795,8 +803,9 @@ fun AgentScreen(
                             modifier = Modifier.padding(4.dp),
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            AgentKind.entries.forEach { agent ->
-                                val isSelected = state.agentKind == agent
+                            orderedAgents.forEach { agent ->
+                                val isSelected = viewedAgent == agent
+                                val isInstalled = agent == state.agentKind || state.installedAgentVersions.containsKey(agent)
                                 val updateAvailable = state.agentUpdates.containsKey(agent)
                                 val shortTitle = when (agent) {
                                     AgentKind.ANTIGRAVITY -> "Antigravity"
@@ -810,7 +819,8 @@ fun AgentScreen(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clickable(enabled = state.agentInstalling == null) {
-                                            onInstallAgent(agent)
+                                            viewedAgent = agent
+                                            if (isInstalled) onSelectAgent(agent)
                                         },
                                 ) {
                                     Box(
@@ -836,7 +846,7 @@ fun AgentScreen(
                         }
                     }
 
-                    if (state.agentInstalling != null) {
+                    if (state.agentInstalling == viewedAgent) {
                         Spacer(Modifier.height(6.dp))
                         Surface(
                             shape = RoundedCornerShape(12.dp),
@@ -861,26 +871,63 @@ fun AgentScreen(
                                 )
                                 val downloaded = state.agentDownloadedBytes
                                 val total = state.agentTotalBytes
-                                if (downloaded != null || total != null) {
-                                    Spacer(Modifier.height(6.dp))
-                                    Row(Modifier.fillMaxWidth()) {
-                                        Text(
+                                Spacer(Modifier.height(6.dp))
+                                Row(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        if (downloaded != null || total != null) {
                                             buildString {
                                                 append(formatAgentBytes(downloaded ?: 0L))
                                                 total?.let { append(" / ${formatAgentBytes(it)}") }
-                                            },
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                        Text(
-                                            state.agentBytesPerSecond?.takeIf { it > 0L }
-                                                ?.let { "${formatAgentBytes(it)}/s" }
-                                                ?: "${(state.agentProgress * 100).toInt()}%",
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
+                                            }
+                                        } else {
+                                            "Processing files"
+                                        },
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        buildString {
+                                            append("${(state.agentProgress * 100).toInt()}%")
+                                            state.agentBytesPerSecond?.takeIf { it > 0L }?.let {
+                                                append(" · ${formatAgentBytes(it)}/s")
+                                            }
+                                        },
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    } else if (!viewedAgentInstalled) {
+                        Spacer(Modifier.height(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(
+                                    "${viewedAgent.title} is not installed",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Install its ${viewedAgent.downloadNote} agent package to use it with your existing projects.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Button(
+                                    onClick = { onInstallAgent(viewedAgent) },
+                                    enabled = state.agentInstalling == null,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                ) {
+                                    Text("Install ${viewedAgent.title}", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -890,7 +937,9 @@ fun AgentScreen(
 
             // ── 2. Primary Configuration Card (Antigravity OR Provider) ──
             item {
-                if (state.agentKind == AgentKind.ANTIGRAVITY) {
+                if (!viewedAgentInstalled || viewedAgent != state.agentKind) {
+                    // Installation/selection guidance is shown directly below the tabs.
+                } else if (state.agentKind == AgentKind.ANTIGRAVITY) {
                     AgentAntigravityCard(
                         state = state,
                         code = antigravityCode,
@@ -1915,8 +1964,6 @@ private fun AgentSelectionDot(selected: Boolean) {
 /** Provides popular default models for providers when discovery hasn't been run or is unavailable. */
 private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> = when (kind) {
     ProviderKind.DEEPSEEK -> listOf(
-        DiscoveredModel("deepseek-chat", "DeepSeek-V3 (Chat)"),
-        DiscoveredModel("deepseek-reasoner", "DeepSeek-R1 (Reasoner)"),
         DiscoveredModel("deepseek-v4-flash", "DeepSeek-V4 Flash"),
     )
     ProviderKind.OPENCODE_ZEN -> listOf(

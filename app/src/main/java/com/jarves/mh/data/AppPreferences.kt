@@ -37,6 +37,11 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_kind", AgentKind.CLAUDE_CODE.stableId) ?: AgentKind.CLAUDE_CODE.stableId
         set(value) { preferences.edit().putString("agent_kind", value).apply() }
 
+    /** Agent chosen for the initial runtime installation; used as the leading UI tab. */
+    var primaryAgentKind: String
+        get() = preferences.getString("primary_agent_kind", "") ?: ""
+        set(value) { preferences.edit().putString("primary_agent_kind", value).apply() }
+
     var antigravityModel: String
         get() = preferences.getString("agent_antigravity_model", "") ?: ""
         set(value) { preferences.edit().putString("agent_antigravity_model", value).apply() }
@@ -176,6 +181,23 @@ class AppPreferences(private val context: Context) {
             else -> ProviderKind.ANTHROPIC
         }
         val useStoredValues = storedKind == kind
+        val savedModel = if (useStoredValues) {
+            preferences.getString("${sourcePrefix}model", kind.defaultModel) ?: kind.defaultModel
+        } else {
+            kind.defaultModel
+        }
+        // DeepSeek retired its legacy alias. Migrate only DeepSeek profiles so
+        // custom and gateway providers keep their independently selected model.
+        val model = if (
+            kind == ProviderKind.DEEPSEEK &&
+            savedModel in setOf("deepseek-chat", "deepseek-reasoner")
+        ) {
+            kind.defaultModel.also {
+                preferences.edit().putString("${sourcePrefix}model", it).apply()
+            }
+        } else {
+            savedModel
+        }
         return ProviderProfile(
             kind = kind,
             baseUrl = if (useStoredValues) {
@@ -183,11 +205,7 @@ class AppPreferences(private val context: Context) {
             } else {
                 kind.defaultBaseUrl
             },
-            model = if (useStoredValues) {
-                preferences.getString("${sourcePrefix}model", kind.defaultModel) ?: kind.defaultModel
-            } else {
-                kind.defaultModel
-            },
+            model = model,
             hasSecret = vault.contains(kind.name),
             dshApi = if (useStoredValues) {
                 preferences.getString("${sourcePrefix}dsh_api", defaultDshApiForProvider(kind))

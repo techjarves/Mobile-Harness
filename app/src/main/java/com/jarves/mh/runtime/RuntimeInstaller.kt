@@ -73,11 +73,13 @@ class RuntimeInstaller(private val context: Context) {
 
     fun isInstalled(): Boolean {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
+        val rootfsLayoutReady = ensureRootfsCompatibilityLinks()
         // Devices set up before staged toolchains keep working through the legacy marker;
         // fresh installs require the new core-tools marker instead.
         val legacyLanguageTools = languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION
         val coreToolsReady = File(rootfs, "usr/bin/git").exists() && isSupportedCoreToolsVersion()
-        val ready = proot.canExecute() &&
+        val ready = rootfsLayoutReady &&
+            proot.canExecute() &&
             File(rootfs, "usr/bin/bash").exists() &&
             rootfsMarker.readTextOrNull() == ROOTFS_VERSION &&
             File(rootfs, "usr/local/bin/node").exists() &&
@@ -161,9 +163,12 @@ class RuntimeInstaller(private val context: Context) {
             require(File(staging, "usr/bin/bash").isFile) { "Core bundle is missing Bash" }
             rootfs.deleteRecursively()
             check(staging.renameTo(rootfs)) { "Could not activate the Linux environment" }
+            check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
             writeResolver()
             if (archive.parentFile == downloads) archive.delete()
         }
+
+        check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
 
         migrateLegacyClaudeMarker()
         ensureSettingsAndHooks()
@@ -1204,7 +1209,7 @@ class RuntimeInstaller(private val context: Context) {
                 event = RuntimeInstallEvent.COMMAND_COMPLETED,
             ),
         )
-        check(exit == 0) { collected.toString().trim().takeLast(1_000).ifBlank { failureMessage } }
+        check(exit == 0) { actionableProcessError(collected.toString(), failureMessage) }
     }
 
     private fun sanitizeTerminalLine(raw: String): String = raw
@@ -1228,7 +1233,51 @@ class RuntimeInstaller(private val context: Context) {
             ?.let(::readProcessOutputSafely)
             .orEmpty()
             .trim()
-        check(exit == 0) { output.ifBlank { failureMessage } }
+        check(exit == 0) { actionableProcessError(output, failureMessage) }
+    }
+
+    /**
+     * Ubuntu 20.04 uses a merged-/usr layout. A partially extracted or upgraded
+     * runtime can lose these top-level links while all readiness markers remain,
+     * making every ELF executable misleadingly fail with ENOENT. Restore only
+     * the known Ubuntu compatibility links and never replace real directories.
+     */
+    private fun ensureRootfsCompatibilityLinks(): Boolean {
+        if (!rootfs.isDirectory) return false
+        val links = mapOf(
+            "bin" to "usr/bin",
+            "lib" to "usr/lib",
+            "sbin" to "usr/sbin",
+        )
+        return runCatching {
+            links.forEach { (name, destination) ->
+                val link = File(rootfs, name)
+                val path = link.toPath()
+                if (java.nio.file.Files.isSymbolicLink(path)) {
+                    if (java.nio.file.Files.readSymbolicLink(path).toString() != destination) {
+                        java.nio.file.Files.delete(path)
+                        Os.symlink(destination, link.absolutePath)
+                    }
+                } else if (link.exists()) {
+                    check(link.isDirectory) { "Linux /$name is not a directory or symbolic link" }
+                } else {
+                    Os.symlink(destination, link.absolutePath)
+                }
+            }
+            File(rootfs, "usr/bin/env").canExecute() &&
+                File(rootfs, "usr/bin/bash").canExecute() &&
+                File(rootfs, "lib/ld-linux-aarch64.so.1").exists()
+        }.onFailure {
+            android.util.Log.e("RuntimeInstaller", "Could not repair Linux compatibility links", it)
+        }.getOrDefault(false)
+    }
+
+    private fun actionableProcessError(output: String, fallback: String): String {
+        val lines = output.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
+        val primaryProotError = lines.firstOrNull {
+            it.startsWith("proot error:") && !it.contains("can't chmod")
+        } ?: lines.firstOrNull { it.startsWith("proot error:") }
+        return primaryProotError ?: output.trim().takeLast(1_000).ifBlank { fallback }
     }
 
     /**
@@ -1276,6 +1325,7 @@ class RuntimeInstaller(private val context: Context) {
         ptyRows: Int = 40,
         ptyColumns: Int = 120,
     ): Process {
+        check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
         require(
             guestWorkspacePath == "/workspace" ||
                 Regex("^/workspace/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$").matches(guestWorkspacePath),

@@ -205,6 +205,7 @@ data class AppUiState(
     val devStackBytes: Pair<Long, Long>? = null,
     val devStackBytesPerSecond: Long? = null,
     val agentKind: AgentKind = AgentKind.CLAUDE_CODE,
+    val primaryAgentKind: AgentKind = AgentKind.CLAUDE_CODE,
     val installedAgentVersions: Map<AgentKind, String> = emptyMap(),
     val agentInstalling: AgentKind? = null,
     val agentMessage: String? = null,
@@ -270,6 +271,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val failedApiKeyIds = mutableSetOf<String>()
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
+    private val initialPrimaryAgentKind = preferences.primaryAgentKind
+        .takeIf(String::isNotBlank)
+        ?.let(AgentKind::fromStored)
+        ?: initialAgentKind
     private val antigravityAuthController = AntigravityAuthController(
         application,
         preferences.antigravitySignedIn,
@@ -284,6 +289,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onboardingComplete = preferences.onboardingComplete,
             backgroundSetupComplete = preferences.backgroundSetupComplete,
             agentKind = initialAgentKind,
+            primaryAgentKind = initialPrimaryAgentKind,
             provider = preferences.loadProvider(vault, initialAgentKind),
             activeApiKeyName = vault.list(preferences.loadProvider(vault, initialAgentKind).kind.name)
                 .firstOrNull(ApiKeyInfo::isActive)?.name,
@@ -1273,12 +1279,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(toastMessage = "Stop the current agent before switching.") }
             return
         }
+        val selectingInitialAgent = !preferences.runtimeSetupComplete
         preferences.agentKind = kind.stableId
+        if (selectingInitialAgent) preferences.primaryAgentKind = kind.stableId
         _state.update { current ->
             preferences.saveProvider(current.provider, current.agentKind)
             val provider = preferences.loadProvider(vault, kind)
             current.copy(
                 agentKind = kind,
+                primaryAgentKind = if (selectingInitialAgent) kind else current.primaryAgentKind,
                 provider = provider,
                 activeApiKeyName = vault.list(provider.kind.name).firstOrNull(ApiKeyInfo::isActive)?.name,
                 // Ping results belong to the previous agent; never leak them across.
