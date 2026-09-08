@@ -27,8 +27,8 @@ class ProviderApiClient {
         apiKey: String,
         protocol: ProviderProtocol,
     ): ModelDiscoveryResult = withContext(Dispatchers.IO) {
-        if (baseUrl.isBlank() || apiKey.isBlank()) {
-            return@withContext ModelDiscoveryResult.Failure("Enter a base URL and API key first.")
+        if (baseUrl.isBlank()) {
+            return@withContext ModelDiscoveryResult.Failure("Enter a base URL first.")
         }
 
         var authError = false
@@ -97,13 +97,15 @@ class ProviderApiClient {
                 readTimeout = readTimeoutMs
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $apiKey")
+                if (apiKey.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
                 if (endpoint.startsWith("https://opencode.ai/zen/")) {
                     // OpenCode Zen expects requests to identify the OpenCode client and session.
                     setRequestProperty("User-Agent", "opencode/1.18.20")
                     setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
                 }
-                if (protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
+                if (apiKey.isNotBlank() && protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
                     setRequestProperty("x-api-key", apiKey)
                     setRequestProperty("anthropic-version", "2023-06-01")
                 }
