@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mobile Harness — A complete development workspace, in your pocket</title>
+  <meta name="description" content="Mobile Harness is the autonomous AI development workspace for Android. Chat with Claude Code, Antigravity CLI and DeepSeek Harness, edit projects, run real Linux commands, and preview web servers — entirely on your phone." />
+  <meta name="theme-color" content="#FAF8F3" />
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="apple-touch-icon" href="assets/logo.svg" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Mobile Harness — A complete development workspace, in your pocket" />
+  <meta property="og:description" content="Three coding agents. A real Ubuntu subsystem. On-device builds and live web preview. For ARM64 Android — no root required." />
+  <meta property="og:image" content="assets/screenshots/projects.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,340;0,9..144,420;0,9..144,560;1,9..144,340;1,9..144,420&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <a class="skip" href="#main">Skip to content</a>
+
+  <!-- Announcement -->
+  <div class="announce">
+    <p>
+      <span class="announce-dot" aria-hidden="true"></span>
+      <span id="announce-version">v1.0.3</span>
+      <span class="announce-sep" aria-hidden="true">—</span>
+      <span>now available for ARM64 Android</span>
+      <a href="#download">Get the APK</a>
+    </p>
+  </div>
+
+  <!-- Navigation -->
+  <header class="nav" id="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="Mobile Harness home">
+        <img src="assets/logo.svg" alt="" width="30" height="30" class="brand-mark" />
+        <span class="brand-word">Mobile&nbsp;Harness</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#agents">Agents</a>
+        <a href="#system">System</a>
+        <a href="#security">Security</a>
+        <a href="#guide">Guide</a>
+        <a href="#specs">Specs</a>
+      </nav>
+      <div class="nav-cta">
+        <a class="gh-link" href="https://github.com/techjarves/Mobile-Harness" target="_blank" rel="noopener" aria-label="View source on GitHub">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        </a>
+        <a class="btn btn-dark btn-sm" href="#download">Download</a>
+        <button class="menu-btn" id="menu-btn" aria-expanded="false" aria-controls="mobile-menu" aria-label="Open menu">
+          <span></span><span></span>
+        </button>
+      </div>
+    </div>
+    <div class="mobile-menu" id="mobile-menu" hidden>
+      <a href="#agents">Agents</a>
+      <a href="#system">System</a>
+      <a href="#security">Security</a>
+      <a href="#guide">Guide</a>
+      <a href="#specs">Specs</a>
+      <a href="#download" class="btn btn-dark">Download for Android</a>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ============ HERO ============ -->
+    <section class="hero" id="top">
+      <div class="wrap hero-inner">
+        <p class="eyebrow reveal"><span class="eyebrow-rule" aria-hidden="true"></span>For ARM64 Android &middot; Ubuntu 20.04 inside &middot; MIT licensed</p>
+        <h1 class="reveal">A complete development workspace, <em>in&nbsp;your&nbsp;pocket.</em></h1>
+        <p class="lede reveal">Chat with <strong>Claude&nbsp;Code</strong>, <strong>Antigravity&nbsp;CLI</strong> and <strong>DeepSeek&nbsp;Harness</strong>. Edit projects, run real Linux commands, and preview web servers — entirely on your phone. No root. No ADB pairing. No compromises.</p>
+        <div class="hero-ctas reveal">
+          <a class="btn btn-dark btn-lg" id="hero-download" href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.3/mobile-harness-online-v1.0.3.apk">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m0 0 3-3M8 10 5 7M2.5 12.5h11"/></svg>
+            Download for Android
+          </a>
+          <a class="btn btn-ghost btn-lg" href="#guide">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>
+            Watch walkthrough
+            <span class="btn-note">3 min</span>
+          </a>
+        </div>
+        <dl class="hero-meta reveal">
+          <div><dt>Latest</dt><dd id="hero-version">v1.0.3</dd></div>
+          <div><dt>Editions</dt><dd>Online 44.6 MB &middot; Offline 818.5 MB</dd></div>
+          <div><dt>Requires</dt><dd>Android 9+ &middot; ARM64</dd></div>
+          <div><dt>Installs</dt><dd id="hero-downloads">1,700+</dd></div>
+        </dl>
+
+        <!-- Device gallery -->
+        <div class="phones reveal" role="list" aria-label="App screenshots">
+          <figure class="phone" role="listitem">
+            <div class="phone-frame"><img src="assets/screenshots/projects.png" alt="Projects workspace showing isolated project sessions" width="360" height="780" loading="eager" fetchpriority="high" /></div>
+            <figcaption><span class="fig-num">01</span>Projects — isolated sessions that keep files, chat and context together.</figcaption>
+          </figure>
+          <figure class="phone phone-main" role="listitem">
+            <div class="phone-frame"><img src="assets/screenshots/terminal.png" alt="Linux terminal executing real commands on device" width="360" height="780" loading="eager" /></div>
+            <figcaption><span class="fig-num">02</span>Terminal — real Ubuntu commands with instant output.</figcaption>
+          </figure>
+          <figure class="phone" role="listitem">
+            <div class="phone-frame"><img src="assets/screenshots/settings.png" alt="Settings for providers, toolchains and runtime health" width="360" height="780" loading="lazy" /></div>
+            <figcaption><span class="fig-num">03</span>Settings — providers, toolchains and runtime health.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Trust strip -->
+    <section class="strip" aria-label="Technical foundations">
+      <div class="wrap strip-inner">
+        <span>Jetpack Compose UI</span><i aria-hidden="true"></i>
+        <span>PRoot Ubuntu subsystem</span><i aria-hidden="true"></i>
+        <span>C++ JNI bridge</span><i aria-hidden="true"></i>
+        <span>Keystore AES-256-GCM</span><i aria-hidden="true"></i>
+        <span>Direct APK &middot; no root</span>
+      </div>
+    </section>
+
+    <!-- ============ 01 AGENTS ============ -->
+    <section class="section" id="agents">
+      <div class="wrap">
+        <p class="sec-label reveal"><span>01</span><i aria-hidden="true"></i>Three agents, one workspace</p>
+        <div class="sec-head">
+          <h2 class="reveal">Pick the mind.<br />Keep the workflow.</h2>
+          <p class="reveal">Each agent runs through its own isolated driver with dedicated settings and resumable project conversations. Switch providers without leaving your project.</p>
+        </div>
+
+        <div class="tabs reveal" role="tablist" aria-label="Coding agents">
+          <button role="tab" aria-selected="true" aria-controls="panel-claude" id="tab-claude" class="tab is-active">Claude Code</button>
+          <button role="tab" aria-selected="false" aria-controls="panel-antigravity" id="tab-antigravity" class="tab" tabindex="-1">Antigravity CLI</button>
+          <button role="tab" aria-selected="false" aria-controls="panel-deepseek" id="tab-deepseek" class="tab" tabindex="-1">DeepSeek Harness</button>
+        </div>
+
+        <div class="agent-panels reveal">
+          <article class="agent-panel is-active" id="panel-claude" role="tabpanel" aria-labelledby="tab-claude" tabindex="0">
+            <div class="agent-copy">
+              <p class="agent-kicker">Primary &middot; included in Core</p>
+              <h3>The reference backend.</h3>
+              <p>Claude Code ships with the Core runtime and speaks the Anthropic-compatible API protocol — direct keys, or routed through gateways you already use.</p>
+              <ul class="agent-facts">
+                <li><span>Auth</span>Claude account or API-key providers</li>
+                <li><span>Providers</span>Anthropic &middot; OpenRouter &middot; DeepSeek &middot; Kimi &middot; Custom endpoint</li>
+                <li><span>Streaming</span>Supported, with tool calling</li>
+              </ul>
+            </div>
+            <div class="codecard">
+              <div class="codecard-bar"><span></span><span></span><span></span><em>workspace — claude</em></div>
+<pre><code>$ claude <span class="hl">"add sign-in to the settings screen,
+  then run the build"</span>
+
+<span class="dim">▸ inspecting 14 files…</span>
+<span class="dim">▸ drafting SettingsAuth.kt…</span>
+<span class="ok">✓ build succeeded in 41s — preview ready</span></code></pre>
+            </div>
+          </article>
+
+          <article class="agent-panel" id="panel-antigravity" role="tabpanel" aria-labelledby="tab-antigravity" tabindex="0" hidden>
+            <div class="agent-copy">
+              <p class="agent-kicker">Google-native &middot; version-pinned install</p>
+              <h3>Antigravity, on device.</h3>
+              <p>The official <code>agy</code> CLI with its own bridge, model and effort controls, and conversation IDs. Sign in with Google in the system browser — the app never touches your tokens.</p>
+              <ul class="agent-facts">
+                <li><span>Auth</span>Official Google OAuth flow</li>
+                <li><span>Install</span>Version-pinned online download</li>
+                <li><span>Note</span>Runs with <code>--dangerously-skip-permissions</code> — use with trusted projects only</li>
+              </ul>
+            </div>
+            <div class="codecard">
+              <div class="codecard-bar"><span></span><span></span><span></span><em>workspace — agy</em></div>
+<pre><code>$ agy login
+<span class="dim">→ opening accounts.google.com in browser…</span>
+<span class="ok">✓ signed in — paste the one-time code to continue</span>
+
+$ agy run <span class="hl">"scaffold the checkout flow"</span></code></pre>
+            </div>
+          </article>
+
+          <article class="agent-panel" id="panel-deepseek" role="tabpanel" aria-labelledby="tab-deepseek" tabindex="0" hidden>
+            <div class="agent-copy">
+              <p class="agent-kicker">Efficient &middot; on-demand install</p>
+              <h3>DeepSeek, kept separate.</h3>
+              <p>DeepSeek Harness installs only when you ask for it, with its own bridge and settings — ideal for fast iteration and long resumable sessions.</p>
+              <ul class="agent-facts">
+                <li><span>Auth</span>API-key providers</li>
+                <li><span>Install</span>On demand, isolated driver</li>
+                <li><span>Sessions</span>Resumable per-project conversations</li>
+              </ul>
+            </div>
+            <div class="codecard">
+              <div class="codecard-bar"><span></span><span></span><span></span><em>workspace — dsh</em></div>
+<pre><code>$ dsh resume pocket-shop
+<span class="dim">→ restoring 23 turns of context…</span>
+
+$ dsh <span class="hl">"continue: wire up the cart reducer"</span>
+<span class="ok">✓ 3 files updated — tests passing</span></code></pre>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 02 SYSTEM ============ -->
+    <section class="section section-tint" id="system">
+      <div class="wrap system-grid">
+        <div class="system-sticky">
+          <p class="sec-label reveal"><span>02</span><i aria-hidden="true"></i>A real system underneath</p>
+          <h2 class="reveal">Not a chat window.<br />A computer.</h2>
+          <p class="reveal">A full Ubuntu 20.04 ARM64 userspace runs inside PRoot — Node.js, Git, OpenSSL and coreutils out of the box, bridged to native Android through an optimized C++ JNI layer.</p>
+          <div class="codecard codecard-sm reveal">
+            <div class="codecard-bar"><span></span><span></span><span></span><em>proot — ubuntu 20.04</em></div>
+<pre><code>$ node -v <span class="dim">&amp;&amp;</span> git status -sb
+<span class="ok">v20.x · ## main…origin/main</span></code></pre>
+          </div>
+        </div>
+        <div class="system-cards">
+          <div class="sys-card reveal"><h3>Instant web preview</h3><p>Spin up Vite, Next.js or Express and test the interface in a sandboxed on-device WebView with console telemetry.</p></div>
+          <div class="sys-card reveal"><h3>On-device Android builds</h3><p>Build, install and launch APKs straight from the workspace play button. No USB, no wireless ADB, no pairing codes.</p></div>
+          <div class="sys-card reveal"><h3>Native file workflow</h3><p>Browse, edit, search and attach files directly. System storage interoperates through the official Storage Access Framework.</p></div>
+          <div class="sys-card reveal"><h3>Toolchains on demand</h3><p>Python 3.10+, OpenJDK 17, GCC/Clang/CMake and PHP install only when a project needs them — conserving space.</p></div>
+          <div class="sys-card reveal"><h3>Persistent sessions</h3><p>Projects keep their files, chat history and task context together, so work resumes exactly where it stopped.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 03 SECURITY ============ -->
+    <section class="section section-night" id="security">
+      <div class="wrap">
+        <p class="sec-label sec-label-light reveal"><span>03</span><i aria-hidden="true"></i>Security, stated plainly</p>
+        <div class="sec-head">
+          <h2 class="reveal">Your keys never leave<br />the hardware.</h2>
+          <p class="reveal">API credentials are encrypted with Android Keystore-backed AES-256-GCM. There are no relays, no proxies, no telemetry servers between your device and your provider.</p>
+        </div>
+        <div class="sec-grid">
+          <div class="night-card reveal"><p class="night-num">AES-256-GCM</p><h3>Hardware-backed vault</h3><p>Secrets live in the Android Keystore. Antigravity OAuth tokens stay inside the official CLI's own home — the app never reads or copies them.</p></div>
+          <div class="night-card reveal"><p class="night-num">Zero intermediaries</p><h3>Direct to your provider</h3><p>Prompts and code travel straight from your phone to the endpoint you configured. Nothing in between.</p></div>
+          <div class="night-card reveal"><p class="night-num">SHA-256</p><h3>Verified runtimes</h3><p>Root filesystem archives and CLI packages are checksum-verified before extraction.</p></div>
+          <div class="night-card reveal"><p class="night-num">SAF</p><h3>Scoped storage</h3><p>Imports and exports use Android's Storage Access Framework — no broad shared-storage access.</p></div>
+        </div>
+        <p class="night-note reveal">A candid note: PRoot is a userspace layer, not a hardened jail. It inherits Android's app sandbox, but only run projects and dependencies you trust.</p>
+      </div>
+    </section>
+
+    <!-- ============ 04 DOWNLOAD ============ -->
+    <section class="section" id="download">
+      <div class="wrap">
+        <p class="sec-label reveal"><span>04</span><i aria-hidden="true"></i>Download</p>
+        <div class="sec-head">
+          <h2 class="reveal">Choose your edition.</h2>
+          <p class="reveal">Both editions are the complete app with secure in-app updates from <span id="inline-version">v1.0.3</span>. <span id="release-date">Released September 2026</span>.</p>
+        </div>
+        <div class="editions">
+          <article class="edition reveal">
+            <p class="edition-tag">Recommended</p>
+            <h3>Online Edition</h3>
+            <p class="edition-size"><strong id="online-size">44.6 MB</strong><span>small APK, runtimes on demand</span></p>
+            <p class="edition-desc">Start light. The Core, Python and Android bundles download only when you need them.</p>
+            <a class="btn btn-dark btn-lg btn-block" id="online-btn" href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.3/mobile-harness-online-v1.0.3.apk" download>Download Online APK</a>
+            <p class="edition-meta" id="online-meta">mobile-harness-online-v1.0.3.apk</p>
+          </article>
+          <article class="edition reveal">
+            <p class="edition-tag edition-tag-quiet">Full bundle</p>
+            <h3>Offline Edition</h3>
+            <p class="edition-size"><strong id="offline-size">818.5 MB</strong><span>everything included</span></p>
+            <p class="edition-desc">Core, Python and Android runtimes pre-packed. Set up with limited or no internet.</p>
+            <a class="btn btn-ghost btn-lg btn-block" id="offline-btn" href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.3/mobile-harness-offline-v1.0.3.apk" download>Download Offline APK</a>
+            <p class="edition-meta" id="offline-meta">mobile-harness-offline-v1.0.3.apk</p>
+          </article>
+        </div>
+        <p class="dl-foot reveal">Signed direct APK &middot; ARM64 &middot; Android 9+ &middot; No root &middot; <a href="https://github.com/techjarves/Mobile-Harness/releases/latest" target="_blank" rel="noopener">All releases on GitHub</a></p>
+      </div>
+    </section>
+
+    <!-- ============ 05 GUIDE ============ -->
+    <section class="section section-tint" id="guide">
+      <div class="wrap">
+        <p class="sec-label reveal"><span>05</span><i aria-hidden="true"></i>Walkthrough</p>
+        <div class="sec-head">
+          <h2 class="reveal">See it run on a real device.</h2>
+          <p class="reveal">Setting up Ubuntu, connecting Claude Code, and building an app on Android — in about three minutes.</p>
+        </div>
+
+        <div class="video reveal">
+          <button class="video-facade" id="video-facade" aria-label="Play walkthrough video on YouTube">
+            <img src="https://i.ytimg.com/vi/QzAau52Z7yQ/maxresdefault.jpg" alt="Mobile Harness walkthrough — Ubuntu setup, Claude Code and on-device build" loading="lazy" />
+            <span class="video-play" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg></span>
+          </button>
+        </div>
+
+        <ol class="steps">
+          <li class="reveal">
+            <img src="assets/screenshots/setup-1.png" alt="System readiness check during setup" loading="lazy" />
+            <p><strong>1 · Check readiness.</strong> Storage, architecture and permissions verified up front.</p>
+          </li>
+          <li class="reveal">
+            <img src="assets/screenshots/setup-2.png" alt="Toolchain selection during setup" loading="lazy" />
+            <p><strong>2 · Pick toolchains.</strong> Core Ubuntu plus the stacks your work needs.</p>
+          </li>
+          <li class="reveal">
+            <img src="assets/screenshots/setup-3.png" alt="AI provider connection during setup" loading="lazy" />
+            <p><strong>3 · Connect a provider.</strong> Keys sealed in the Keystore. Then build.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ============ 06 SPECS ============ -->
+    <section class="section" id="specs">
+      <div class="wrap specs-grid">
+        <div>
+          <p class="sec-label reveal"><span>06</span><i aria-hidden="true"></i>Requirements</p>
+          <h2 class="reveal">What it needs.</h2>
+          <p class="reveal">One table, no surprises. Exempt Mobile Harness from battery optimization if you run heavy or long-lived builds.</p>
+          <a class="btn btn-ghost reveal" href="https://github.com/techjarves/Mobile-Harness" target="_blank" rel="noopener">Build from source</a>
+        </div>
+        <table class="spec-table reveal">
+          <tbody>
+            <tr><th scope="row">OS</th><td>Android 9.0 (API 28) minimum &middot; Android 13+ recommended</td></tr>
+            <tr><th scope="row">CPU</th><td>64-bit ARM (arm64-v8a) &middot; 8-core recommended</td></tr>
+            <tr><th scope="row">RAM</th><td>4 GB minimum &middot; 8 GB+ recommended</td></tr>
+            <tr><th scope="row">Storage</th><td>2.5 GB free for base runtime &middot; 8 GB+ for toolchains and caches</td></tr>
+            <tr><th scope="row">Network</th><td>Required for setup and model APIs &middot; Wi-Fi advised for provisioning</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ FINAL CTA ============ -->
+    <section class="section cta">
+      <div class="wrap cta-inner reveal">
+        <img src="assets/logo.svg" alt="" width="52" height="52" class="cta-mark" />
+        <h2>Start building on<br />your phone today.</h2>
+        <p>Free. Open source. Yours.</p>
+        <div class="hero-ctas hero-ctas-center">
+          <a class="btn btn-light btn-lg" id="cta-download" href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.3/mobile-harness-online-v1.0.3.apk">Download for Android</a>
+          <a class="btn btn-outline-light btn-lg" href="https://github.com/techjarves/Mobile-Harness" target="_blank" rel="noopener">Star on GitHub</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <img src="assets/logo.svg" alt="" width="26" height="26" />
+        <p>© 2026 Tech Jarves. MIT licensed.<br />Crafted for developers who want a serious workspace wherever they go.</p>
+      </div>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="https://github.com/techjarves/Mobile-Harness/releases/latest" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/techjarves/Mobile-Harness/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy</a>
+        <a href="https://github.com/techjarves/Mobile-Harness/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://www.youtube.com/techjarves" target="_blank" rel="noopener">YouTube</a>
+      </nav>
+    </div>
+    <div class="wrap footer-legal">
+      <p>Independent open-source project. Not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC. Ubuntu, Android, Kotlin, Node.js and Git belong to their respective holders.</p>
+    </div>
+  </footer>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
