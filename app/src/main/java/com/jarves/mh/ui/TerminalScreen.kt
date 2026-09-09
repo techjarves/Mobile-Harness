@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -67,6 +69,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -116,6 +119,7 @@ fun TerminalScreen(
     val terminalScrollState = rememberScrollState()
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val scope = rememberCoroutineScope()
     val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
     val openTerminalKeyboard = {
@@ -175,25 +179,27 @@ fun TerminalScreen(
         modifier = if (compactHeader) Modifier else Modifier.statusBarsPadding(),
         topBar = {
             if (compactHeader) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-                ) {
+                Column {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .background(PocketOrange.copy(alpha = 0.12f), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(18.dp))
                         }
-                        IconButton(onClick = onClear) { Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output") }
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output", modifier = Modifier.size(20.dp))
+                        }
                         if (showThemeAction) {
                             IconButton(onClick = onToggleTheme) {
                                 Icon(
@@ -203,6 +209,7 @@ fun TerminalScreen(
                             }
                         }
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f))
                 }
             } else {
                 TopAppBar(
@@ -259,9 +266,9 @@ fun TerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .imePadding(),
+                .then(if (compactHeader) Modifier else Modifier.imePadding()),
         ) {
-            if (showQuickCommands) {
+            if (showQuickCommands && !keyboardVisible) {
                 // Quick command chips are useful in the standalone terminal, but
                 // project terminal space is reserved for the actual project session.
                 Row(
@@ -437,37 +444,39 @@ fun TerminalScreen(
 
             // Keyboard helper row. These operate on the command draft, so they are
             // useful even when the phone keyboard does not expose terminal keys.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 14.dp)
-                    .padding(bottom = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                TerminalKeyButton("↑", "Previous command") {
-                    commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
-                        historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
-                        commandInput = TextFieldValue(it, TextRange(it.length))
+            if (!keyboardVisible) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    TerminalKeyButton("↑", "Previous command") {
+                        commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
+                            historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
+                            commandInput = TextFieldValue(it, TextRange(it.length))
+                        }
                     }
-                }
-                TerminalKeyButton("↓", "Next command") {
-                    if (historyIndex >= 0) {
-                        historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
-                        commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
+                    TerminalKeyButton("↓", "Next command") {
+                        if (historyIndex >= 0) {
+                            historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
+                            commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
+                        }
                     }
-                }
-                TerminalIconKeyButton(Icons.Default.ArrowBack, "Move cursor left") {
-                    commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
-                }
-                TerminalIconKeyButton(Icons.Default.ArrowForward, "Move cursor right") {
-                    commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
-                }
-                TerminalKeyButton("ALT", "Alt modifier", active = altActive, fixedWidth = true) { altActive = !altActive }
-                TerminalKeyButton("ESC", "Escape") { commandInput = TextFieldValue() }
-                TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
-                    ctrlActive = !ctrlActive
-                    if (ctrlActive) openTerminalKeyboard()
+                    TerminalIconKeyButton(Icons.Default.ArrowBack, "Move cursor left") {
+                        commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
+                    }
+                    TerminalIconKeyButton(Icons.Default.ArrowForward, "Move cursor right") {
+                        commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
+                    }
+                    TerminalKeyButton("ALT", "Alt modifier", active = altActive, fixedWidth = true) { altActive = !altActive }
+                    TerminalKeyButton("ESC", "Escape") { commandInput = TextFieldValue() }
+                    TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
+                        ctrlActive = !ctrlActive
+                        if (ctrlActive) openTerminalKeyboard()
+                    }
                 }
             }
         }

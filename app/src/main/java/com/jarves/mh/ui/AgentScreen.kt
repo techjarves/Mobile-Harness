@@ -1272,28 +1272,13 @@ private fun AgentAntigravityCard(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         formatAntigravityModelName(currentModel),
+                                        modifier = Modifier.weight(1f),
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
-                                    val tier = formatAntigravityModelTier(currentModel)
-                                    if (tier.isNotEmpty()) {
-                                        Spacer(Modifier.width(6.dp))
-                                        Surface(
-                                            color = Color(0xFF58C9A3).copy(alpha = 0.12f),
-                                            shape = RoundedCornerShape(4.dp),
-                                        ) {
-                                            Text(
-                                                tier,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF58C9A3),
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-                                            )
-                                        }
-                                    }
                                 }
                                 Text(
                                     currentModel,
@@ -1470,7 +1455,7 @@ private fun AgentProviderCard(
     // Keep this state across provider changes so selecting Custom API can
     // immediately reveal its required setup instead of resetting on recomposition.
     var endpointExpanded by rememberSaveable(state.agentKind) { mutableStateOf(false) }
-    var keysExpanded by rememberSaveable(selectedKind, savedKeys.isEmpty()) { mutableStateOf(savedKeys.isEmpty()) }
+    var keysExpanded by rememberSaveable(state.agentKind, selectedKind) { mutableStateOf(false) }
     var addKeyExpanded by rememberSaveable(savedKeys.isEmpty()) { mutableStateOf(savedKeys.isEmpty()) }
     val activeKey = savedKeys.firstOrNull { it.isActive }
     val activeKeyStatus = activeKey?.let { keyConnectionStatuses[it.id] }
@@ -1833,52 +1818,41 @@ private fun AgentUpdateBlock(
     onCheck: () -> Unit,
     onUpdate: (AgentKind) -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-        modifier = Modifier.fillMaxWidth(),
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(PocketBlue.copy(alpha = 0.12f), RoundedCornerShape(9.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = null,
-                        tint = PocketBlue,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Runtime Updates", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text(
-                        state.agentUpdateMessage ?: "Check official releases for installed agents",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedButton(
-                    onClick = onCheck,
-                    enabled = !state.agentUpdatesChecking && state.agentUpdating == null && state.agentInstalling == null,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.height(30.dp),
-                ) {
-                    if (state.agentUpdatesChecking) {
-                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.6.dp)
-                    } else {
-                        Text("Check", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Runtime updates", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text(
+                    state.agentUpdateMessage ?: "Installed agents stay current",
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+            val canCheck = !state.agentUpdatesChecking && state.agentUpdating == null && state.agentInstalling == null
+            Row(
+                modifier = Modifier
+                    .clickable(enabled = canCheck, onClick = onCheck)
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (state.agentUpdatesChecking) {
+                    CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.6.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(14.dp))
+                }
+                Spacer(Modifier.width(5.dp))
+                Text("Check updates", color = PocketOrange, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
 
-            state.agentUpdates.forEach { (agent, update) ->
+        state.agentUpdates.forEach { (agent, update) ->
                 val updating = state.agentUpdating == agent
                 val downloaded = state.agentUpdateDownloadedBytes
                 val total = state.agentUpdateTotalBytes
@@ -1914,7 +1888,6 @@ private fun AgentUpdateBlock(
                         }
                     }
                 }
-            }
         }
     }
 }

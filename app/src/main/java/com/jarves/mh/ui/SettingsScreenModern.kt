@@ -189,24 +189,6 @@ fun SettingsScreen(
         ) {
 
             item {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("AI agent moved", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text(
-                            "Coding agent, model and API keys now live on the Agent tab in the bottom bar.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-
-            item {
                 SettingsAccordion(
                     title = "Appearance",
                     subtitle = when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },

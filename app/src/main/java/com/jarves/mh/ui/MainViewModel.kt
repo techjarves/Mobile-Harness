@@ -1265,6 +1265,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(onboardingComplete = true, startupStage = StartupStage.READY) }
     }
 
+    /** Lets first-run users escape a provider/login failure without losing saved credentials. */
+    fun chooseOnboardingAgent(kind: AgentKind) {
+        selectAgent(kind)
+        _state.update {
+            it.copy(
+                startupStage = if (installer.isAgentInstalled(kind)) {
+                    StartupStage.MODEL_SETUP
+                } else {
+                    StartupStage.SETUP_REQUIRED
+                },
+                startupError = null,
+                startupErrorIsOffline = false,
+            )
+        }
+    }
+
     fun updateProvider(profile: ProviderProfile, secret: String) = finishOnboarding(profile, secret)
 
     fun finishBackgroundSetup() {
