@@ -1105,7 +1105,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         models: List<com.jarves.mh.network.DiscoveredModel>,
     ): ConnectionValidation {
         val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
-        return providerApi.validate(profile.baseUrl, profile.model, key, profile.kind.protocol, models)
+        val result = providerApi.validate(profile.baseUrl, profile.model, key, profile.kind.protocol, models)
+        if (result is ConnectionValidation.Success) {
+            val effectiveKind = when {
+                result.message.contains("OpenAI format detected") -> ProviderKind.CUSTOM_OPENAI
+                result.message.contains("Anthropic format detected") -> ProviderKind.CUSTOM
+                else -> profile.kind
+            }
+            if (effectiveKind != profile.kind) {
+                val updatedProfile = profile.copy(kind = effectiveKind)
+                finishOnboarding(updatedProfile, secret)
+            }
+        }
+        return result
     }
 
     fun pingApi() {

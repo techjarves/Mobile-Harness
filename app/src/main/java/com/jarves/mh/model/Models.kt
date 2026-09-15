@@ -22,6 +22,14 @@ enum class ProviderKind(
     DEEPSEEK("DeepSeek", "Use your DeepSeek API key", ProviderProtocol.ANTHROPIC_GATEWAY, "https://api.deepseek.com/anthropic", "deepseek-v4-flash"),
     KIMI("Kimi", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "https://api.moonshot.ai/anthropic", "kimi-k2.6", true),
     CUSTOM("Custom API", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "", "", true),
+    CUSTOM_OPENAI(
+        "Custom OpenAI API",
+        "OpenAI-compatible /v1/chat/completions endpoint",
+        ProviderProtocol.OPENAI_CHAT,
+        "",
+        "",
+        true,
+    ),
 }
 
 data class ProviderProfile(

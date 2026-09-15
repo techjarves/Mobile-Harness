@@ -28,16 +28,28 @@ interface RuntimeBridge {
 }
 
 object RuntimeLaunchConfigBuilder {
+    /**
+     * Claude Code appends /v1/messages to ANTHROPIC_BASE_URL itself. Custom
+     * gateways are commonly entered with a base URL that already ends in /v1
+     * (e.g. https://host/v1), which would double the segment and make every
+     * request 404 — surfacing as "The provider rejected the saved API key".
+     * Strip a trailing /v1 so the stored base URL always points at the root
+     * Claude Code expects. Suffixes like /anthropic are real path components
+     * (DeepSeek/Kimi) and must be kept.
+     */
+    private fun normalizeAnthropicBaseUrl(raw: String): String {
+        val base = raw.trim().trimEnd('/')
+        return if (base.endsWith("/v1")) base.removeSuffix("/v1").trimEnd('/') else base
+    }
+
     fun build(profile: ProviderProfile, authToken: String? = null, localGatewayUrl: String? = null): RuntimeLaunchConfig {
         val environment = linkedMapOf("DISABLE_AUTOUPDATER" to "1")
         when (profile.kind.protocol) {
             com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN -> Unit
-            com.jarves.mh.model.ProviderProtocol.ANTHROPIC -> {
-                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trimEnd('/')
-                environment["ANTHROPIC_MODEL"] = profile.model
-            }
-            com.jarves.mh.model.ProviderProtocol.ANTHROPIC_GATEWAY -> {
-                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trimEnd('/')
+            com.jarves.mh.model.ProviderProtocol.ANTHROPIC,
+            com.jarves.mh.model.ProviderProtocol.ANTHROPIC_GATEWAY,
+            -> {
+                environment["ANTHROPIC_BASE_URL"] = normalizeAnthropicBaseUrl(profile.baseUrl)
                 environment["ANTHROPIC_MODEL"] = profile.model
             }
             com.jarves.mh.model.ProviderProtocol.OPENROUTER -> {

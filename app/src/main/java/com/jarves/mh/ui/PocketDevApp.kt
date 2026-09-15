@@ -1794,6 +1794,7 @@ private fun ProviderChoiceRow(
         ProviderKind.DEEPSEEK -> Color(0xFF4D6BFE)
         ProviderKind.KIMI -> Color(0xFF8B7CF6)
         ProviderKind.CUSTOM -> PocketOrange
+        ProviderKind.CUSTOM_OPENAI -> Color(0xFF10A37F)
     }
     val mark = when (provider) {
         ProviderKind.CLAUDE -> "C"
@@ -1802,6 +1803,7 @@ private fun ProviderChoiceRow(
         ProviderKind.DEEPSEEK -> "DS"
         ProviderKind.KIMI -> "K"
         ProviderKind.CUSTOM -> "<>"
+        ProviderKind.CUSTOM_OPENAI -> "GPT"
     }
 
     Row(

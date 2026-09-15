@@ -165,7 +165,28 @@ internal class LocalFormatGateway(
     }
 
     private fun callProvider(body: JSONObject): Pair<Int, String> {
-        val endpoint = profile.baseUrl.trimEnd('/') + "/chat/completions"
+        // Accept bases with or without a trailing /v1: users paste both
+        // "https://host/v1" and "https://host". Prefer the exact base, then
+        // the /v1-joined variant, and keep the first non-404 answer.
+        val base = profile.baseUrl.trim().trimEnd('/')
+        val endpoints = buildList {
+            if (base.endsWith("/v1")) {
+                add("$base/chat/completions")
+            } else {
+                add("$base/v1/chat/completions")
+                add("$base/chat/completions")
+            }
+        }.distinct()
+        var last: Pair<Int, String> = 404 to "{\"error\":{\"message\":\"No chat/completions endpoint found at $base\"}}"
+        for (endpoint in endpoints) {
+            val result = postChatCompletions(endpoint, body)
+            if (result.first != 404) return result
+            last = result
+        }
+        return last
+    }
+
+    private fun postChatCompletions(endpoint: String, body: JSONObject): Pair<Int, String> {
         val connection = URL(endpoint).openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = "POST"
