@@ -1,7 +1,6 @@
 package com.jarves.mh.runtime
 
 import com.jarves.mh.model.ProviderProfile
-import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.net.HttpURLConnection
@@ -9,19 +8,49 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
+import java.security.SecureRandom
 import java.util.UUID
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Small loopback-only Anthropic-to-OpenAI compatibility bridge for Claude Code. */
+/**
+ * Small loopback-only Anthropic-to-OpenAI compatibility bridge for Claude Code.
+ *
+ * Hardening (ISSUE-009, roadmap 2f):
+ *  - a random 128-bit token in the URL path (`/t/<token>/…`) so other apps on
+ *    the device cannot silently use the gateway or the provider key;
+ *  - request bodies are capped at [MAX_BODY_BYTES] (413) and header lines at
+ *    [MAX_HEADER_LINE_BYTES] (connection dropped) — no unbounded allocations;
+ *  - connections run on a small fixed thread pool with bounded queue and
+ *    caller-runs backpressure instead of one unbounded thread per request.
+ */
 internal class LocalFormatGateway(
     private val profile: ProviderProfile,
     private val apiKey: String,
 ) : AutoCloseable {
     private val running = AtomicBoolean(true)
     private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
-    val url: String = "http://127.0.0.1:${server.localPort}"
+
+    /** 128-bit random path token; every request must carry it. */
+    private val token: String = SecureRandom().let { random ->
+        ByteArray(16).also(random::nextBytes).joinToString("") { "%02x".format(it) }
+    }
+
+    val url: String = "http://127.0.0.1:${server.localPort}/t/$token"
+
+    private val executor = ThreadPoolExecutor(
+        2,
+        4,
+        30_000L,
+        TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue(32),
+        { runnable -> Thread(runnable, "mh-format-worker").apply { isDaemon = true } },
+        ThreadPoolExecutor.CallerRunsPolicy(),
+    )
 
     fun start(): LocalFormatGateway = apply {
         Thread({ acceptLoop() }, "mh-format-gateway").apply { isDaemon = true; start() }
@@ -30,14 +59,24 @@ internal class LocalFormatGateway(
     private fun acceptLoop() {
         while (running.get()) {
             runCatching { server.accept() }.getOrNull()?.let { socket ->
-                Thread({ socket.use(::handle) }, "mh-format-request").apply { isDaemon = true; start() }
+                runCatching { executor.execute { socket.use(::handle) } }
             }
         }
     }
 
     private fun handle(socket: Socket) {
+        socket.soTimeout = 30_000
         val input = BufferedInputStream(socket.getInputStream())
         val requestLine = readLine(input) ?: return
+        val path = requestLine.split(' ').getOrNull(1).orEmpty().substringBefore('?')
+        val output = BufferedOutputStream(socket.getOutputStream())
+
+        // Token gate (ISSUE-009): checked before anything is read or answered.
+        if (!path.startsWith("/t/$token/")) {
+            writeJson(output, 403, errorJson("forbidden", "Invalid gateway token"))
+            return
+        }
+
         val headers = mutableMapOf<String, String>()
         while (true) {
             val line = readLine(input) ?: return
@@ -45,16 +84,25 @@ internal class LocalFormatGateway(
             val split = line.indexOf(':')
             if (split > 0) headers[line.substring(0, split).lowercase()] = line.substring(split + 1).trim()
         }
-        val length = headers["content-length"]?.toIntOrNull() ?: 0
-        val bodyBytes = ByteArray(length)
+        val length = headers["content-length"]?.toLongOrNull()
+        if (length == null || length <= 0L) {
+            writeJson(output, 411, errorJson("length_required", "Content-Length is required"))
+            return
+        }
+        if (length > MAX_BODY_BYTES) {
+            // Reject before allocating anything (ISSUE-009: a 2GB header must
+            // never become a 2GB allocation).
+            writeJson(output, 413, errorJson("payload_too_large", "Request body exceeds ${MAX_BODY_BYTES / (1024 * 1024)} MB"))
+            return
+        }
+        val lengthInt = length.toInt()
+        val bodyBytes = ByteArray(lengthInt)
         var offset = 0
-        while (offset < length) {
-            val count = input.read(bodyBytes, offset, length - offset)
+        while (offset < lengthInt) {
+            val count = input.read(bodyBytes, offset, lengthInt - offset)
             if (count < 0) break
             offset += count
         }
-        val path = requestLine.split(' ').getOrNull(1).orEmpty().substringBefore('?')
-        val output = BufferedOutputStream(socket.getOutputStream())
         if (path.endsWith("/count_tokens")) {
             val approximate = bodyBytes.decodeToString().length / 4 + 1
             writeJson(output, 200, JSONObject().put("input_tokens", approximate).toString())
@@ -68,7 +116,7 @@ internal class LocalFormatGateway(
             val anthropic = JSONObject(bodyBytes.decodeToString())
             val upstream = callProvider(toOpenAi(anthropic))
             if (upstream.first !in 200..299) {
-                Log.w("FormatGateway", "Provider returned HTTP ${upstream.first}: ${providerError(upstream.second)}")
+                AppLog.w("FormatGateway", "Provider returned HTTP ${upstream.first}: ${providerError(upstream.second)}")
                 writeJson(output, upstream.first, errorJson("api_error", providerError(upstream.second)))
             } else {
                 val translated = fromOpenAi(JSONObject(upstream.second), anthropic.optString("model", profile.model))
@@ -218,6 +266,9 @@ internal class LocalFormatGateway(
             if (value < 0) return if (bytes.isEmpty()) null else bytes.toByteArray().decodeToString()
             if (value == '\n'.code) return bytes.toByteArray().decodeToString().trimEnd('\r')
             bytes += value.toByte()
+            // Cap header line length (ISSUE-009): a header with no newline must
+            // never grow into an unbounded buffer. Drop the connection instead.
+            if (bytes.size > MAX_HEADER_LINE_BYTES) return null
         }
     }
 
@@ -249,6 +300,15 @@ internal class LocalFormatGateway(
 
     override fun close() {
         running.set(false)
+        executor.shutdownNow()
         runCatching { server.close() }
+    }
+
+    private companion object {
+        /** Request body cap: 2 MB is far above any legitimate messages payload. */
+        private const val MAX_BODY_BYTES = 2L * 1024 * 1024
+
+        /** Header line cap: protects readLine from a newline-less byte flood. */
+        private const val MAX_HEADER_LINE_BYTES = 16 * 1024
     }
 }

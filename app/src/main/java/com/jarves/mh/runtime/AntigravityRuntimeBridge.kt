@@ -2,6 +2,7 @@ package com.jarves.mh.runtime
 
 import android.content.Context
 import androidx.core.content.ContextCompat
+import com.jarves.mh.model.AgentAutonomyMode
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ProjectKind
@@ -9,13 +10,11 @@ import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
@@ -140,6 +139,8 @@ class AntigravityRuntimeBridge(
     private val effort: () -> String,
     private val conversationId: (String) -> String?,
     private val saveConversationId: (String, String) -> Unit,
+    /** Current autonomy mode; read live so a settings change applies to the next session. */
+    private val autonomyProvider: () -> AgentAutonomyMode = { AgentAutonomyMode.APPROVE_RISKY },
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
     private val checkpoints = WorkspaceCheckpoints(context.filesDir)
@@ -167,10 +168,13 @@ class AntigravityRuntimeBridge(
                 val installed = installer.installedRuntime()
                 val probeDir = File(context.cacheDir, "agy-hello").apply { mkdirs() }
                 val command = buildList {
-                    add(RuntimeInstaller.AGY_GUEST_PATH)
+                    add(AgentProfiles.ANTIGRAVITY.executable)
                     addAll(listOf("--input-format", "stream-json"))
                     addAll(listOf("--output-format", "stream-json"))
                     addAll(listOf("--print-timeout", "2m"))
+                    // The hello probe runs only "Reply with exactly: ok" inside
+                    // a throwaway cache directory, so there is nothing for it to
+                    // damage; skipping its permission gate keeps the probe cheap.
                     add("--dangerously-skip-permissions")
                     addAntigravitySelection(model(), effort())
                     add("--new-project")
@@ -194,8 +198,6 @@ class AntigravityRuntimeBridge(
                     process.outputStream.write(request.toByteArray())
                     process.outputStream.flush()
                     process.outputStream.close()
-                    var offset = 0L
-                    val pending = StringBuilder()
                     var reply: String? = null
                     fun handleLine(line: String): Boolean {
                         when (val event = AntigravityEventParser.parse(line)) {
@@ -212,37 +214,27 @@ class AntigravityRuntimeBridge(
                         return false
                     }
                     var done = false
-                    while (!done && (process.isAlive || outputFile.length() > offset)) {
-                        val available = outputFile.length() - offset
-                        if (available <= 0) {
-                            delay(100)
-                            continue
-                        }
-                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                        val count = RandomAccessFile(outputFile, "r").use { file ->
-                            file.seek(offset)
-                            file.read(bytes)
-                        }
-                        if (count <= 0) continue
-                        offset += count
-                        pending.append(bytes.decodeToString(0, count))
-                        var newline = pending.indexOf("\n")
-                        while (newline >= 0) {
-                            val line = pending.substring(0, newline).trimEnd('\r')
-                            pending.delete(0, newline + 1)
-                            if (handleLine(line)) {
-                                done = true
-                                break
-                            }
-                            newline = pending.indexOf("\n")
-                        }
-                    }
-                    pending.toString().trim().takeIf(String::isNotEmpty)?.let { if (!done) done = handleLine(it) }
+                    val diagnosticTail = ArrayDeque<String>()
+                    // The single shared tail loop (ISSUE-013). Once the Result
+                    // event arrives, later lines are ignored — the original
+                    // early `break` was only an optimization.
+                    OutputFileTailer.tailLines(
+                        file = outputFile,
+                        isAlive = process::isAlive,
+                        onLine = { line ->
+                            diagnosticTail.addLast(line)
+                            if (diagnosticTail.size > 20) diagnosticTail.removeFirst()
+                            if (!done) done = handleLine(line)
+                        },
+                        onTrailing = { trailing ->
+                            trailing.trim().takeIf(String::isNotEmpty)?.let { if (!done) done = handleLine(it) }
+                        },
+                    )
                     // Drain process exit without hanging past the timeout.
                     withContext(NonCancellable) {
                         runCatching { process.waitFor() }
                     }
-                    check(done) { friendlyError(pending.toString().takeLast(500).ifBlank { "Antigravity exited without answering" }) }
+                    check(done) { friendlyError(diagnosticTail.joinToString("\n").takeLast(500).ifBlank { "Antigravity exited without answering" }) }
                     reply?.trim().takeUnless { it.isNullOrEmpty() } ?: "ok"
                 } finally {
                     runCatching { process.destroy() }
@@ -278,16 +270,32 @@ class AntigravityRuntimeBridge(
         }
 
         runCatching {
-            RuntimeTaskController.stopAction = {
+            RuntimeTaskController.register(sessionId) {
                 userStopRequested = true
                 activeProcess?.destroy()
             }
-            startForegroundRuntime(projectSlug)
+            // Task-scoped resources (ISSUE-013).
+            TaskWakeLocks.acquire(context, "session:$sessionId")
+            ThermalMonitor.start(context) { status ->
+                eventBus.tryEmit(
+                    RuntimeEvent.RuntimeLog(
+                        sessionId,
+                        "Device is thermal throttling",
+                        "The device is running hot (level $status of 6). The agent may work slower until it cools down.",
+                    ),
+                )
+            }
+            startForegroundRuntime(projectSlug, sessionId)
             val installed = installer.installedRuntime()
             val workspace = checkpoints.ensureWorkspace(projectId)
             checkpoints.createCheckpoint(projectId, workspace)
             val before = checkpoints.snapshot(workspace)
-            val command = antigravityCommand(model(), effort(), conversationId(projectId))
+            val command = antigravityCommand(
+                model(),
+                effort(),
+                conversationId(projectId),
+                AgentPermissions.antigravitySkipsPermissions(autonomyProvider()),
+            )
             val process = installer.process(
                 installed.proot,
                 installed.rootfs,
@@ -308,8 +316,7 @@ class AntigravityRuntimeBridge(
             process.outputStream.close()
 
             val native = process as? NativeSpawnProcess ?: error("Unsupported Antigravity process")
-            var offset = 0L
-            val pending = StringBuilder()
+            val lastLines = ArrayDeque<String>()
             var resultSeen = false
             var assistantTextSeen = false
             suspend fun handleLine(line: String) {
@@ -334,32 +341,23 @@ class AntigravityRuntimeBridge(
                     null -> Unit
                 }
             }
-            while (process.isAlive || native.outputFile.length() > offset) {
-                val available = native.outputFile.length() - offset
-                if (available <= 0) {
-                    delay(50)
-                    continue
-                }
-                val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                    file.seek(offset)
-                    file.read(bytes)
-                }
-                if (count <= 0) continue
-                offset += count
-                pending.append(bytes.decodeToString(0, count))
-                var newline = pending.indexOf("\n")
-                while (newline >= 0) {
-                    val line = pending.substring(0, newline).trimEnd('\r')
-                    pending.delete(0, newline + 1)
+            // The single shared tail loop (ISSUE-013). Raw output is kept as a
+            // bounded tail for diagnostics only.
+            OutputFileTailer.tailLines(
+                file = native.outputFile,
+                isAlive = process::isAlive,
+                onLine = { line ->
+                    lastLines.addLast(line)
+                    if (lastLines.size > 20) lastLines.removeFirst()
                     handleLine(line)
-                    newline = pending.indexOf("\n")
-                }
-            }
-            pending.toString().trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
+                },
+                onTrailing = { trailing ->
+                    trailing.trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
+                },
+            )
             val exit = process.waitFor()
             check(exit == 0 && resultSeen) {
-                friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
+                friendlyError(lastLines.joinToString("\n").takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
             }
             val paths = checkpoints.changedFiles(workspace, before)
             checkpoints.saveChangedPaths(projectId, paths)
@@ -376,7 +374,9 @@ class AntigravityRuntimeBridge(
         }
         activeProcess = null
         activeSessionId = null
-        RuntimeTaskController.stopAction = null
+        TaskWakeLocks.release("session:$sessionId")
+        ThermalMonitor.stop()
+        RuntimeTaskController.unregister(sessionId)
         sessionId
     }
 
@@ -402,7 +402,11 @@ class AntigravityRuntimeBridge(
         val paths = checkpoints.readChangedPaths(projectId)
         if (!backup.isDirectory || paths.isEmpty()) return@withContext false
         val workspace = checkpoints.ensureWorkspace(projectId)
-        paths.forEach { restore(workspace, backup, it) }
+        paths.forEach { path ->
+            // A file skipped by the size caps has no baseline; leave it
+            // untouched instead of deleting it (ISSUE-040).
+            if (!checkpoints.isUndoUnavailable(projectId, path)) restore(workspace, backup, path)
+        }
         checkpoint.deleteRecursively()
         true
     }
@@ -419,6 +423,7 @@ class AntigravityRuntimeBridge(
 
     override suspend fun undoFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
         if (path !in checkpoints.readChangedPaths(projectId)) return@withContext false
+        if (checkpoints.isUndoUnavailable(projectId, path)) return@withContext false
         restore(checkpoints.ensureWorkspace(projectId), File(checkpoints.checkpointDir(projectId), "project"), path)
         checkpoints.removeChangedPath(projectId, path)
         true
@@ -455,12 +460,13 @@ class AntigravityRuntimeBridge(
         if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
     }
 
-    private fun startForegroundRuntime(projectName: String) {
+    private fun startForegroundRuntime(projectName: String, sessionId: String) {
         ContextCompat.startForegroundService(
             context,
             android.content.Intent(context, RuntimeExecutionService::class.java)
                 .setAction(RuntimeExecutionService.ACTION_START)
-                .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName),
+                .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName)
+                .putExtra(RuntimeExecutionService.EXTRA_SESSION_ID, sessionId),
         )
     }
 
@@ -509,14 +515,20 @@ class AntigravityRuntimeBridge(
 
 private class AntigravitySessionException(message: String) : IllegalStateException(message)
 
-internal fun antigravityCommand(model: String, effort: String, conversationId: String?): List<String> = buildList {
-    add(RuntimeInstaller.AGY_GUEST_PATH)
+internal fun antigravityCommand(
+    model: String,
+    effort: String,
+    conversationId: String?,
+    skipPermissions: Boolean,
+): List<String> = buildList {
+    add(AgentProfiles.ANTIGRAVITY.executable)
     addAll(listOf("--input-format", "stream-json"))
     addAll(listOf("--output-format", "stream-json"))
     addAll(listOf("--print-timeout", "60m"))
-    // This is intentionally explicit and covered by tests. Antigravity tool calls
-    // do not pass through PocketDev approval dialogs while this mode is enabled.
-    add("--dangerously-skip-permissions")
+    // Autonomy mode (ISSUE-001): --dangerously-skip-permissions is reserved for
+    // the explicit FULLY_AUTONOMOUS opt-in. In careful modes agy's own permission
+    // gating denies calls it cannot ask about headlessly (fail-closed).
+    if (skipPermissions) add("--dangerously-skip-permissions")
     addAntigravitySelection(model, effort)
     conversationId?.takeIf(String::isNotBlank)?.let {
         addAll(listOf("--conversation", it))

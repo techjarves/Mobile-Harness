@@ -11,6 +11,16 @@ partitions, Magisk files, device identifiers, or user data are included.
 
 - `core`: Ubuntu, Node, npm, Git, and shared runtime support. It contains no
   coding agent.
+- `core24`: the Ubuntu 24.04 base (roadmap 3i). Built with
+  `scripts/runtime-bundles/build-core24-on-rooted-android.sh` from the official
+  `ubuntu-base-24.04.5` ARM64 image. It exists so devices can leave the
+  EOL Ubuntu 20.04 base through the opt-in upgrade in Settings → Linux base,
+  which keeps 20.04 on disk as a rollback root until the first successful
+  task on 24.04. Security patches for this base ship as full bundle rebuilds —
+  devices never run unattended `apt-get upgrade`. The entry is added to
+  `manifest.json` and `RootfsMigrationPolicy.UBUNTU_24_BUNDLE` only after the
+  artifact is built, published, and digest-pinned (the app hides the upgrade
+  while the pin is null, mirroring the agent-release rule).
 - `python`: Python, pip, venv, and build tools. Downloaded only when selected.
 - `android`: a portable JDK 17, Android SDK, ARM64 build tools, Gradle, the
   offline Maven repository, and PocketDev's global ARM64 AAPT2 configuration.

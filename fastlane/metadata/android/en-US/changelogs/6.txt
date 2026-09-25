@@ -1,0 +1,1 @@
+Real permission system: three agent-permission modes (Fully autonomous / Approve risky actions [default] / Approve everything), fail-closed tool approvals, hardened local gateway, release builds now shrink with R8, crash fixes when spawning the Linux runtime.

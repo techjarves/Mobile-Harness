@@ -45,9 +45,11 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.ui.theme.PocketOrange
+import com.jarves.mh.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -217,7 +219,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                         ) {
                             Icon(
                                 Icons.Default.PlayArrow,
-                                contentDescription = "Run in project terminal",
+                                contentDescription = stringResource(R.string.markdown_run_in_terminal_cd),
                                 tint = PocketOrange,
                                 modifier = Modifier.size(18.dp),
                             )
@@ -236,7 +238,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                     ) {
                         Icon(
                             imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                            contentDescription = "Copy code",
+                            contentDescription = stringResource(R.string.markdown_copy_code_cd),
                             tint = if (copied) PocketOrange else Color(0xFF9AA0A6),
                             modifier = Modifier.size(16.dp),
                         )

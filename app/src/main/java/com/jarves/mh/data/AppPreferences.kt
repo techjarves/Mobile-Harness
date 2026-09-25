@@ -1,9 +1,9 @@
 package com.jarves.mh.data
 
 import android.content.Context
+import com.jarves.mh.model.AgentAutonomyMode
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChatMessage
-import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectChat
@@ -15,7 +15,6 @@ import com.jarves.mh.model.providersForAgent
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.time.Instant
 
 class AppPreferences(private val context: Context) {
     private val preferences = context.getSharedPreferences("pocket_preferences", Context.MODE_PRIVATE)
@@ -41,6 +40,15 @@ class AppPreferences(private val context: Context) {
     var primaryAgentKind: String
         get() = preferences.getString("primary_agent_kind", "") ?: ""
         set(value) { preferences.edit().putString("primary_agent_kind", value).apply() }
+
+    /**
+     * Agent tool-call autonomy mode (ISSUE-001). Everyone — including fresh
+     * installs and users upgrading from v1.0.x — starts on APPROVE_RISKY;
+     * FULLY_AUTONOMOUS is an explicit opt-in stored by stable id.
+     */
+    var agentAutonomyMode: AgentAutonomyMode
+        get() = AgentAutonomyMode.fromStored(preferences.getString("agent_autonomy_mode", null))
+        set(value) { preferences.edit().putString("agent_autonomy_mode", value.stableId).apply() }
 
     var antigravityModel: String
         get() = preferences.getString("agent_antigravity_model", "") ?: ""
@@ -290,43 +298,50 @@ class AppPreferences(private val context: Context) {
         return list
     }
 
+    /**
+     * Pre-1.3.0 conversation JSON lived under filesDir/chats/. The directory is
+     * kept only to discover and import those files once; all new persistence
+     * goes through the SQLite [ConversationStore] (ISSUE-021).
+     */
     private val chatsDir = File(context.filesDir, "chats").also { it.mkdirs() }
 
+    private val conversationStore: ConversationStore
+        get() = ConversationStore.get(context.applicationContext)
+
     fun saveProjectChats(projectId: String, chats: List<ProjectChat>) {
-        val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
-        val arr = JSONArray()
-        chats.forEach { chat ->
-            arr.put(JSONObject().apply {
-                put("id", chat.id)
-                put("title", chat.title)
-                put("createdAtMillis", chat.createdAtMillis)
-                put("updatedAtMillis", chat.updatedAtMillis)
-            })
-        }
-        File(projectDir, "index.json").writeText(arr.toString())
+        conversationStore.saveChats(projectId, chats)
     }
 
     fun loadProjectChats(projectId: String): List<ProjectChat> {
-        val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
-        val index = File(projectDir, "index.json")
-        if (index.exists()) {
-            return runCatching {
-                val arr = JSONArray(index.readText())
-                (0 until arr.length()).map { i ->
-                    val obj = arr.getJSONObject(i)
-                    ProjectChat(
-                        id = obj.getString("id"),
-                        title = obj.optString("title", "Chat"),
-                        createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis()),
-                        updatedAtMillis = obj.optLong("updatedAtMillis", System.currentTimeMillis()),
-                    )
-                }.sortedByDescending { it.updatedAtMillis }
-            }.getOrDefault(emptyList())
+        val stored = conversationStore.loadChats(projectId)
+        if (stored.isNotEmpty()) return stored
+
+        // One-time import: multi-chat era index.json → store. The file is only
+        // removed after the imported rows are confirmed readable (fail-safe:
+        // any failure leaves the JSON untouched and retried on next launch).
+        val index = File(chatsDir, "$projectId/index.json")
+        if (index.isFile) {
+            val imported = runCatching {
+                val parsed = ConversationCodec.legacyChatIndexFromJson(index.readText())
+                if (parsed.isEmpty()) return@runCatching false
+                conversationStore.saveChats(projectId, parsed)
+                conversationStore.loadChats(projectId).isNotEmpty()
+            }.getOrDefault(false)
+            if (imported && !index.delete()) {
+                index.renameTo(File(index.parentFile, "index.json.imported"))
+            }
+            if (imported) return conversationStore.loadChats(projectId)
         }
 
-        // Migrate the original one-file-per-project conversation without losing it.
+        // Oldest layout: one conversation file per project. Same verified-import
+        // flow as above; the chat entry itself is always created so callers can
+        // rely on at least one chat existing (previous behavior).
         val legacy = File(chatsDir, "$projectId.json")
-        val legacyMessages = loadLegacyMessages(legacy)
+        val legacyMessages = if (legacy.isFile) {
+            runCatching { ConversationCodec.legacyMessagesFromJson(legacy.readText()) }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
         val now = System.currentTimeMillis()
         val chat = ProjectChat(
             id = "main",
@@ -334,109 +349,47 @@ class AppPreferences(private val context: Context) {
             createdAtMillis = now,
             updatedAtMillis = now,
         )
-        saveProjectChats(projectId, listOf(chat))
-        if (legacyMessages.isNotEmpty()) saveMessages(projectId, chat.id, legacyMessages)
+        conversationStore.saveChats(projectId, listOf(chat))
+        if (legacy.isFile) {
+            val imported = runCatching {
+                if (legacyMessages.isNotEmpty()) {
+                    conversationStore.saveMessages(projectId, chat.id, legacyMessages)
+                }
+                true
+            }.getOrDefault(false)
+            if (imported && !legacy.delete()) {
+                legacy.renameTo(File(chatsDir, "$projectId.json.imported"))
+            }
+        }
         return listOf(chat)
     }
 
-    @Synchronized
     fun saveMessages(projectId: String, chatId: String, messages: List<ChatMessage>) {
-        val arr = JSONArray()
-        messages.forEach { m ->
-            arr.put(JSONObject().apply {
-                put("id", m.id)
-                put("fromUser", m.fromUser)
-                put("text", m.text)
-                put("createdAt", m.createdAt.toString())
-                put("attachments", JSONArray().apply {
-                    m.attachments.forEach { attachment ->
-                        put(JSONObject().apply {
-                            put("id", attachment.id)
-                            put("displayName", attachment.displayName)
-                            put("relativePath", attachment.relativePath)
-                            put("mimeType", attachment.mimeType)
-                            put("sizeBytes", attachment.sizeBytes)
-                        })
-                    }
-                })
-                put("workedMillis", m.workedMillis)
-                put("workItems", JSONArray().apply {
-                    m.workItems.forEach { item ->
-                        put(JSONObject().apply {
-                            put("title", item.title)
-                            put("detail", item.detail)
-                            put("isComplete", item.isComplete)
-                            put("isCommand", item.isCommand)
-                        })
-                    }
-                })
-            })
-        }
-        val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
-        val destination = File(projectDir, "$chatId.json")
-        val temporary = File(projectDir, ".$chatId.json.tmp")
-        temporary.writeText(arr.toString())
-        if (!temporary.renameTo(destination)) {
-            temporary.copyTo(destination, overwrite = true)
-            temporary.delete()
-        }
+        conversationStore.saveMessages(projectId, chatId, messages)
     }
 
     fun loadMessages(projectId: String, chatId: String): List<ChatMessage> {
-        val file = File(File(chatsDir, projectId), "$chatId.json")
-        return loadLegacyMessages(file)
+        val stored = conversationStore.loadMessages(projectId, chatId)
+        if (stored.isNotEmpty()) return stored
+
+        // One-time verified import of the pre-1.3.0 per-chat JSON file.
+        val legacy = File(File(chatsDir, projectId), "$chatId.json")
+        if (!legacy.isFile) return emptyList()
+        val imported = runCatching {
+            val parsed = ConversationCodec.legacyMessagesFromJson(legacy.readText())
+            if (parsed.isNotEmpty()) conversationStore.saveMessages(projectId, chatId, parsed)
+            true
+        }.getOrDefault(false)
+        if (imported && !legacy.delete()) {
+            legacy.renameTo(File(legacy.parentFile, "$chatId.json.imported"))
+        }
+        return if (imported) conversationStore.loadMessages(projectId, chatId) else stored
     }
 
     fun deleteProjectChats(projectId: String) {
         File(chatsDir, projectId).deleteRecursively()
         File(chatsDir, "$projectId.json").delete()
-    }
-
-    private fun loadLegacyMessages(file: File): List<ChatMessage> {
-        if (!file.exists()) return emptyList()
-        return runCatching {
-            val arr = JSONArray(file.readText())
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                ChatMessage(
-                    id = obj.getString("id"),
-                    fromUser = obj.getBoolean("fromUser"),
-                    text = obj.getString("text"),
-                    createdAt = runCatching { Instant.parse(obj.getString("createdAt")) }
-                        .getOrDefault(Instant.now()),
-                    attachments = obj.optJSONArray("attachments")?.let { attachments ->
-                        (0 until attachments.length()).mapNotNull { index ->
-                            runCatching {
-                                attachments.getJSONObject(index).let { attachment ->
-                                    ChatAttachment(
-                                        id = attachment.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
-                                        displayName = attachment.getString("displayName"),
-                                        relativePath = attachment.getString("relativePath"),
-                                        mimeType = attachment.optString("mimeType", "application/octet-stream"),
-                                        sizeBytes = attachment.optLong("sizeBytes", 0L),
-                                    )
-                                }
-                            }.getOrNull()
-                        }
-                    }.orEmpty(),
-                    workedMillis = obj.optLong("workedMillis", 0L),
-                    workItems = obj.optJSONArray("workItems")?.let { workItems ->
-                        (0 until workItems.length()).mapNotNull { index ->
-                            runCatching {
-                                workItems.getJSONObject(index).let { item ->
-                                    com.jarves.mh.model.ActivityItem(
-                                        title = item.optString("title"),
-                                        detail = item.optString("detail"),
-                                        isComplete = item.optBoolean("isComplete", true),
-                                        isCommand = item.optBoolean("isCommand", false),
-                                    )
-                                }
-                            }.getOrNull()
-                        }
-                    }.orEmpty(),
-                )
-            }
-        }.getOrDefault(emptyList())
+        conversationStore.deleteProject(projectId)
     }
 
     private fun String.toChatTitle(): String {

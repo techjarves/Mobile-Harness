@@ -67,7 +67,9 @@ class AgentRegistry(drivers: List<AgentDriver>) {
                         AgentCapability.PROVIDER_PICKER,
                         AgentCapability.MODEL_PICKER,
                         AgentCapability.RESUME,
-                        AgentCapability.INTERACTIVE_APPROVALS,
+                        // No INTERACTIVE_APPROVALS (ISSUE-001): headless dsh runs
+                        // expose no approval channel, so the capability must not
+                        // be advertised until one actually exists.
                     ),
                 ),
                 BuiltInAgentDriver(

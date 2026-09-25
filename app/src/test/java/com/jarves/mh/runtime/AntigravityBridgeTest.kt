@@ -99,7 +99,7 @@ class AntigravityBridgeTest {
 
     @Test
     fun `headless command uses exact model configuration without conflicting effort`() {
-        val command = antigravityCommand("gemini-model", "high", "conversation-1")
+        val command = antigravityCommand("gemini-model", "high", "conversation-1", skipPermissions = true)
         assertTrue(command.containsAll(listOf(
             "--input-format", "stream-json",
             "--output-format", "stream-json",
@@ -113,8 +113,15 @@ class AntigravityBridgeTest {
     }
 
     @Test
+    fun `careful autonomy modes do not skip agy permissions (ISSUE-001)`() {
+        val command = antigravityCommand("gemini-model", "high", "conversation-1", skipPermissions = false)
+        assertTrue("--dangerously-skip-permissions" !in command)
+        assertTrue("--model" in command)
+    }
+
+    @Test
     fun `new headless conversation creates an official project`() {
-        val command = antigravityCommand("", "high", null)
+        val command = antigravityCommand("", "high", null, skipPermissions = true)
         assertTrue("--new-project" in command)
         assertTrue("--conversation" !in command)
         assertTrue(command.containsAll(listOf("--effort", "high")))

@@ -22,7 +22,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,16 +53,24 @@ object RuntimeSetupController {
         runCatching {
             val json = JSONObject(file.readText())
             val logsJson = json.optJSONArray("logs") ?: JSONArray()
-            val logs = (0 until logsJson.length()).map { logsJson.optString(it) }
+            // A heartbeat left behind by an interrupted download can be a few
+            // ticks fresher than the full snapshot; overlay its counters.
+            val heartbeat = runCatching { JSONObject(heartbeatFile(context).readText()) }.getOrNull()
+            val status = runCatching { RuntimeSetupStatus.valueOf(json.optString("status")) }
+                .getOrDefault(RuntimeSetupStatus.IDLE)
+            val fresher = heartbeat != null && status == RuntimeSetupStatus.RUNNING
             mutableSnapshot.value = RuntimeSetupSnapshot(
-                status = runCatching { RuntimeSetupStatus.valueOf(json.optString("status")) }
-                    .getOrDefault(RuntimeSetupStatus.IDLE),
+                status = status,
                 message = json.optString("message", "Preparing your private coding workspace"),
-                progress = json.optDouble("progress", 0.0).toFloat(),
-                downloadedBytes = json.optLongOrNull("downloadedBytes"),
-                totalBytes = json.optLongOrNull("totalBytes"),
-                indeterminate = json.optBoolean("indeterminate"),
-                logs = logs.takeLast(MAX_LOG_LINES),
+                progress = if (fresher) heartbeat.optDouble("progress", json.optDouble("progress", 0.0)).toFloat()
+                else json.optDouble("progress", 0.0).toFloat(),
+                downloadedBytes = (if (fresher) heartbeat.optLongOrNull("downloadedBytes") else null)
+                    ?: json.optLongOrNull("downloadedBytes"),
+                totalBytes = (if (fresher) heartbeat.optLongOrNull("totalBytes") else null)
+                    ?: json.optLongOrNull("totalBytes"),
+                indeterminate = if (fresher) heartbeat.optBoolean("indeterminate", json.optBoolean("indeterminate"))
+                else json.optBoolean("indeterminate"),
+                logs = logsJson.let { logs -> (0 until logs.length()).map { logs.optString(it) } }.takeLast(MAX_LOG_LINES),
                 errorMessage = json.optString("errorMessage").takeIf(String::isNotBlank),
                 offline = json.optBoolean("offline"),
             )
@@ -88,15 +95,16 @@ object RuntimeSetupController {
         }
         val sanitizedLine = line?.takeIf(String::isNotBlank)?.let(::sanitize)
         val isDownloadUpdate = event.downloadedBytes != null && event.totalBytes != null
+        val replacingDownloadRow = isDownloadUpdate && current.logs.lastOrNull()?.startsWith(DOWNLOAD_PREFIX) == true
         val logs = when {
             sanitizedLine == null -> current.logs
-            isDownloadUpdate && current.logs.lastOrNull()?.startsWith(DOWNLOAD_PREFIX) == true ->
+            replacingDownloadRow ->
                 (current.logs.dropLast(1) + sanitizedLine).takeLast(MAX_LOG_LINES)
             else -> (current.logs + sanitizedLine).takeLast(MAX_LOG_LINES)
         }
         // Persist the beginning of a transfer as a checkpoint, while the JSON snapshot
         // continuously replaces that row with the newest byte count.
-        if (!isDownloadUpdate || current.logs.lastOrNull()?.startsWith(DOWNLOAD_PREFIX) != true) {
+        if (!isDownloadUpdate || !replacingDownloadRow) {
             appendLog(context, sanitizedLine)
         }
         set(
@@ -117,6 +125,11 @@ object RuntimeSetupController {
                 errorMessage = null,
                 offline = false,
             ),
+            // ISSUE-035: a download tick that only replaces the live "Downloading:"
+            // row must not rewrite the whole (up to 400-line) snapshot to flash.
+            // It updates the in-memory state plus a tiny throttled heartbeat file;
+            // the full snapshot is rewritten only when the log content changes.
+            heartbeatOnly = replacingDownloadRow,
         )
     }
 
@@ -135,6 +148,10 @@ object RuntimeSetupController {
                 logs = (current.logs + "✓ Setup completed successfully").takeLast(MAX_LOG_LINES),
             ),
         )
+        // The full setup log exists only for diagnostics; drop it once setup succeeded
+        // so raw installer output does not linger on disk (ISSUE-004/023). It is kept
+        // after a failure, where it is actually needed for troubleshooting.
+        runCatching { logFile(context).delete() }
     }
 
     @Synchronized
@@ -185,12 +202,16 @@ object RuntimeSetupController {
 
     fun fullLog(context: Context): String = logFile(context).takeIf(File::isFile)?.readText().orEmpty()
 
-    private fun set(context: Context, value: RuntimeSetupSnapshot) {
+    private fun set(context: Context, value: RuntimeSetupSnapshot, heartbeatOnly: Boolean = false) {
         mutableSnapshot.value = value
-        persist(context, value)
+        if (heartbeatOnly) {
+            persistHeartbeat(context, value)
+        } else {
+            persistFull(context, value)
+        }
     }
 
-    private fun persist(context: Context, value: RuntimeSetupSnapshot) {
+    private fun persistFull(context: Context, value: RuntimeSetupSnapshot) {
         val json = JSONObject()
             .put("status", value.status.name)
             .put("message", value.message)
@@ -206,6 +227,27 @@ object RuntimeSetupController {
         staged.writeText(json.toString())
         target.delete()
         staged.renameTo(target)
+        heartbeatFile(context).delete()
+    }
+
+    /**
+     * Tiny heartbeat file for download ticks (ISSUE-035): a handful of fields,
+     * throttled to at most one write per [HEARTBEAT_MIN_INTERVAL_MS]. It only
+     * ever exists while a download is running; a terminal state removes it.
+     */
+    private fun persistHeartbeat(context: Context, value: RuntimeSetupSnapshot) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastHeartbeatAt < HEARTBEAT_MIN_INTERVAL_MS) return
+        lastHeartbeatAt = now
+        runCatching {
+            val json = JSONObject()
+                .put("status", value.status.name)
+                .put("progress", value.progress)
+                .put("indeterminate", value.indeterminate)
+            value.downloadedBytes?.let { json.put("downloadedBytes", it) }
+            value.totalBytes?.let { json.put("totalBytes", it) }
+            heartbeatFile(context).writeText(json.toString())
+        }
     }
 
     private fun appendLog(context: Context, line: String?) {
@@ -221,13 +263,18 @@ object RuntimeSetupController {
 
     private fun sanitize(line: String): String = line.filter { it == '\t' || it.code >= 32 }.take(500)
     private fun stateFile(context: Context) = File(context.filesDir, "setup/runtime-setup-state.json").apply { parentFile?.mkdirs() }
+    private fun heartbeatFile(context: Context) = File(context.filesDir, "setup/runtime-setup-progress.json")
     private fun logFile(context: Context) = File(context.filesDir, "setup/runtime-setup.log")
     private fun JSONObject.optLongOrNull(name: String): Long? = if (has(name) && !isNull(name)) optLong(name) else null
 
+    @Volatile private var lastHeartbeatAt = 0L
     private const val MAX_LOG_LINES = 400
     private const val MAX_LOG_BYTES = 1_000_000L
     private const val MB = 1_048_576.0
     private const val DOWNLOAD_PREFIX = "Downloading:"
+
+    /** Heartbeat writes are throttled to at most ~2 per second (ISSUE-035). */
+    private const val HEARTBEAT_MIN_INTERVAL_MS = 500L
 }
 
 class RuntimeSetupService : Service() {

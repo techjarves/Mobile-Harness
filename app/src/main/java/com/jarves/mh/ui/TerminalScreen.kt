@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -82,11 +84,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketGreen
 import com.jarves.mh.ui.theme.PocketOrange
+import com.jarves.mh.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,8 +104,8 @@ fun TerminalScreen(
     onClear: () -> Unit,
     onToggleTheme: () -> Unit,
     themeMode: AppThemeMode,
-    title: String = "Linux Terminal",
-    subtitle: String = "Ubuntu 24.04 · PRoot Sandbox",
+    title: String? = null,
+    subtitle: String? = null,
     liveOutput: String = "",
     currentCommand: String? = null,
     commandDraft: String? = null,
@@ -111,6 +116,8 @@ fun TerminalScreen(
     showQuickCommands: Boolean = true,
     compactHeader: Boolean = false,
 ) {
+    val resolvedTitle = title ?: stringResource(R.string.terminal_title)
+    val resolvedSubtitle = subtitle ?: stringResource(R.string.terminal_subtitle)
     var commandInput by remember { mutableStateOf(TextFieldValue()) }
     var commandHistory by remember { mutableStateOf(emptyList<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
@@ -194,17 +201,17 @@ fun TerminalScreen(
                         }
                         Spacer(Modifier.width(11.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(resolvedTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(resolvedSubtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output", modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.terminal_clear_output), modifier = Modifier.size(20.dp))
                         }
                         if (showThemeAction) {
                             IconButton(onClick = onToggleTheme) {
                                 Icon(
                                     if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Toggle theme",
+                                    contentDescription = stringResource(R.string.terminal_toggle_theme),
                                 )
                             }
                         }
@@ -239,20 +246,20 @@ fun TerminalScreen(
                             }
                             Spacer(Modifier.width(10.dp))
                             Column {
-                                Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-                                Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(resolvedTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                                Text(resolvedSubtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     },
                     actions = {
                         IconButton(onClick = onClear) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output")
+                            Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.terminal_clear_output))
                         }
                         if (showThemeAction) {
                             IconButton(onClick = onToggleTheme) {
                                 Icon(
                                     if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Toggle theme",
+                                    contentDescription = stringResource(R.string.terminal_toggle_theme),
                                 )
                             }
                         }
@@ -315,6 +322,7 @@ fun TerminalScreen(
                 color = terminalBg,
                 shape = RoundedCornerShape(12.dp),
             ) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -326,7 +334,7 @@ fun TerminalScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (lines.isEmpty()) {
                                 Text(
-                                    "Mobile Harness Terminal ready.\nType a bash command below or tap a quick command chip above.",
+                                    stringResource(R.string.terminal_ready),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     color = emptyStateColor,
@@ -440,6 +448,7 @@ fun TerminalScreen(
                     }
                     Spacer(Modifier.height(24.dp))
                 }
+                }
             }
 
             // Keyboard helper row. These operate on the command draft, so they are
@@ -453,27 +462,27 @@ fun TerminalScreen(
                         .padding(bottom = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    TerminalKeyButton("↑", "Previous command") {
+                    TerminalKeyButton("↑", stringResource(R.string.terminal_prev_command)) {
                         commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
                             historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
                             commandInput = TextFieldValue(it, TextRange(it.length))
                         }
                     }
-                    TerminalKeyButton("↓", "Next command") {
+                    TerminalKeyButton("↓", stringResource(R.string.terminal_next_command)) {
                         if (historyIndex >= 0) {
                             historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
                             commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
                         }
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowBack, "Move cursor left") {
+                    TerminalIconKeyButton(Icons.Default.ArrowBack, stringResource(R.string.terminal_cursor_left)) {
                         commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowForward, "Move cursor right") {
+                    TerminalIconKeyButton(Icons.Default.ArrowForward, stringResource(R.string.terminal_cursor_right)) {
                         commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
                     }
-                    TerminalKeyButton("ALT", "Alt modifier", active = altActive, fixedWidth = true) { altActive = !altActive }
-                    TerminalKeyButton("ESC", "Escape") { commandInput = TextFieldValue() }
-                    TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
+                    TerminalKeyButton("ALT", stringResource(R.string.terminal_alt_modifier), active = altActive, fixedWidth = true) { altActive = !altActive }
+                    TerminalKeyButton("ESC", stringResource(R.string.terminal_escape)) { commandInput = TextFieldValue() }
+                    TerminalKeyButton("CTRL", stringResource(R.string.terminal_ctrl_modifier), active = ctrlActive, fixedWidth = true) {
                         ctrlActive = !ctrlActive
                         if (ctrlActive) openTerminalKeyboard()
                     }

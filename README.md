@@ -129,7 +129,31 @@ Mobile Harness unites modern **Jetpack Compose UI** with a self-contained **Ubun
       <p>Add Python, Android, C/C++, and PHP tooling only when a project needs it.</p>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Interrupted-Task Resume</h3>
+      <p>When Android kills the app mid-job, the in-flight task is journaled to disk and the next start offers a one-tap Resume that continues the agent's own conversation (Claude <code>--resume</code>, Antigravity <code>--conversation</code>) or rebuilds it from the saved transcript.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>Bounded Local Storage</h3>
+      <p>Chats live in a size-capped SQLite store with differential saves, and terminal history is scrubbed of credential-shaped values before it touches disk.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Recoverable Linux Base</h3>
+      <p>The private Ubuntu environment can be upgraded in place to Ubuntu 24.04 from Settings. The previous base stays on disk as a rollback until your first task completes on the new one, and an interrupted upgrade repairs itself at next start — while security patches for the base ship as verified bundle rebuilds instead of on-device <code>apt upgrade</code>.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>Verified-Only Runtime Supply Chain</h3>
+      <p>Every runtime artifact — the Core bundles, agent binaries, toolchains, and app updates — is downloaded against a digest pinned inside the app build and fails closed on mismatch. Unknown or unverified versions are never offered, and agent updates additionally accept a project-controlled <b>Ed25519-signed feed</b> (minisign) so new agent versions can be vouched for without an app release.</p>
+    </td>
+  </tr>
 </table>
+
+<br />
+
+**Bilingual interface:** all screens ship in English and Arabic through Android string resources, with full right-to-left layout mirroring on Arabic devices — the terminal console itself stays pinned left-to-right because a shell is inherently LTR. On Android 13+ the app language can be chosen per-app from system settings (`localeConfig`); earlier versions follow the system language.
 
 <br />
 
@@ -234,7 +258,7 @@ Mobile Harness uses Claude Code's Anthropic-compatible API protocol. You can con
 For Antigravity, select **Antigravity CLI**, install it, and tap **Sign in with Google**. Mobile Harness starts the official CLI login, opens the freshly generated Google URL in the system browser, and sends the returned one-time code back to that waiting process. The app does not embed Google login in a WebView and does not construct its own OAuth request.
 
 > [!WARNING]
-> Antigravity tasks currently launch with `--dangerously-skip-permissions`. This gives the official agent permission to run tools without individual PocketDev approval prompts. Use it only with projects and prompts you trust. Account quotas and service limits still apply; signing in does not provide unlimited usage.
+> Antigravity sessions follow the selected agent-permission mode (see [Security](#security)); only the explicit **Fully autonomous** opt-in launches tasks with `--dangerously-skip-permissions`. Account quotas and service limits still apply; signing in does not provide unlimited usage.
 
 When Android is selected during onboarding, Mobile Harness installs that complete toolchain into its private Ubuntu environment. Android projects can then be built with the workspace play button. The resulting debug APK is passed directly to Android's system package installer and launched after installation; USB debugging, wireless debugging, an ADB port, and a pairing code are not required. Android still requires the user to allow installs from Mobile Harness and confirm each installation.
 
@@ -422,6 +446,12 @@ Mobile Harness is currently intended for signed direct APK distribution and priv
 * **Process Isolation**: PRoot maps file systems and IDs in user space; it is not a cryptographically hardened container or VM.
 * **Terminal Emulation**: The process bridge handles standard CLI workflows and REPLs; specialized ncurses applications may experience minor layout artifacts.
 * **OS Process Management**: Heavy compilation workloads may be throttled if Android applies aggressive battery optimization. It is recommended to exempt Mobile Harness from battery optimization in device settings.
+
+<br />
+
+## Security
+
+**Read this before importing third-party code.** Mobile Harness ships a three-mode agent permission system (Settings → Agent permissions). By default (**Approve risky actions**, also applied when upgrading from v1.0.x) destructive and network commands such as `rm -rf`, `git push`, `sudo`, or `curl` surface an approval card with a 60-second auto-deny timeout, and the agent's network tools are denied outright; everyday edits run automatically. **Approve everything** routes every tool call through the approval card. **Fully autonomous** (explicit opt-in) restores the old v1.0.x behavior where all three agents auto-approve every tool call — fastest, and the most dangerous. The approval channel is fail-closed: unreadable, malformed, or timed-out permission requests are always denied. Regardless of mode, treat imported repositories and pasted prompts from unknown sources as untrusted — a README or tool output can carry prompt-injection instructions the agent may act on. Since v1.2.0 your provider key and GitHub token never enter the Linux guest (host-side sovereign proxy + Keystore vault; the single documented exception is dsh's native DeepSeek route). Agent in-app updates only install releases whose digests are pinned inside the app build. Full details, boundaries, and what is already hardened are documented in [SECURITY.md](SECURITY.md).
 
 <br />
 

@@ -2,12 +2,19 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
-keystore_path="${MH_UPLOAD_STORE_FILE:-/Users/jarves/.mobile-harness/mobile-harness-upload.jks}"
+# ISSUE-019/3m: no developer-specific default path. The keystore must be
+# provided explicitly via MH_UPLOAD_STORE_FILE (or a CI secret).
+keystore_path="${MH_UPLOAD_STORE_FILE:-}"
 key_alias="${MH_UPLOAD_KEY_ALIAS:-mobile-harness-upload}"
 keychain_account="com.jarves.mh"
 keychain_service="Mobile Harness Upload Key"
 version_code="${1:-1}"
 version_name="${2:-1.0.0}"
+
+if [[ -z "$keystore_path" ]]; then
+  echo "MH_UPLOAD_STORE_FILE is not set. Point it at the upload keystore." >&2
+  exit 1
+fi
 
 if [[ ! -f "$keystore_path" ]]; then
   echo "Upload keystore not found: $keystore_path" >&2

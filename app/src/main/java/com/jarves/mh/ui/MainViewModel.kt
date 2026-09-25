@@ -6,7 +6,6 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.os.SystemClock
 import android.os.Build
-import android.system.Os
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
@@ -15,7 +14,12 @@ import com.jarves.mh.BuildConfig
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.data.AppPreferences
+import com.jarves.mh.data.JournalEntry
+import com.jarves.mh.data.SecretRedactor
+import com.jarves.mh.data.SessionJournal
+import com.jarves.mh.data.SessionJournalCodec
 import com.jarves.mh.model.ActivityItem
+import com.jarves.mh.model.AgentAutonomyMode
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
@@ -29,13 +33,14 @@ import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
+import com.jarves.mh.model.GitHubRepository
+import com.jarves.mh.model.InterruptedSession
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.generateQuickChatIdentity
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.network.ProviderApiClient
-import com.jarves.mh.network.GitHubRepository
 import com.jarves.mh.runtime.ClaudeRuntimeBridge
 import com.jarves.mh.runtime.DshRuntimeBridge
 import com.jarves.mh.runtime.AgentRegistry
@@ -45,6 +50,9 @@ import com.jarves.mh.runtime.AntigravityAuthState
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.runtime.AntigravityRuntimeBridge
 import com.jarves.mh.runtime.NativeSpawnProcess
+import com.jarves.mh.runtime.OutputFileTailer
+import com.jarves.mh.runtime.RootfsMigration
+import com.jarves.mh.runtime.RootfsMigrationPolicy
 import com.jarves.mh.runtime.RuntimeInstallProgress
 import com.jarves.mh.runtime.RuntimeInstaller
 import com.jarves.mh.runtime.RuntimeSetupController
@@ -53,10 +61,10 @@ import com.jarves.mh.runtime.RuntimeSetupSnapshot
 import com.jarves.mh.runtime.RuntimeSetupStatus
 import com.jarves.mh.runtime.supportsArm64Runtime
 import com.jarves.mh.runtime.AndroidAppInstaller
+import com.jarves.mh.runtime.UbuntuMigrationPhase
 import com.jarves.mh.update.AppUpdateInfo
 import com.jarves.mh.update.AppUpdater
 import java.io.File
-import java.io.RandomAccessFile
 import java.net.UnknownHostException
 import java.net.URI
 import java.nio.file.Files
@@ -215,6 +223,11 @@ data class AppUiState(
     val devStackBytesPerSecond: Long? = null,
     val agentKind: AgentKind = AgentKind.CLAUDE_CODE,
     val primaryAgentKind: AgentKind = AgentKind.CLAUDE_CODE,
+    val autonomyMode: AgentAutonomyMode = AgentAutonomyMode.APPROVE_RISKY,
+    /** Task that was in flight when the OS killed the app (ISSUE-007): shown as a resume banner. */
+    val interruptedSession: InterruptedSession? = null,
+    /** True once repeated interruptions cross the battery-optimization guidance threshold (innovation 3). */
+    val repeatedInterruptions: Boolean = false,
     val installedAgentVersions: Map<AgentKind, String> = emptyMap(),
     val agentInstalling: AgentKind? = null,
     val agentMessage: String? = null,
@@ -230,6 +243,14 @@ data class AppUiState(
     val agentUpdateDownloadedBytes: Long? = null,
     val agentUpdateTotalBytes: Long? = null,
     val agentUpdateBytesPerSecond: Long? = null,
+    /** Ubuntu base migration (ISSUE-008 / roadmap 3i). */
+    val ubuntuBaseLabel: String = "",
+    val ubuntuUpgradeAvailable: Boolean = false,
+    val ubuntuMigrationPhase: UbuntuMigrationPhase = UbuntuMigrationPhase.IDLE,
+    val ubuntuMigrationRunning: Boolean = false,
+    val ubuntuMigrationMessage: String? = null,
+    val ubuntuMigrationProgress: Float = 0f,
+    val ubuntuMigrationBytes: Pair<Long, Long>? = null,
     val antigravityAuth: AntigravityAuthState = AntigravityAuthState(),
     val antigravityModel: String = "",
     val antigravityEffort: String = "high",
@@ -247,9 +268,29 @@ data class AppUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
-    private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
-    private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
+    /** Session journal (ISSUE-007): detects tasks interrupted by process death and powers the resume banner. */
+    private val sessionJournal = SessionJournal(File(application.filesDir, "sessions"))
+    private val claudeRuntime = ClaudeRuntimeBridge(
+        application,
+        secretFor = { profile -> vault.get(profile.kind.name) },
+        autonomyProvider = { preferences.agentAutonomyMode },
+        saveConversationId = { projectId, claudeSessionId ->
+            // Persist per chat (the same mechanism Antigravity uses) and mirror onto
+            // the session journal so a process death can still find the id (ISSUE-007).
+            _state.value.activeChatId?.let { chatId ->
+                preferences.saveAgentConversation(AgentKind.CLAUDE_CODE, projectId, chatId, claudeSessionId)
+            }
+            sessionJournal.recordAgentSession(claudeSessionId)
+        },
+    )
+    private val dshRuntime = DshRuntimeBridge(
+        application,
+        secretFor = { profile -> vault.get(profile.kind.name) },
+        autonomyProvider = { preferences.agentAutonomyMode },
+    )
     private val installer = RuntimeInstaller(application)
+    /** Ubuntu 20.04 → 24.04 base migration with a rollback root (ISSUE-008 / roadmap 3i). */
+    private val rootfsMigration = RootfsMigration(application, installer)
     private val antigravityRuntime = AntigravityRuntimeBridge(
         application,
         model = { _state.value.antigravityModel },
@@ -259,7 +300,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         },
         saveConversationId = { projectId, id ->
             _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.ANTIGRAVITY, projectId, it, id) }
+            sessionJournal.recordAgentSession(id)
         },
+        autonomyProvider = { preferences.agentAutonomyMode },
     )
     private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime)
     private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge = agentRegistry.require(_state.value.agentKind).runtime
@@ -299,6 +342,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             backgroundSetupComplete = preferences.backgroundSetupComplete,
             agentKind = initialAgentKind,
             primaryAgentKind = initialPrimaryAgentKind,
+            autonomyMode = preferences.agentAutonomyMode,
             provider = preferences.loadProvider(vault, initialAgentKind),
             activeApiKeyName = vault.list(preferences.loadProvider(vault, initialAgentKind).kind.name)
                 .firstOrNull(ApiKeyInfo::isActive)?.name,
@@ -321,6 +365,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        // Surface silent Keystore invalidation (e.g. after a backup restore or clear
+        // data) instead of behaving as if no API key had ever been saved (ISSUE-030).
+        vault.onSecretInvalidated = { providerId ->
+            _state.update {
+                it.copy(toastMessage = "The saved $providerId key could not be decrypted (Android Keystore was reset). Please re-enter it in Settings.")
+            }
+        }
+        // Remove orphaned process output files left behind by crashed runs (ISSUE-023).
+        viewModelScope.launch(Dispatchers.IO) { cleanupStaleCacheFiles() }
         // GitHub's official CLI owns its OAuth credential. Remove credentials from
         // the retired custom OAuth implementation and discover the real CLI status.
         vault.remove(LEGACY_GITHUB_TOKEN_KEY)
@@ -402,19 +455,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferences.saveProjects(cleanedProjects)
             _state.update { it.copy(projects = cleanedProjects) }
         }
+        // A journal that survived this app start means the OS killed the process
+        // mid-task (ISSUE-007): surface the resume banner before anything else.
+        sessionJournal.read()?.let(::surfaceInterruptedSession)
+        // Ubuntu base migration (ISSUE-008 / roadmap 3i): repair a migration
+        // interrupted by process death before anything else touches the runtime.
+        // Off the main thread — reconciliation may delete a half-staged tree. The
+        // only race with bootstrap() is a rare interrupted upgrade re-reading
+        // isInstalled() mid-repair; the worst case is one extra setup retry.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { rootfsMigration.reconcileAtStartup() }.getOrNull()
+                ?.let { message -> _state.update { it.copy(ubuntuMigrationMessage = message) } }
+            refreshUbuntuMigrationUi()
+        }
+    }
+
+    /** Turns a leftover journal entry into the interrupted-task banner (ISSUE-007). */
+    private fun surfaceInterruptedSession(entry: JournalEntry) {
+        val kind = AgentKind.fromStored(entry.agentKind)
+        // The journal copy wins; the per-chat preference is the fallback for the
+        // rare kill that happened before any agent id was mirrored onto the journal.
+        val nativeId = entry.agentSessionId
+            ?: entry.chatId?.let { preferences.loadAgentConversation(kind, entry.projectId, it) }
+        val observed = sessionJournal.noteInterruptionObserved(entry.startedAt)
+        _state.update {
+            it.copy(
+                interruptedSession = InterruptedSession(
+                    agentKind = kind,
+                    projectId = entry.projectId,
+                    projectSlug = entry.projectSlug,
+                    request = entry.request,
+                    startedAtMillis = entry.startedAt,
+                    canResumeNatively = !nativeId.isNullOrBlank() && kind != AgentKind.DEEPSEEK_HARNESS,
+                ),
+                repeatedInterruptions = observed >= SessionJournal.INTERRUPTIONS_BEFORE_BATTERY_HINT,
+            )
+        }
+    }
+
+    /** Deletes orphaned process output files left by earlier, dead processes (ISSUE-023). */
+    private fun cleanupStaleCacheFiles() {
+        val cutoff = System.currentTimeMillis() - STALE_CACHE_GRACE_MS
+        val cache = getApplication<Application>().cacheDir
+        cache.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+            val stale = file.lastModified() < cutoff
+            val known = STALE_CACHE_PREFIXES.any { file.name.startsWith(it) }
+            if (stale && known) runCatching { file.delete() }
+        }
     }
 
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(
-        listOf(
-            TerminalOutputLine(
-                command = "uname -a",
-                output = "Linux pocket-dev 6.1.0-arm64 #1 SMP aarch64 GNU/Linux (PRoot Sandbox)",
-                exitCode = 0,
-            ),
-        ),
-    )
+    // Terminal history starts empty: earlier releases seeded a fake `uname -a`
+    // banner with a made-up kernel string (ISSUE-016).
+    private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(emptyList())
     val terminalLines: StateFlow<List<TerminalOutputLine>> = _terminalLines.asStateFlow()
 
     private val _isTerminalRunning = MutableStateFlow(false)
@@ -454,24 +549,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     terminalProcess = proc
                     val native = proc as? NativeSpawnProcess
-                    var offset = 0L
                     val streamed = StringBuilder()
                     var autoConfirmed = false
-                    while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
-                        val file = native?.outputFile
-                        val available = (file?.length() ?: 0L) - offset
-                        if (file == null || available <= 0) {
-                            Thread.sleep(50)
-                            continue
-                        }
-                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                        val count = RandomAccessFile(file, "r").use { input ->
-                            input.seek(offset)
-                            input.read(bytes)
-                        }
-                        if (count > 0) {
-                            offset += count
-                            streamed.append(bytes.decodeToString(0, count))
+                    val outputFile = native?.outputFile
+                    if (outputFile == null) {
+                        // Defensive: a non-native process cannot be tailed; wait
+                        // for its exit instead of spinning (ISSUE-013).
+                        proc.waitFor()
+                    } else {
+                        OutputFileTailer.tailChunks(outputFile, proc::isAlive) { chunk ->
+                            streamed.append(chunk)
                             _terminalLiveOutput.value = sanitizeTerminalOutput(streamed.toString())
                                 .trimEnd()
                                 .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
@@ -485,6 +572,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val exit = proc.waitFor()
                     runCatching { proc.outputStream.close() }
                     val out = sanitizeTerminalOutput(streamed.toString()).trim()
+                        .let { body -> if (autoConfirmed) body + AUTO_CONFIRMED_NOTE else body }
                     val finalOut = if (out.isNotEmpty() || exit == 0) out else "Process exited with code $exit"
                     finalOut to exit
                 }.getOrElse { "Error: ${it.message}" to 1 }
@@ -666,23 +754,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (projectTerminalStopRequested) process.destroy()
         val native = process as? NativeSpawnProcess
             ?: return ProjectTerminalResult("Unsupported terminal process.", 1, cwd)
-        var offset = 0L
         val output = StringBuilder()
         var autoConfirmed = false
-        while (process.isAlive || native.outputFile.length() > offset) {
-            val available = native.outputFile.length() - offset
-            if (available <= 0) {
-                Thread.sleep(50)
-                continue
-            }
-            val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-            val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                file.seek(offset)
-                file.read(bytes)
-            }
-            if (count > 0) {
-                offset += count
-                output.append(bytes.decodeToString(0, count))
+        // Blocking reader on an IO dispatcher (the pre-tailer loop blocked here
+        // too); tailChunks is suspend, so bridge it with runBlocking.
+        kotlinx.coroutines.runBlocking {
+            OutputFileTailer.tailChunks(native.outputFile, process::isAlive) { chunk ->
+                output.append(chunk)
                 val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
                     .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
                 if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
@@ -714,6 +792,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cleanOutput = sanitizeTerminalOutput(raw.substringBefore(marker))
             .trim()
             .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+            .let { body -> if (autoConfirmed) body + AUTO_CONFIRMED_NOTE else body }
         return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
     }
 
@@ -823,8 +902,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 array.put(
                     JSONObject()
                         .put("id", line.id)
-                        .put("command", line.command)
-                        .put("output", line.output.takeLast(MAX_PROJECT_TERMINAL_OUTPUT))
+                        // ISSUE-021: credentials are stripped before anything
+                        // reaches disk; the live terminal stays untouched and
+                        // only the restored scrollback is redacted.
+                        .put("command", SecretRedactor.redact(line.command))
+                        .put("output", SecretRedactor.redact(line.output.takeLast(MAX_PROJECT_TERMINAL_OUTPUT)))
                         .put("exitCode", line.exitCode),
                 )
             }
@@ -1134,7 +1216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val result = runCatching {
             withContext(Dispatchers.IO) {
-                installer.initializeExisting { progress ->
+                installer.initializeExisting(preferences.agentAutonomyMode) { progress ->
                     _state.update { current ->
                         current.copy(
                             startupProgress = 0.05f + progress.fraction * 0.95f,
@@ -1476,6 +1558,94 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     agentUpdateBytesPerSecond = null,
                 )
             }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Ubuntu base migration (ISSUE-008 / roadmap 3i)
+    // ---------------------------------------------------------------------
+
+    private fun refreshUbuntuMigrationUi() {
+        _state.update {
+            it.copy(
+                ubuntuBaseLabel = RootfsMigrationPolicy.baseLabel(rootfsMigration.currentMarker()),
+                ubuntuUpgradeAvailable = rootfsMigration.isUpgradeAvailable(),
+                ubuntuMigrationPhase = rootfsMigration.currentState().phase,
+            )
+        }
+    }
+
+    fun startUbuntu24Upgrade() {
+        val current = _state.value
+        if (current.ubuntuMigrationRunning || current.isRunning || current.agentInstalling != null ||
+            current.agentUpdating != null || current.devStackInstalling != null || current.devStackRemoving
+        ) {
+            return
+        }
+        if (!rootfsMigration.isUpgradeAvailable()) return
+        _state.update {
+            it.copy(
+                ubuntuMigrationRunning = true,
+                ubuntuMigrationProgress = 0f,
+                ubuntuMigrationBytes = null,
+                ubuntuMigrationMessage = "Preparing the Ubuntu 24.04 upgrade…",
+            )
+        }
+        viewModelScope.launch {
+            val agent = current.agentKind
+            val stacks = current.installedDevStacks
+            val mode = preferences.agentAutonomyMode
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    rootfsMigration.migrate(agent, stacks, mode) { progress ->
+                        _state.update {
+                            it.copy(
+                                ubuntuMigrationMessage = progress.message,
+                                ubuntuMigrationProgress = progress.fraction.coerceIn(0f, 1f),
+                                ubuntuMigrationBytes = if (progress.downloadedBytes != null && progress.totalBytes != null) {
+                                    progress.downloadedBytes to progress.totalBytes
+                                } else {
+                                    it.ubuntuMigrationBytes
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            _state.update { state ->
+                state.copy(
+                    ubuntuMigrationRunning = false,
+                    ubuntuMigrationProgress = if (result.isSuccess) 1f else 0f,
+                    ubuntuMigrationBytes = null,
+                    ubuntuMigrationMessage = result.fold(
+                        onSuccess = {
+                            "Ubuntu 24.04 is active. The previous base stays available as a rollback until your first task completes."
+                        },
+                        onFailure = { error -> error.message?.take(240) ?: "The Ubuntu 24.04 upgrade failed." },
+                    ),
+                    installedAgentVersions = installer.installedAgentVersions(),
+                    installedDevStacks = installer.installedStacks(),
+                )
+            }
+            refreshUbuntuMigrationUi()
+        }
+    }
+
+    fun rollbackUbuntuBase() {
+        val current = _state.value
+        if (current.ubuntuMigrationRunning || current.isRunning) return
+        _state.update { it.copy(ubuntuMigrationMessage = "Restoring Ubuntu 20.04…") }
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) { runCatching { rootfsMigration.rollback() } }
+            _state.update { state ->
+                state.copy(
+                    ubuntuMigrationMessage = restored.fold(
+                        onSuccess = { if (it) "Ubuntu 20.04 restored. You can retry the upgrade later." else "No rollback copy was found." },
+                        onFailure = { error -> error.message?.take(240) ?: "Could not restore Ubuntu 20.04." },
+                    ),
+                )
+            }
+            refreshUbuntuMigrationUi()
         }
     }
 
@@ -2248,7 +2418,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "GH_NO_UPDATE_NOTIFIER" to "1",
                         )
                         val installed = installer.installedRuntime()
-                        val command = if (useGitHubCli && repositoryName != null) {
+                        val cloneCommand = if (useGitHubCli && repositoryName != null) {
                             buildList {
                                 addAll(listOf(RuntimeInstaller.GITHUB_CLI_GUEST_PATH, "repo", "clone", repositoryName, ".", "--", "--progress", "--single-branch"))
                                 branch?.takeIf(String::isNotBlank)?.let { addAll(listOf("--branch", it)) }
@@ -2261,6 +2431,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 add(".")
                             }
                         }
+                        // Wrap the clone in coreutils `timeout` so a hung remote or stalled
+                        // network cannot keep the import spinning forever (ISSUE-027).
+                        val command = listOf("timeout", GIT_CLONE_TIMEOUT) + cloneCommand
                         _state.update { it.copy(gitCloneMessage = "Cloning ${repositoryName ?: normalized.substringAfterLast('/').removeSuffix(".git")}…") }
                         val process = installer.process(
                             installed.proot,
@@ -2351,33 +2524,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         outputFile = outputFile,
                     )
                     githubAuthProcess = process
-                    var offset = 0L
                     val captured = StringBuilder()
                     var browserOpened = false
                     try {
-                        while (process.isAlive || outputFile.length() > offset) {
-                            if (outputFile.length() > offset) {
-                                val count = (outputFile.length() - offset).coerceAtMost(16L * 1024).toInt()
-                                val bytes = ByteArray(count)
-                                RandomAccessFile(outputFile, "r").use { file -> file.seek(offset); file.readFully(bytes) }
-                                offset += count
-                                captured.append(bytes.toString(Charsets.UTF_8))
-                                val clean = sanitizeTerminalOutput(captured.toString()).takeLast(20_000)
-                                val code = GITHUB_DEVICE_CODE.find(clean)?.value
-                                if (code != null && !browserOpened) {
-                                    browserOpened = true
-                                    _state.update {
-                                        it.copy(
-                                            githubAuthStatus = GitHubAuthStatus.AWAITING_USER,
-                                            githubUserCode = code,
-                                            githubVerificationUri = GITHUB_DEVICE_URL,
-                                            githubMessage = "Enter this one-time code on GitHub",
-                                        )
-                                    }
-                                    openExternalUrl(GITHUB_DEVICE_URL)
+                        OutputFileTailer.tailChunks(outputFile, process::isAlive) { chunk ->
+                            captured.append(chunk)
+                            val clean = sanitizeTerminalOutput(captured.toString()).takeLast(20_000)
+                            val code = GITHUB_DEVICE_CODE.find(clean)?.value
+                            if (code != null && !browserOpened) {
+                                browserOpened = true
+                                _state.update {
+                                    it.copy(
+                                        githubAuthStatus = GitHubAuthStatus.AWAITING_USER,
+                                        githubUserCode = code,
+                                        githubVerificationUri = GITHUB_DEVICE_URL,
+                                        githubMessage = "Enter this one-time code on GitHub",
+                                    )
                                 }
-                            } else {
-                                delay(100)
+                                openExternalUrl(GITHUB_DEVICE_URL)
                             }
                         }
                         val exit = process.waitFor()
@@ -2389,6 +2553,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         githubAuthProcess = null
                         outputFile.delete()
                     }
+                    // ISSUE-005: gh's --insecure-storage keeps the OAuth token in
+                    // plain text inside the guest. Move it to the hardware-backed
+                    // vault, log gh out of the guest, and hand the token to every
+                    // later gh invocation transiently via GH_TOKEN — nothing
+                    // secret ever rests on the guest filesystem.
+                    val token = runGitHubCli(listOf("auth", "token")).second
+                        .lineSequence().lastOrNull { it.isNotBlank() }?.trim()
+                    check(!token.isNullOrBlank()) { "GitHub connected, but the session token could not be read" }
+                    vault.put(GITHUB_TOKEN_PROVIDER_ID, token)
+                    runCatching { runGitHubCli(listOf("auth", "logout", "--hostname", "github.com")) }
                     githubAccountLogin() ?: error("GitHub connected, but the account could not be identified")
                 }
             }
@@ -2476,6 +2650,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val output = runGitHubCli(command)
                     check(output.first == 0) { output.second.lineSequence().lastOrNull { it.isNotBlank() } ?: "GitHub logout failed" }
+                    // The vault copy leaves with the session (ISSUE-005).
+                    vault.remove(GITHUB_TOKEN_PROVIDER_ID)
                 }
             }
             result.onSuccess {
@@ -2514,13 +2690,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun githubCliEnvironment(): Map<String, String> = mapOf(
-        "GH_PROMPT_DISABLED" to "1",
-        "GH_NO_UPDATE_NOTIFIER" to "1",
-        // Android PRoot has no Secret Service. This keeps the official gh-owned
-        // credential in PocketDev's private Linux home instead of exporting it.
-        "BROWSER" to "/bin/false",
-    )
+    private fun githubCliEnvironment(): Map<String, String> {
+        val environment = mutableMapOf(
+            "GH_PROMPT_DISABLED" to "1",
+            "GH_NO_UPDATE_NOTIFIER" to "1",
+            // Android PRoot has no Secret Service. This keeps the official gh-owned
+            // credential in Mobile Harness's private Linux home instead of exporting it.
+            "BROWSER" to "/bin/false",
+        )
+        // ISSUE-005: when the vault holds the OAuth token it is injected per
+        // process only — gh never keeps a credential file inside the guest.
+        vault.get(GITHUB_TOKEN_PROVIDER_ID)?.takeIf(String::isNotBlank)?.let { token ->
+            environment["GH_TOKEN"] = token
+        }
+        return environment
+    }
 
     private fun runGitHubCli(arguments: List<String>): Pair<Int, String> {
         check(installer.isGitHubCliInstalled()) { "GitHub CLI is not installed" }
@@ -3050,6 +3234,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             history = history,
             provider = state.value.provider,
         )
+        // Journal the in-flight task so a process death can be detected and the
+        // resume banner offered (ISSUE-007). One small atomic write per task start;
+        // the raw user text (not the attachment-augmented prompt) is stored.
+        sessionJournal.begin(
+            JournalEntry(
+                agentKind = _state.value.agentKind.stableId,
+                projectId = project.id,
+                projectSlug = project.slug,
+                chatId = _state.value.activeChatId,
+                request = requestText,
+                // Seed with the agent id a previous turn may have recorded, so a
+                // kill before this turn's init event can still resume natively.
+                agentSessionId = _state.value.activeChatId?.let { chatId ->
+                    preferences.loadAgentConversation(_state.value.agentKind, project.id, chatId)
+                },
+                startedAt = System.currentTimeMillis(),
+            ),
+        )
+        // Starting fresh work retires any stale interruption banner.
+        _state.update { it.copy(interruptedSession = null) }
         viewModelScope.launch {
             activeRuntimeRequest?.let { request ->
                 request.runtime.startSession(
@@ -3069,9 +3273,81 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { activeRuntime().respondToApproval(request, approved) }
     }
 
+    /**
+     * Switches the agent autonomy mode (ISSUE-001). Applies from the next
+     * session on: running sessions keep the mode they were launched with.
+     */
+    fun setAutonomyMode(mode: AgentAutonomyMode) {
+        preferences.agentAutonomyMode = mode
+        _state.update { it.copy(autonomyMode = mode) }
+    }
+
     fun stopTask() {
         if (!_state.value.isRunning) return
         viewModelScope.launch { activeRuntime().stopActiveSession() }
+    }
+
+    /**
+     * One-tap resume of a task interrupted by process death (ISSUE-007): reopens
+     * the recorded project and chat, arms a native --resume for Claude Code when
+     * its session id was captured, and re-sends the task. Antigravity resumes
+     * natively through its stored conversation id; DeepSeek Harness rebuilds
+     * context from the persisted transcript.
+     */
+    fun resumeInterruptedTask() {
+        val entry = sessionJournal.read() ?: run {
+            dismissInterruptedTask()
+            return
+        }
+        val current = _state.value
+        if (current.isRunning) return
+        if (current.projectTerminalRunning && current.activeProject?.id != entry.projectId) {
+            _state.update { it.copy(toastMessage = "Stop the running terminal before resuming.") }
+            return
+        }
+        val kind = AgentKind.fromStored(entry.agentKind)
+        val project = current.projects.firstOrNull { it.id == entry.projectId }
+        if (project == null) {
+            _state.update { it.copy(toastMessage = "The interrupted project no longer exists.") }
+            dismissInterruptedTask()
+            return
+        }
+        if (current.agentKind != kind) selectAgent(kind)
+        if (_state.value.activeProject?.id != entry.projectId) openProject(project)
+        entry.chatId?.takeIf { it != _state.value.activeChatId }?.let { chatId ->
+            if (_state.value.projectChats.any { it.id == chatId }) switchChat(chatId)
+        }
+        // Claude Code can continue its own conversation context when the session
+        // id was captured before the kill; the other agents rebuild from the
+        // persisted transcript (Antigravity already passes its stored id itself).
+        val nativeId = entry.agentSessionId
+            ?: _state.value.activeChatId?.let { preferences.loadAgentConversation(kind, entry.projectId, it) }
+        if (kind == AgentKind.CLAUDE_CODE && !nativeId.isNullOrBlank()) {
+            claudeRuntime.requestResume(nativeId)
+        }
+        sessionJournal.clear()
+        sendPrompt(SessionJournalCodec.resumeRequestText(entry))
+    }
+
+    /** Dismisses the interrupted-task banner and drops the journal marker (ISSUE-007). */
+    fun dismissInterruptedTask() {
+        sessionJournal.clear()
+        _state.update { it.copy(interruptedSession = null) }
+    }
+
+    /**
+     * Repeated interruptions usually mean the device's power manager is killing
+     * the app mid-task; send the user straight to the exemption list (innovation 3).
+     */
+    fun openBatteryOptimizationSettings() {
+        runCatching {
+            getApplication<Application>().startActivity(
+                Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure {
+            _state.update { it.copy(toastMessage = "Could not open the battery optimization settings.") }
+        }
     }
 
     fun undoLastChanges() {
@@ -3417,6 +3693,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) {
             activeRuntimeRequest = null
             failedApiKeyIds.clear()
+            // The task is no longer in flight: drop the journal marker so the next
+            // app start does not mistake this for an interruption, and clear the
+            // strike counter on success (ISSUE-007) — only repeated interruptions,
+            // not a healthy workload, should ever trigger battery guidance.
+            sessionJournal.clear()
+            if (event is RuntimeEvent.SessionCompleted) {
+                sessionJournal.resetInterruptions()
+                // First successful task on a migrated Ubuntu 24.04 base commits
+                // the migration and deletes the rollback root (ISSUE-008 / 3i).
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching { rootfsMigration.finalizeAfterFirstSuccessfulSession() }
+                    refreshUbuntuMigrationUi()
+                }
+            }
         }
         if (event is RuntimeEvent.FilesChanged || event is RuntimeEvent.SessionCompleted) {
             _state.value.activeProject?.id?.let { touchProject(it) }
@@ -3529,11 +3819,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
+
+        /** Hard ceiling for repository imports; coreutils duration syntax (ISSUE-027). */
+        private const val GIT_CLONE_TIMEOUT = "15m"
+
+        /** Visible marker appended to terminal history when a Y/N prompt was answered automatically (ISSUE-038). */
+        private const val AUTO_CONFIRMED_NOTE = "\n[mobile-harness] auto-confirmed a package prompt (\"y\") on your behalf"
+
+        /** Only files older than this grace window are cleaned at boot, so freshly
+         *  created outputs of a just-started session are never touched (ISSUE-023). */
+        private const val STALE_CACHE_GRACE_MS = 5 * 60_000L
+        private val STALE_CACHE_PREFIXES = listOf(
+            "runtime-output-",
+            "git-clone-",
+            "github-auth-",
+            "github-cli-",
+            "agy-hello-",
+            "antigravity-auth-output",
+            "antigravity-logout-output",
+        )
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
         private const val MAX_IMPORTED_PROJECT_BYTES = 8L * 1024L * 1024L * 1024L
         private const val MAX_IMPORTED_ZIP_ENTRIES = 100_000
         private const val LEGACY_GITHUB_TOKEN_KEY = "GITHUB_APP"
+
+        /** Vault entry holding the gh OAuth token so it never rests inside the guest (ISSUE-005). */
+        private const val GITHUB_TOKEN_PROVIDER_ID = "github-oauth"
         private const val GITHUB_DEVICE_URL = "https://github.com/login/device"
         private val GITHUB_DEVICE_CODE = Regex("\\b[A-Z0-9]{4}-[A-Z0-9]{4}\\b")
         private const val TEST_PROVIDER_DEFAULTS_VERSION = 1

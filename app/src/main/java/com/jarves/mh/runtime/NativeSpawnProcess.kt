@@ -17,6 +17,14 @@ internal class NativeSpawnProcess private constructor(
     @Volatile private var result: Int? = null
 
     override fun getOutputStream(): OutputStream = stdin
+
+    /**
+     * Streams the child's captured output file. Unlike a pipe, this stream has
+     * *moving-EOF* semantics: `read()` returns -1 whenever the child has not
+     * flushed more output yet — not only after the process exits. Never treat a
+     * single EOF as "process finished"; combine it with [isAlive] / [waitFor],
+     * or re-read with a growing offset as the bridges do.
+     */
     override fun getInputStream(): InputStream = FileInputStream(outputFile)
     override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
 
@@ -63,18 +71,22 @@ internal class NativeSpawnProcess private constructor(
         ): NativeSpawnProcess {
             outputFile.parentFile?.mkdirs()
             if (pseudoTerminal) outputFile.delete()
-            val spawned = NativeSpawn.spawn(
-                argv.toTypedArray(),
-                environment.map { "${it.key}=${it.value}" }.toTypedArray(),
-                cwd,
-                outputFile.absolutePath,
-                pseudoTerminal,
-                ptyRows,
-                ptyColumns,
+            val spawned = SpawnResultValidator.validate(
+                NativeSpawn.spawn(
+                    argv.toTypedArray(),
+                    environment.map { "${it.key}=${it.value}" }.toTypedArray(),
+                    cwd,
+                    outputFile.absolutePath,
+                    pseudoTerminal,
+                    ptyRows,
+                    ptyColumns,
+                ),
+            ) ?: throw IllegalStateException(
+                "The Linux runtime could not launch — the device may be low on memory. " +
+                    "Close other apps and try again.",
             )
-            check(spawned.size == 3 && spawned[0] > 0) { "Native runtime launch failed" }
-            val input = ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.adoptFd(spawned[1]))
-            val pump = spawned[2].takeIf { it >= 0 }?.let { outputFd ->
+            val input = ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.adoptFd(spawned.inputFd))
+            val pump = spawned.outputFd.takeIf { it >= 0 }?.let { outputFd ->
                 Thread({
                     runCatching {
                         ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.adoptFd(outputFd)).use { source ->
@@ -86,7 +98,7 @@ internal class NativeSpawnProcess private constructor(
                     start()
                 }
             }
-            return NativeSpawnProcess(spawned[0], outputFile, input, pump)
+            return NativeSpawnProcess(spawned.pid, outputFile, input, pump)
         }
     }
 }
@@ -98,6 +110,8 @@ private object NativeSpawn {
         System.loadLibrary("pocketspawn")
     }
 
+    // Nullable on purpose (ISSUE-029): the native side returns NULL when
+    // calloc/posix_openpt/fork fails under memory pressure.
     external fun spawn(
         argv: Array<String>,
         environment: Array<String>,
@@ -106,7 +120,25 @@ private object NativeSpawn {
         pseudoTerminal: Boolean,
         ptyRows: Int,
         ptyColumns: Int,
-    ): IntArray
+    ): IntArray?
     external fun waitFor(pid: Int, noHang: Boolean): Int
     external fun kill(pid: Int, signal: Int): Int
+}
+
+/**
+ * Pure validation of JNI spawn results (ISSUE-029). Returned as a separate
+ * object so the rules are unit-testable on the JVM without the native lib:
+ * null (allocation or fork failure), a short array, or a non-positive pid are
+ * all launch failures — the caller turns them into a friendly message instead
+ * of an NPE crash.
+ */
+internal object SpawnResultValidator {
+    data class Valid(val pid: Int, val inputFd: Int, val outputFd: Int)
+
+    fun validate(spawned: IntArray?): Valid? = when {
+        spawned == null -> null
+        spawned.size != 3 -> null
+        spawned[0] <= 0 -> null
+        else -> Valid(pid = spawned[0], inputFd = spawned[1], outputFd = spawned[2])
+    }
 }

@@ -46,6 +46,12 @@ class WorkspaceCheckpoints(private val filesDir: File) {
         checkpoint.deleteRecursively()
         val backup = File(checkpoint, "project").apply { mkdirs() }
         val workspacePath = workspace.canonicalFile.toPath()
+        // Storage guard (ISSUE-040): the baseline is a copy, so it must never
+        // double unbounded projects. Oversized files (and anything beyond the
+        // per-project budget) are recorded in a skip manifest instead; undo for
+        // them is explicitly refused rather than silently destructive.
+        val skipped = org.json.JSONArray()
+        var totalBytes = 0L
         workspace.walkTopDown()
             .onEnter { directory ->
                 directory == workspace || (
@@ -60,11 +66,37 @@ class WorkspaceCheckpoints(private val filesDir: File) {
             }
             .forEach { source ->
                 val relative = source.relativeTo(workspace).invariantSeparatorsPath
+                val size = source.length()
+                if (size > MAX_CHECKPOINT_FILE_BYTES || totalBytes + size > MAX_CHECKPOINT_TOTAL_BYTES) {
+                    skipped.put(relative)
+                    return@forEach
+                }
+                totalBytes += size
                 val destination = safeWorkspaceFile(backup, relative)
                 destination.parentFile?.mkdirs()
                 source.copyTo(destination, overwrite = true)
             }
+        if (skipped.length() > 0) {
+            File(checkpoint, SKIPPED_MANIFEST).writeText(skipped.toString())
+        }
     }
+
+    /** Paths deliberately excluded from the baseline because of the size caps. */
+    fun skippedLargePaths(projectId: String): Set<String> {
+        val manifest = File(checkpointDir(projectId), SKIPPED_MANIFEST)
+        if (!manifest.isFile) return emptySet()
+        return runCatching {
+            val array = JSONArray(manifest.readText())
+            (0 until array.length()).map(array::getString).toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    /**
+     * True when [path] was excluded from the baseline (ISSUE-040). Undo for
+     * such a path must leave the file untouched — restoring a missing backup
+     * entry by deleting the current file would be destructive.
+     */
+    fun isUndoUnavailable(projectId: String, path: String): Boolean = path in skippedLargePaths(projectId)
 
     fun saveChangedPaths(projectId: String, paths: List<String>) {
         val manifest = File(checkpointDir(projectId), "changes.json")
@@ -96,10 +128,56 @@ class WorkspaceCheckpoints(private val filesDir: File) {
 
     fun buildChangeDetails(projectId: String, workspace: File, paths: List<String>): List<ChangeItem> {
         val backup = File(checkpointDir(projectId), "project")
+        val skipped = skippedLargePaths(projectId)
         return paths.map { path ->
-            val before = safeWorkspaceFile(backup, path).takeIf(File::isFile)?.readBytes() ?: ByteArray(0)
-            val after = safeWorkspaceFile(workspace, path).takeIf(File::isFile)?.readBytes() ?: ByteArray(0)
-            val binary = before.any { it == 0.toByte() } || after.any { it == 0.toByte() }
+            if (path in skipped) {
+                // Never even sampled: the file was too large to back up, so
+                // there is no baseline to diff against (ISSUE-040).
+                return@map ChangeItem(
+                    path = path,
+                    additions = 0,
+                    deletions = 0,
+                    diffLines = listOf(
+                        DiffLine(
+                            DiffLineType.INFO,
+                            "Large file changed. It was too big to back up, so Undo is unavailable for this file.",
+                        ),
+                    ),
+                    binary = false,
+                )
+            }
+            val beforeFile = safeWorkspaceFile(backup, path).takeIf(File::isFile)
+            val afterFile = safeWorkspaceFile(workspace, path).takeIf(File::isFile)
+            // Binary/size guard (ISSUE-034): a cheap 8 KB sample decides before
+            // any full read, so a huge or binary file can never blow up the
+            // heap during a diff. Above the size cap only an info card remains.
+            val beforeSample = beforeFile?.readPrefix(BINARY_SAMPLE_BYTES) ?: ByteArray(0)
+            val afterSample = afterFile?.readPrefix(BINARY_SAMPLE_BYTES) ?: ByteArray(0)
+            val binary = beforeSample.contains(0.toByte()) || afterSample.contains(0.toByte())
+            val beforeSize = beforeFile?.length() ?: 0L
+            val afterSize = afterFile?.length() ?: 0L
+            val oversized = beforeSize > MAX_DIFF_FILE_BYTES || afterSize > MAX_DIFF_FILE_BYTES
+            if (binary || oversized) {
+                return@map ChangeItem(
+                    path = path,
+                    additions = 0,
+                    deletions = 0,
+                    diffLines = listOf(
+                        DiffLine(
+                            DiffLineType.INFO,
+                            if (binary) {
+                                "Binary file changed"
+                            } else {
+                                val largest = maxOf(beforeSize, afterSize)
+                                "File is too large to diff (${largest / (1024 * 1024)} MB). Undo and Keep still work."
+                            },
+                        ),
+                    ),
+                    binary = binary,
+                )
+            }
+            val before = beforeFile?.readBytes() ?: ByteArray(0)
+            val after = afterFile?.readBytes() ?: ByteArray(0)
             val (additions, deletions) = lineChanges(before, after)
             ChangeItem(
                 path = path,
@@ -109,6 +187,18 @@ class WorkspaceCheckpoints(private val filesDir: File) {
                 binary = binary,
             )
         }
+    }
+
+    /** Reads at most [maxBytes] from the head of the file; never loads more. */
+    private fun File.readPrefix(maxBytes: Int): ByteArray = inputStream().use { input ->
+        val buffer = ByteArray(maxBytes)
+        var offset = 0
+        while (offset < maxBytes) {
+            val read = input.read(buffer, offset, maxBytes - offset)
+            if (read < 0) break
+            offset += read
+        }
+        buffer.copyOf(offset)
     }
 
     fun buildDiffLines(beforeBytes: ByteArray, afterBytes: ByteArray): List<DiffLine> {
@@ -234,7 +324,13 @@ class WorkspaceCheckpoints(private val filesDir: File) {
 
     fun isInternalRuntimePath(path: String): Boolean {
         val normalized = path.replace('\\', '/')
-        return normalized == ".claude" || normalized == ".claude.json" || normalized.startsWith(".claude/")
+        // Agent/tool state directories must never enter a baseline, a diff or
+        // a changes manifest: they are runtime state, not project content
+        // (ISSUE-040 — .claude was already excluded; the other agents now too).
+        return normalized == ".claude" || normalized == ".claude.json" || normalized.startsWith(".claude/") ||
+            normalized == ".dsh" || normalized.startsWith(".dsh/") ||
+            normalized == ".agy" || normalized.startsWith(".agy/") ||
+            normalized == ".gradle" || normalized.startsWith(".gradle/")
     }
 
     private fun digest(file: File): String {
@@ -254,5 +350,20 @@ class WorkspaceCheckpoints(private val filesDir: File) {
         private const val MAX_DIFF_LINES = 2_000
         private const val MAX_RENDERED_DIFF_LINES = 600
         private const val DIFF_CONTEXT_LINES = 3
+
+        /** Head sample size for the cheap binary check (ISSUE-034). */
+        private const val BINARY_SAMPLE_BYTES = 8 * 1024
+
+        /** Files above this size never get fully read for a diff (ISSUE-034). */
+        private const val MAX_DIFF_FILE_BYTES = 5L * 1024 * 1024
+
+        /** A single file above this size is never copied into a baseline (ISSUE-040). */
+        internal const val MAX_CHECKPOINT_FILE_BYTES = 64L * 1024 * 1024
+
+        /** Total per-project baseline budget (ISSUE-040). */
+        internal const val MAX_CHECKPOINT_TOTAL_BYTES = 256L * 1024 * 1024
+
+        /** Marker file listing paths excluded from a baseline by the caps above. */
+        private const val SKIPPED_MANIFEST = "skipped-large.json"
     }
 }

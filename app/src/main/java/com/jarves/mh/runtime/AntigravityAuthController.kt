@@ -63,7 +63,7 @@ class AntigravityAuthController(
             runtime.rootfs,
             workspace,
             // SSH selects agy's official manual browser URL + one-time code flow.
-            // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
+            // NativeSpawn supplies a real PTY; Mobile Harness remains only the terminal.
             mapOf(
                 "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
                 "TERM" to "xterm-256color",
@@ -156,8 +156,8 @@ class AntigravityAuthController(
                         accountEmail = email,
                     )
                     // Leave the official CLI cleanly so it has a chance to flush
-                    // its own credential/session state before PocketDev closes
-                    // the temporary terminal. PocketDev never reads that state.
+                    // its own credential/session state before Mobile Harness closes
+                    // the temporary terminal. Mobile Harness never reads that state.
                     runCatching {
                         running.outputStream.write("/quit\r\n".toByteArray())
                         running.outputStream.flush()
@@ -180,7 +180,7 @@ class AntigravityAuthController(
                     clean.contains("Native Terminal experience (inline)", true)
                 ) {
                     // Select inline rendering, which is the appropriate mode for
-                    // PocketDev's captured PTY output.
+                    // Mobile Harness's captured PTY output.
                     running.outputStream.write("\u001B[B\r\n".toByteArray())
                     running.outputStream.flush()
                     renderingScreenCompleted = true
@@ -190,7 +190,7 @@ class AntigravityAuthController(
                     clean.contains("help improve Antigravity CLI", true)
                 ) {
                     // Optional interaction-data collection is selected by default.
-                    // PocketDev uses the privacy-preserving choice: Space clears
+                    // Mobile Harness uses the privacy-preserving choice: Space clears
                     // the checkbox, then two Tabs focus Done and Enter confirms.
                     val optOutAndFinish = if (clean.contains("[x] Yes", true)) {
                         " \t\t\r\n"
@@ -209,7 +209,7 @@ class AntigravityAuthController(
                     clean.contains("Yes, I trust this folder", true)
                 ) {
                     // The authentication workspace is created and owned privately
-                    // by PocketDev and contains no user project files.
+                    // by Mobile Harness and contains no user project files.
                     running.outputStream.write("\r\n".toByteArray())
                     running.outputStream.flush()
                     workspaceTrustCompleted = true
@@ -266,7 +266,7 @@ class AntigravityAuthController(
             // Under Android PRoot agy deliberately uses this file instead of a
             // Linux Secret Service keyring. Deleting this exact app-private file
             // is the deterministic equivalent of agy's /logout; its contents are
-            // never read, copied, or logged by PocketDev.
+            // never read, copied, or logged by Mobile Harness.
             val credential = officialCredentialFile()
             if (credential.exists()) {
                 check(credential.delete()) {

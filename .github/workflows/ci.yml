@@ -1,0 +1,115 @@
+# Mobile Harness CI (roadmap 019a — window 1; 3m additions in window 2).
+#
+# Four independent gates:
+#   1. unit-tests   — JVM unit tests (fast signal, no Android SDK assets needed)
+#   2. native-check — strict gcc syntax check of the JNI spawn layer
+#   3. hygiene      — file-size guard (ISSUE-014) + CycloneDX SBOM (ISSUE-019)
+#   4. debug-build  — full assembleDebug including the pinned runtime bundles
+#                     (downloaded from the GitHub release and SHA-256 verified)
+#
+# Rollback for the whole workflow = disable this file; no app code depends on it.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run unit tests (both flavors)
+        run: ./gradlew testOnlineDebugUnitTest testOfflineDebugUnitTest --stacktrace
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+  native-check:
+    name: Native syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: gcc -Wall -Wextra on pocket_spawn.c
+        run: |
+          gcc -Wall -Wextra -fsyntax-only \
+            -I "$JAVA_HOME/include" -I "$JAVA_HOME/include/linux" \
+            app/src/main/cpp/pocket_spawn.c
+
+  hygiene:
+    name: Size guard + SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: File-size guard (no new god classes, ISSUE-014)
+        run: python3 .github/scripts/check_file_sizes.py
+      - name: Generate CycloneDX SBOM (ISSUE-019, roadmap 3m)
+        run: |
+          python3 scripts/generate_sbom.py . > sbom.json
+          python3 -c "import json;json.load(open('sbom.json'))"
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          if-no-files-found: error
+
+  debug-build:
+    name: Debug build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # third_party/proot and third_party/libandroid-shmem are submodules
+          # required by the CMake native build.
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore verified runtime bundles cache
+        id: bundles
+        uses: actions/cache@v4
+        with:
+          path: dist/runtime-bundles
+          key: runtime-bundles-${{ hashFiles('dist/runtime-bundles/manifest.json') }}
+
+      - name: Download and verify runtime bundles
+        if: steps.bundles.outputs.cache-hit != 'true'
+        run: python3 .github/scripts/fetch_runtime_bundles.py
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

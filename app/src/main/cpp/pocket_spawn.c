@@ -24,7 +24,12 @@ Java_com_jarves_mh_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectA
     jsize envc = (*env)->GetArrayLength(env, java_env);
     char **argv = calloc((size_t)argc + 1, sizeof(char *));
     char **envp = calloc((size_t)envc + 1, sizeof(char *));
-    if (!argv || !envp) return NULL;
+    if (!argv || !envp) {
+        // Partial-allocation leak guard: free whichever array did get created.
+        free(argv);
+        free(envp);
+        return NULL;
+    }
     for (jsize i = 0; i < argc; i++) {
         jstring value = (jstring)(*env)->GetObjectArrayElement(env, java_argv, i);
         const char *utf = (*env)->GetStringUTFChars(env, value, NULL);
@@ -96,10 +101,14 @@ Java_com_jarves_mh_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectA
             close(in_pipe[0]);
             close(output_fd);
         }
-        chdir(cwd);
+        if (chdir(cwd) != 0) _exit(126);
         prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
         execve(argv[0], argv, envp);
-        dprintf(STDERR_FILENO, "Pocket native exec failed: %s\n", strerror(errno));
+        // dprintf()/strerror() are not async-signal-safe after fork() from the
+        // multi-threaded JVM and could deadlock the child on internal libc locks.
+        // Report failure with a fixed write() and let the exit code speak.
+        static const char exec_failed_msg[] = "native exec failed\n";
+        (void)write(STDERR_FILENO, exec_failed_msg, sizeof(exec_failed_msg) - 1);
         _exit(127);
     }
     if (pid > 0 && !use_pty) setpgid(pid, pid);

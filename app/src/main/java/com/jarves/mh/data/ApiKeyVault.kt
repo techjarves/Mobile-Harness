@@ -17,6 +17,16 @@ class ApiKeyVault(context: Context) {
     private val preferences = context.getSharedPreferences("pocket_secrets", Context.MODE_PRIVATE)
     private val alias = "pocket-provider-key"
 
+    /**
+     * Invoked at most once per provider per process when a stored secret exists but
+     * cannot be decrypted — typically because Android Keystore was invalidated (backup
+     * restore, clear-data migration, device change). Without this signal the vault used
+     * to silently behave as if no key had ever been saved (ISSUE-030).
+     */
+    @Volatile var onSecretInvalidated: ((providerId: String) -> Unit)? = null
+    private val invalidatedProviders =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
     @Synchronized
     fun put(providerId: String, secret: String) {
         if (secret.isBlank()) return
@@ -26,6 +36,7 @@ class ApiKeyVault(context: Context) {
             add(providerId, "Primary", secret)
         } else {
             putEncrypted(secretKey(providerId, active.id), secret)
+            invalidatedProviders.remove(providerId)
         }
     }
 
@@ -39,6 +50,7 @@ class ApiKeyVault(context: Context) {
             isActive = entries.isEmpty(),
         )
         putEncrypted(secretKey(providerId, entry.id), secret)
+        invalidatedProviders.remove(providerId)
         entries += entry.copy(isActive = false)
         savePool(providerId, entries)
         if (entries.size == 1) setActiveId(providerId, entry.id)
@@ -106,13 +118,26 @@ class ApiKeyVault(context: Context) {
         return getEncrypted(secretKey(providerId, active.id))
     }
 
-    private fun getEncrypted(storageId: String): String? = runCatching {
-        val iv = Base64.decode(preferences.getString("$storageId.iv", null), Base64.NO_WRAP)
-        val encrypted = Base64.decode(preferences.getString("$storageId.value", null), Base64.NO_WRAP)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(128, iv))
-        cipher.doFinal(encrypted).toString(Charsets.UTF_8)
-    }.getOrNull()
+    private fun getEncrypted(storageId: String): String? {
+        val ivRaw = preferences.getString("$storageId.iv", null) ?: return null
+        val encryptedRaw = preferences.getString("$storageId.value", null) ?: return null
+        val decrypted = runCatching {
+            val iv = Base64.decode(ivRaw, Base64.NO_WRAP)
+            val encrypted = Base64.decode(encryptedRaw, Base64.NO_WRAP)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(128, iv))
+            cipher.doFinal(encrypted).toString(Charsets.UTF_8)
+        }
+        if (decrypted.isFailure) reportDecryptionFailure(storageId)
+        return decrypted.getOrNull()
+    }
+
+    private fun reportDecryptionFailure(storageId: String) {
+        // Storage ids are "<providerId>.pool.<keyId>" (or a legacy bare "<providerId>").
+        val providerId = storageId.substringBefore(".pool").substringBefore(".iv")
+        if (providerId.isBlank() || !invalidatedProviders.add(providerId)) return
+        runCatching { onSecretInvalidated?.invoke(providerId) }
+    }
 
     private fun removeEncrypted(storageId: String) {
         preferences.edit().remove("$storageId.iv").remove("$storageId.value").apply()

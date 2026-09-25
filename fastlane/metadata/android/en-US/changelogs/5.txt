@@ -1,0 +1,1 @@
+Stability release: safer session cleanup, foreground notification safeguards and provider routing fixes.

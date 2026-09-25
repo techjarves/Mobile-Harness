@@ -7,7 +7,6 @@ import com.jarves.mh.BuildConfig
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -16,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.coroutineContext
+import com.jarves.mh.model.AgentAutonomyMode
 import com.jarves.mh.model.DevStack
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -45,7 +45,7 @@ data class AgentUpdateInfo(
 
 enum class RuntimeInstallEvent { STAGE, COMMAND, OUTPUT, DOWNLOAD, COMMAND_COMPLETED, COMPLETED }
 
-private data class RuntimeBundle(
+internal data class RuntimeBundle(
     val label: String,
     val fileName: String,
     val sha256: String,
@@ -81,7 +81,7 @@ class RuntimeInstaller(private val context: Context) {
         val ready = rootfsLayoutReady &&
             proot.canExecute() &&
             File(rootfs, "usr/bin/bash").exists() &&
-            rootfsMarker.readTextOrNull() == ROOTFS_VERSION &&
+            RootfsMigrationPolicy.isSupportedRootfsVersion(rootfsMarker.readTextOrNull()) &&
             File(rootfs, "usr/local/bin/node").exists() &&
             (legacyLanguageTools || coreToolsReady) &&
             coreReadyMarker.exists()
@@ -113,7 +113,7 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
-    /** Removes only scaffolding written automatically by earlier PocketDev alpha builds. */
+    /** Removes only scaffolding written automatically by earlier Mobile Harness alpha builds. */
     fun cleanupLegacyWorkspaceScaffolding() {
         val workspaces = File(context.filesDir, "workspaces")
         workspaces.listFiles { file -> file.isDirectory }.orEmpty().forEach { workspace ->
@@ -150,7 +150,9 @@ class RuntimeInstaller(private val context: Context) {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
 
-        if (!File(rootfs, "usr/bin/bash").exists() || rootfsMarker.readTextOrNull() != ROOTFS_VERSION) {
+        if (!File(rootfs, "usr/bin/bash").exists() ||
+            !RootfsMigrationPolicy.isSupportedRootfsVersion(rootfsMarker.readTextOrNull())
+        ) {
             onProgress(RuntimeInstallProgress("Preparing the private development runtime", 0.03f))
             val archive = obtainRuntimeBundle(
                 CORE_BUNDLE,
@@ -272,7 +274,7 @@ class RuntimeInstaller(private val context: Context) {
     suspend fun ensureGitHubCliInstalled(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
         if (isGitHubCliInstalled()) return
         check(!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            "GitHub sign-in needs the PocketDev online APK."
+            "GitHub sign-in needs the Mobile Harness online APK."
         }
         writeResolver()
         downloads.mkdirs()
@@ -339,26 +341,41 @@ class RuntimeInstaller(private val context: Context) {
             ?.let { put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, it) }
     }
 
-    /** Checks each installed agent against its own authoritative release source. */
+    /** Checks each installed agent against trusted release sources. */
     suspend fun checkAgentUpdates(): Map<com.jarves.mh.model.AgentKind, AgentUpdateInfo> {
         val installed = installedAgentVersions()
+        // 3k / ISSUE-002 long-term fix: the project-signed feed is a trust
+        // anchor of its own — when signing keys are pinned (UpdateSigningKeys)
+        // and the feed verifies, its versions can be offered without waiting
+        // for the next app release. Unreachable or invalid feed => null and
+        // the per-release allowlist below remains the only path (fail-closed).
+        val signedFeed = fetchSignedUpdateManifest()
         return buildMap {
             installed[com.jarves.mh.model.AgentKind.CLAUDE_CODE]?.let { current ->
-                runCatching {
+                val upstream = runCatching {
                     JSONObject(fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")).getString("version")
-                }.getOrNull()?.takeIf { isVersionNewer(it, current) }?.let { latest ->
-                    put(com.jarves.mh.model.AgentKind.CLAUDE_CODE, AgentUpdateInfo(current, latest))
-                }
+                }.getOrNull()
+                newestOf(signedFeed?.claudeCode?.version, upstream)
+                    ?.takeIf { isVersionNewer(it, current) }?.let { latest ->
+                        put(com.jarves.mh.model.AgentKind.CLAUDE_CODE, AgentUpdateInfo(current, latest))
+                    }
             }
             installed[com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS]?.let { current ->
-                runCatching {
+                // Only registry releases this app build has pinned digests for
+                // are ever offered (ISSUE-002/008 — the registry is data, not
+                // trust); the signed feed is the other allowed source.
+                val upstream = runCatching {
                     JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version")
-                }.getOrNull()?.takeIf { isVersionNewer(it, current) }?.let { latest ->
-                    put(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS, AgentUpdateInfo(current, latest))
-                }
+                }.getOrNull()?.takeIf { VerifiedAgentReleases.isVerifiedDshRelease(it) }
+                newestOf(signedFeed?.deepSeekHarness?.version, upstream)
+                    ?.takeIf { isVersionNewer(it, current) }?.let { latest ->
+                        put(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS, AgentUpdateInfo(current, latest))
+                    }
             }
             installed[com.jarves.mh.model.AgentKind.ANTIGRAVITY]?.let { current ->
-                runCatching { fetchAgyManifest().getString("version") }.getOrNull()
+                val upstream = runCatching { fetchAgyManifest().getString("version") }.getOrNull()
+                    ?.takeIf { VerifiedAgentReleases.isVerifiedAgyRelease(it) }
+                newestOf(signedFeed?.antigravity?.version, upstream)
                     ?.takeIf { isVersionNewer(it, current) }?.let { latest ->
                         put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, AgentUpdateInfo(current, latest))
                     }
@@ -385,25 +402,39 @@ class RuntimeInstaller(private val context: Context) {
         expectedVersion: String,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        val latest = JSONObject(fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")).getString("version")
-        check(latest == expectedVersion) { "A newer Claude Code release appeared. Check again before updating." }
-        val base = "https://downloads.claude.ai/claude-code-releases/$latest"
-        val manifest = JSONObject(fetchText("$base/manifest.json"))
-        val checksum = manifest.getJSONObject("platforms").getJSONObject("linux-arm64").getString("checksum")
-        val downloaded = File(downloads, "claude-$latest")
-        downloadVerified("$base/linux-arm64/claude", downloaded, checksum) { bytes, total ->
+        // 3k: a signed-feed entry for exactly this version wins (URL + digest
+        // both vouched by the project key); otherwise the official
+        // downloads.claude.ai manifest path is used, as before.
+        val signed = fetchSignedUpdateManifest()?.claudeCode?.takeIf { it.version == expectedVersion }
+        val url: String
+        val checksum: String
+        val checksumAlgorithm: String
+        if (signed != null) {
+            url = signed.url
+            checksum = signed.sha512
+            checksumAlgorithm = "SHA-512"
+        } else {
+            val latest = JSONObject(fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")).getString("version")
+            check(latest == expectedVersion) { "A newer Claude Code release appeared. Check again before updating." }
+            val base = "https://downloads.claude.ai/claude-code-releases/$latest"
+            url = "$base/linux-arm64/claude"
+            checksum = JSONObject(fetchText("$base/manifest.json")).getJSONObject("platforms").getJSONObject("linux-arm64").getString("checksum")
+            checksumAlgorithm = "SHA-256"
+        }
+        val downloaded = File(downloads, "claude-$expectedVersion")
+        downloadVerified(url, downloaded, checksum, algorithm = checksumAlgorithm) { bytes, total ->
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress("Downloading Claude Code $latest", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+            onProgress(RuntimeInstallProgress("Downloading Claude Code $expectedVersion", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
         val claude = File(rootfs, CLAUDE_GUEST_PATH.removePrefix("/"))
         claude.parentFile?.mkdirs()
-        val staged = File(claude.parentFile, ".claude-$latest.installing")
+        val staged = File(claude.parentFile, ".claude-$expectedVersion.installing")
         downloaded.copyTo(staged, overwrite = true)
         Os.chmod(staged.absolutePath, 0b111101101)
         Os.rename(staged.absolutePath, claude.absolutePath)
         downloaded.delete()
         verifyGuest(runtime.proot, "$CLAUDE_GUEST_PATH --version", "Claude Code update verification failed")
-        claudeMarker.writeText(latest)
+        claudeMarker.writeText(expectedVersion)
     }
 
     private suspend fun updateAgy(
@@ -411,13 +442,30 @@ class RuntimeInstaller(private val context: Context) {
         expectedVersion: String,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        val manifest = fetchAgyManifest()
-        val latest = manifest.getString("version")
-        check(latest == expectedVersion) { "A newer Antigravity release appeared. Check again before updating." }
-        val downloaded = File(downloads, "antigravity-$latest-linux-arm64.tar.gz")
-        downloadVerified(manifest.getString("url"), downloaded, manifest.getString("sha512"), algorithm = "SHA-512") { bytes, total ->
+        // 3k: the signed feed wins when it vouches for exactly this version.
+        // ISSUE-002's original rule stays as the fallback: the upstream
+        // manifest's own url/sha512 are attacker-controllable when the
+        // endpoint is compromised, so only the digest pinned in this app
+        // build is trusted there; an unknown version fails closed.
+        val signed = fetchSignedUpdateManifest()?.antigravity?.takeIf { it.version == expectedVersion }
+        val tarballUrl: String
+        val tarballSha512: String
+        if (signed != null) {
+            tarballUrl = signed.url
+            tarballSha512 = signed.sha512
+        } else {
+            val manifest = fetchAgyManifest()
+            val latest = manifest.getString("version")
+            check(latest == expectedVersion) { "A newer Antigravity release appeared. Check again before updating." }
+            val pinnedSha512 = VerifiedAgentReleases.agyDigest(latest)
+                ?: error("Antigravity $latest has not been verified for this Mobile Harness release yet. Update the app to receive it.")
+            tarballUrl = manifest.getString("url")
+            tarballSha512 = pinnedSha512
+        }
+        val downloaded = File(downloads, "antigravity-$expectedVersion-linux-arm64.tar.gz")
+        downloadVerified(tarballUrl, downloaded, tarballSha512, algorithm = "SHA-512") { bytes, total ->
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress("Downloading Antigravity CLI $latest", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+            onProgress(RuntimeInstallProgress("Downloading Antigravity CLI $expectedVersion", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
         val destination = File(rootfs, AGY_GUEST_PATH.removePrefix("/"))
         var found = false
@@ -425,7 +473,7 @@ class RuntimeInstaller(private val context: Context) {
             var entry = archive.nextEntry
             while (entry != null) {
                 if (entry.isFile && entry.name.removePrefix("./") == "antigravity") {
-                    val staged = File(destination.parentFile, ".agy-$latest.installing")
+                    val staged = File(destination.parentFile, ".agy-$expectedVersion.installing")
                     FileOutputStream(staged).use { archive.copyTo(it) }
                     Os.chmod(staged.absolutePath, 0b111101101)
                     Os.rename(staged.absolutePath, destination.absolutePath)
@@ -438,7 +486,7 @@ class RuntimeInstaller(private val context: Context) {
         downloaded.delete()
         check(found) { "Antigravity update archive is incomplete" }
         verifyGuest(runtime.proot, "$AGY_GUEST_PATH --version", "Antigravity update verification failed")
-        agyMarker.writeText(latest)
+        agyMarker.writeText(expectedVersion)
     }
 
     private suspend fun updateDsh(
@@ -446,26 +494,59 @@ class RuntimeInstaller(private val context: Context) {
         expectedVersion: String,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        val latest = JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version")
-        check(latest == expectedVersion) { "A newer DeepSeek Harness release appeared. Check again before updating." }
-        val quotedVersion = latest.replace(Regex("[^0-9A-Za-z.+-]"), "")
-        check(quotedVersion == latest) { "Invalid DeepSeek Harness version" }
-        runGuestCommand(
-            proot = runtime.proot,
-            command = "set -e; next=/usr/local/lib/dsh.updating; old=/usr/local/lib/dsh.previous; " +
-                "rm -rf \"${'$'}next\" \"${'$'}old\"; mkdir -p \"${'$'}next\"; " +
-                "cd \"${'$'}next\"; npm init -y >/dev/null; " +
-                "npm install --omit=dev --no-audit --no-fund @deepseek-ai/dsh@$quotedVersion; " +
-                "mv /usr/local/lib/dsh \"${'$'}old\"; " +
-                "if mv \"${'$'}next\" /usr/local/lib/dsh; then rm -rf \"${'$'}old\"; " +
-                "else mv \"${'$'}old\" /usr/local/lib/dsh; exit 1; fi",
-            displayCommand = "npm install @deepseek-ai/dsh@$quotedVersion",
-            fraction = 0.55f,
-            timeoutMs = 20 * 60 * 1_000L,
-            onProgress = onProgress,
-            failureMessage = "DeepSeek Harness update failed; the installed version was preserved",
-        )
-        dshMarker.writeText(latest)
+        val quotedVersion = expectedVersion.replace(Regex("[^0-9A-Za-z.+-]"), "")
+        check(quotedVersion == expectedVersion) { "Invalid DeepSeek Harness version" }
+        // 3k: the signed feed wins when it vouches for exactly this version.
+        // ISSUE-008's original rule stays as the fallback: an open-ended
+        // `npm install` resolves whatever the registry serves at that moment,
+        // so the tarball is digest-verified against this build's pinned
+        // release first (same rule as the agy updater, ISSUE-002), and npm
+        // then installs from the verified file.
+        val signed = fetchSignedUpdateManifest()?.deepSeekHarness?.takeIf { it.version == expectedVersion }
+        val tarballUrl: String
+        val tarballSha512: String
+        if (signed != null) {
+            tarballUrl = signed.url
+            tarballSha512 = signed.sha512
+        } else {
+            val latest = JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version")
+            check(latest == expectedVersion) { "A newer DeepSeek Harness release appeared. Check again before updating." }
+            val pinnedSha512 = VerifiedAgentReleases.dshDigest(latest)
+                ?: error("DeepSeek Harness $latest has not been verified for this Mobile Harness release yet. Update the app to receive it.")
+            tarballUrl = "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-$quotedVersion.tgz"
+            tarballSha512 = pinnedSha512
+        }
+        val tarball = File(downloads, "dsh-$quotedVersion.tgz")
+        downloadVerified(tarballUrl, tarball, tarballSha512, algorithm = "SHA-512") { bytes, total ->
+            val ratio = if (total > 0L) bytes.toFloat() / total else 0f
+            onProgress(RuntimeInstallProgress("Downloading DeepSeek Harness $expectedVersion", ratio * 0.4f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+        }
+        // The runtime-bridge directory is bind-mounted into the guest at
+        // /pocket-bridge, so the verified tarball is visible to npm without
+        // copying it into the rootfs.
+        val bridgeDir = File(context.filesDir, "runtime-bridge").apply { mkdirs() }
+        val guestTarball = File(bridgeDir, "dsh-$quotedVersion.tgz")
+        tarball.copyTo(guestTarball, overwrite = true)
+        try {
+            runGuestCommand(
+                proot = runtime.proot,
+                command = "set -e; next=/usr/local/lib/dsh.updating; old=/usr/local/lib/dsh.previous; " +
+                    "rm -rf \"${'$'}next\" \"${'$'}old\"; mkdir -p \"${'$'}next\"; " +
+                    "cd \"${'$'}next\"; npm init -y >/dev/null; " +
+                    "npm install --omit=dev --no-audit --no-fund /pocket-bridge/dsh-$quotedVersion.tgz; " +
+                    "mv /usr/local/lib/dsh \"${'$'}old\"; " +
+                    "if mv \"${'$'}next\" /usr/local/lib/dsh; then rm -rf \"${'$'}old\"; " +
+                    "else mv \"${'$'}old\" /usr/local/lib/dsh; exit 1; fi",
+                displayCommand = "npm install dsh-$quotedVersion (verified tarball)",
+                fraction = 0.55f,
+                timeoutMs = 20 * 60 * 1_000L,
+                onProgress = onProgress,
+                failureMessage = "DeepSeek Harness update failed; the installed version was preserved",
+            )
+        } finally {
+            guestTarball.delete()
+        }
+        dshMarker.writeText(expectedVersion)
         dshAndroidCompatibilityMarker.delete()
         ensureDshAndroidCompatibility()
         verifyGuest(runtime.proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness update verification failed")
@@ -474,6 +555,28 @@ class RuntimeInstaller(private val context: Context) {
     private fun fetchAgyManifest(): JSONObject = JSONObject(
         fetchText("https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json"),
     )
+
+    /**
+     * 3k (ISSUE-002 long-term fix): fetch and verify the project-signed
+     * agent update feed. Returns null — never throws — when no signing key
+     * is pinned, the feed is unreachable, or anything fails verification,
+     * leaving the per-release allowlist as the only trusted path.
+     */
+    private fun fetchSignedUpdateManifest(): SignedUpdateFeed? {
+        if (UpdateSigningKeys.publicKeys.isEmpty()) return null
+        return runCatching {
+            val body = fetchBytes(SIGNED_UPDATE_MANIFEST_URL)
+            val signature = fetchBytes("$SIGNED_UPDATE_MANIFEST_URL.minisig")
+            SignedUpdateManifest.parse(body, signature)
+        }.getOrNull()
+    }
+
+    /** The newer of two (nullable) version strings; null only when both are. */
+    private fun newestOf(left: String?, right: String?): String? {
+        if (left == null) return right
+        if (right == null) return left
+        return if (isVersionNewer(left, right)) left else right
+    }
 
     private fun isVersionNewer(candidate: String, current: String): Boolean {
         fun parts(value: String) = Regex("\\d+").findAll(value).map { it.value.toIntOrNull() ?: 0 }.toList()
@@ -505,6 +608,9 @@ class RuntimeInstaller(private val context: Context) {
     private fun isSupportedCoreToolsVersion(): Boolean = coreToolsMarker.readTextOrNull() in setOf(
         CORE_TOOLS_VERSION,
         LEGACY_CORE_TOOLS_VERSION,
+        // Written by the 24.04 Core bundle (roadmap 3i); without it a migrated
+        // base would look stale and be "repaired" back to 20.04.
+        RootfsMigrationPolicy.UBUNTU_24_CORE_TOOLS_VERSION,
     )
 
     private suspend fun ensureClaudeInstalled(
@@ -618,7 +724,7 @@ class RuntimeInstaller(private val context: Context) {
         var source = file.readText()
         if (callAfter in source && importAfter in source) return
         check(callBefore in source && importBefore in source) {
-            "DeepSeek Harness $DSH_VERSION is not compatible with this PocketDev build"
+            "DeepSeek Harness $DSH_VERSION is not compatible with this Mobile Harness build"
         }
         source = source.replace(importBefore, importAfter).replace(callBefore, callAfter)
         file.writeText(source)
@@ -900,7 +1006,7 @@ class RuntimeInstaller(private val context: Context) {
      * `.pth` file in site-packages and crashes when one of them is a
      * binary metadata blob.
      */
-    private fun stripMacosMetadataArtifacts(root: File) {
+    internal fun stripMacosMetadataArtifacts(root: File) {
         if (!root.isDirectory) return
         val queue = ArrayDeque<File>()
         queue.add(root)
@@ -922,7 +1028,7 @@ class RuntimeInstaller(private val context: Context) {
         }
     }
 
-    private suspend fun obtainRuntimeBundle(
+    internal suspend fun obtainRuntimeBundle(
         bundle: RuntimeBundle,
         preferEmbedded: Boolean,
         from: Float,
@@ -983,6 +1089,9 @@ class RuntimeInstaller(private val context: Context) {
             onProgress(RuntimeInstallProgress(message, from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
         }
         onProgress(RuntimeInstallProgress("Installing ${archiveName.removeSuffix(".zip")}", to, indeterminate = true))
+        // Space guard (ISSUE-023): an extraction needs the archive plus the
+        // extracted tree next to it — the audit's ~3x heuristic.
+        ensureFreeBytes(destination.parentFile ?: context.cacheDir, 3L * archive.length(), "extraction")
         val staging = File(destination.parentFile, "${destination.name}.installing")
         staging.deleteRecursively()
         staging.mkdirs()
@@ -1192,17 +1301,25 @@ class RuntimeInstaller(private val context: Context) {
             ),
         )
         writeResolver()
+        // ISSUE-008 final slice (roadmap 3i): unattended per-device
+        // `apt-get upgrade` is gone — security patches now ship inside rebuilt,
+        // digest-pinned Core bundles, so two devices on the same bundle hold
+        // identical package state (their `dpkg -l` output matches). On-device
+        // maintenance is repair-only: finish half-configured packages, let apt
+        // fix a broken dependency state, and drop the cache. A dead or EOL
+        // mirror must never block setup, so the apt steps are best-effort
+        // while the dpkg repair stays fatal.
         val command = "export DEBIAN_FRONTEND=noninteractive; " +
-            "dpkg --configure -a && " +
-            "apt-get -o DPkg::Lock::Timeout=120 -f install -y && " +
-            "apt-get -o DPkg::Lock::Timeout=120 update && " +
-            "apt-get -o DPkg::Lock::Timeout=120 upgrade -y"
+            "dpkg --configure -a || exit 1; " +
+            "if ! apt-get -o DPkg::Lock::Timeout=120 update; then echo 'note: apt update unavailable (offline or retired mirror)'; fi; " +
+            "if ! apt-get -o DPkg::Lock::Timeout=120 -f install -y --no-install-recommends; then echo 'note: apt repair skipped'; fi; " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
         runGuestCommand(
             proot = proot,
             command = command,
-            displayCommand = "dpkg --configure -a && apt-get -f install -y && apt-get update && apt-get upgrade -y",
+            displayCommand = "dpkg --configure -a (repair-only maintenance, patches ship with Core bundles)",
             fraction = 0.69f,
-            timeoutMs = 35 * 60 * 1_000L,
+            timeoutMs = 20 * 60 * 1_000L,
             onProgress = onProgress,
             failureMessage = "Ubuntu maintenance could not be completed",
         )
@@ -1285,45 +1402,38 @@ class RuntimeInstaller(private val context: Context) {
         val collected = StringBuilder()
         try {
             withTimeout(timeoutMs) {
-                var offset = 0L
                 var pending = ""
-                while (running.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
-                    coroutineContext.ensureActive()
-                    val file = native?.outputFile
-                    if (file != null && file.length() > offset) {
-                        RandomAccessFile(file, "r").use { input ->
-                            input.seek(offset)
-                            val available = (input.length() - offset).coerceAtMost(256 * 1024).toInt()
-                            val bytes = ByteArray(available)
-                            input.readFully(bytes)
-                            offset += available
-                            pending += bytes.toString(Charsets.UTF_8).replace('\r', '\n')
+                val consumeChunk: suspend (String) -> Unit = { chunk ->
+                    pending += chunk.replace('\r', '\n')
+                    val parts = pending.split('\n')
+                    pending = parts.last()
+                    for (raw in parts.dropLast(1)) {
+                        val line = sanitizeTerminalLine(raw)
+                        if (line.isNotBlank()) {
+                            collected.appendLine(line)
+                            if (collected.length > MAX_COLLECTED_OUTPUT) collected.delete(0, collected.length - MAX_COLLECTED_OUTPUT)
+                            onProgress(
+                                RuntimeInstallProgress(
+                                    message = line,
+                                    fraction = fraction,
+                                    terminalLine = line,
+                                    indeterminate = true,
+                                    event = RuntimeInstallEvent.OUTPUT,
+                                ),
+                            )
                         }
-                        val parts = pending.split('\n')
-                        pending = parts.last()
-                        for (raw in parts.dropLast(1)) {
-                            val line = sanitizeTerminalLine(raw)
-                            if (line.isNotBlank()) {
-                                collected.appendLine(line)
-                                if (collected.length > MAX_COLLECTED_OUTPUT) collected.delete(0, collected.length - MAX_COLLECTED_OUTPUT)
-                                onProgress(
-                                    RuntimeInstallProgress(
-                                        message = line,
-                                        fraction = fraction,
-                                        terminalLine = line,
-                                        indeterminate = true,
-                                        event = RuntimeInstallEvent.OUTPUT,
-                                    ),
-                                )
-                            }
-                        }
-                    } else {
-                        delay(80)
                     }
                 }
-                sanitizeTerminalLine(pending).takeIf(String::isNotBlank)?.let { line ->
-                    collected.appendLine(line)
-                    onProgress(RuntimeInstallProgress(line, fraction, terminalLine = line, indeterminate = true, event = RuntimeInstallEvent.OUTPUT))
+                val file = native?.outputFile
+                if (file != null) {
+                    // The single shared tail loop (ISSUE-013).
+                    OutputFileTailer.tailChunks(file, running::isAlive, consumeChunk)
+                    sanitizeTerminalLine(pending).takeIf(String::isNotBlank)?.let { line ->
+                        collected.appendLine(line)
+                        onProgress(RuntimeInstallProgress(line, fraction, terminalLine = line, indeterminate = true, event = RuntimeInstallEvent.OUTPUT))
+                    }
+                } else {
+                    while (running.isAlive) delay(80)
                 }
             }
         } finally {
@@ -1346,7 +1456,7 @@ class RuntimeInstaller(private val context: Context) {
         .filter { it == '\t' || it.code >= 32 }
         .take(MAX_TERMINAL_LINE)
 
-    private suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
+    internal suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
         val verify = process(
             proot = proot,
             rootfs = rootfs,
@@ -1371,7 +1481,7 @@ class RuntimeInstaller(private val context: Context) {
      * making every ELF executable misleadingly fail with ENOENT. Restore only
      * the known Ubuntu compatibility links and never replace real directories.
      */
-    private fun ensureRootfsCompatibilityLinks(): Boolean {
+    internal fun ensureRootfsCompatibilityLinks(): Boolean {
         if (!rootfs.isDirectory) return false
         val links = mapOf(
             "bin" to "usr/bin",
@@ -1397,7 +1507,7 @@ class RuntimeInstaller(private val context: Context) {
                 File(rootfs, "usr/bin/bash").canExecute() &&
                 File(rootfs, "lib/ld-linux-aarch64.so.1").exists()
         }.onFailure {
-            android.util.Log.e("RuntimeInstaller", "Could not repair Linux compatibility links", it)
+            AppLog.e("RuntimeInstaller", "Could not repair Linux compatibility links", it)
         }.getOrDefault(false)
     }
 
@@ -1424,15 +1534,18 @@ class RuntimeInstaller(private val context: Context) {
         val buffer = java.nio.ByteBuffer.wrap(bytes)
         decoder.decode(buffer).toString()
     }.getOrElse { error ->
-        android.util.Log.w("RuntimeInstaller", "Could not decode process output as UTF-8: ${error.message}")
+        AppLog.w("RuntimeInstaller", "Could not decode process output as UTF-8: ${error.message}")
         ""
     }
 
-    suspend fun initializeExisting(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
+    suspend fun initializeExisting(
+        mode: AgentAutonomyMode,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ): InstalledRuntime {
         val installed = installedRuntime()
         onProgress(RuntimeInstallProgress("Checking private runtime files", 0.15f))
         writeResolver()
-        ensureSettingsAndHooks()
+        ensureSettingsAndHooks(mode)
         File(context.filesDir, "runtime-bridge").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         onProgress(RuntimeInstallProgress("Preparing the Android runtime bridge", 0.42f))
         check(File(rootfs, "usr/local/bin/node").canExecute()) { "Core runtime is missing Node.js" }
@@ -1530,42 +1643,16 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
-    fun ensureSettingsAndHooks() {
+    fun ensureSettingsAndHooks(mode: AgentAutonomyMode = AgentAutonomyMode.APPROVE_RISKY) {
         val hook = File(rootfs, "opt/pocket/permission-hook.sh")
         hook.parentFile?.mkdirs()
-        hook.writeText(
-            """#!/bin/sh
-cat > /dev/null
-printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
-""",
-        )
+        // Policy generation (ISSUE-001) lives in AgentPermissions so it is unit-tested.
+        // Only the explicit FULLY_AUTONOMOUS mode installs an always-allow hook;
+        // every other mode installs the fail-closed interactive bridge.
+        hook.writeText(AgentPermissions.permissionHookScript(mode))
         Os.chmod(hook.absolutePath, 0b111101101)
 
-        val settingsContent = JSONObject()
-            .put("disableAllHooks", false)
-            .put(
-                "permissions",
-                JSONObject()
-                    .put("allow", claudeWorkspaceToolRules())
-                    .put("defaultMode", "acceptEdits"),
-            )
-            .put(
-                "hooks",
-                JSONObject().put(
-                    "PermissionRequest",
-                    org.json.JSONArray().put(
-                        JSONObject()
-                            .put("matcher", "Bash|Edit|Write|NotebookEdit")
-                            .put(
-                                "hooks",
-                                org.json.JSONArray().put(
-                                    JSONObject().put("type", "command").put("command", "/opt/pocket/permission-hook.sh"),
-                                ),
-                            ),
-                    ),
-                ),
-            )
-            .toString()
+        val settingsContent = AgentPermissions.claudeSettingsJson(mode)
 
         val settingsPaths = listOf(
             File(rootfs, "root/.claude/pocket-settings.json"),
@@ -1594,22 +1681,16 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         stateFile.writeText(state.toString())
     }
 
-    private fun claudeWorkspaceToolRules() = org.json.JSONArray().apply {
-        put("Bash")
-        put("Edit")
-        put("Write")
-        put("NotebookEdit")
-        put("Read")
-        put("Glob")
-        put("Grep")
-    }
-
-    private fun writeResolver() {
+    /** Writes the host's DNS resolvers into a rootfs (the active one by default). */
+    internal fun writeResolver(target: File = rootfs) {
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val dns = manager.getLinkProperties(manager.activeNetwork)?.dnsServers.orEmpty()
         val servers = dns.mapNotNull { it.hostAddress }.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
-        File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
+        File(target, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
+
+    /** Current `.pocket-rootfs-version` marker, or null when unreadable (roadmap 3i). */
+    internal fun rootfsMarkerValue(): String? = rootfsMarker.readTextOrNull()
 
     private fun extractRootfs(archive: File, destination: File) {
         val deferredLinks = mutableListOf<Pair<File, File>>()
@@ -1651,7 +1732,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         }
     }
 
-    private fun extractZstdTar(archive: File, destination: File) {
+    internal fun extractZstdTar(archive: File, destination: File) {
         val deferredLinks = mutableListOf<Pair<File, File>>()
         TarArchiveInputStream(
             ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())),
@@ -1773,6 +1854,12 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             existing = 0L
         }
         val total = connection.contentLengthLong.takeIf { it >= 0L }?.plus(existing) ?: -1L
+        // Space guard (ISSUE-023): fail BEFORE writing when the download cannot
+        // possibly fit — roughly the file itself plus extraction headroom
+        // (capped, so small downloads never demand a huge floor).
+        if (total > 0L) {
+            ensureFreeBytes(destination.parentFile ?: context.cacheDir, total + minOf(total, 256L * 1024 * 1024), "download")
+        }
         connection.inputStream.use { input ->
             FileOutputStream(temporary, resumed).use { output ->
                 val buffer = ByteArray(128 * 1024)
@@ -1796,6 +1883,17 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         check(temporary.renameTo(destination)) { "Could not finish download" }
     }
 
+    /** Fails with a friendly message when [directory] has less than [requiredBytes] free (ISSUE-023). */
+    private fun ensureFreeBytes(directory: File, requiredBytes: Long, label: String) {
+        if (requiredBytes <= 0L) return
+        val available = runCatching { android.os.StatFs(directory.absolutePath).availableBytes }
+            .getOrNull() ?: return
+        check(available >= requiredBytes) {
+            val mb = 1_048_576L
+            "Not enough free storage for the $label: about ${requiredBytes / mb} MB is needed but only ${available / mb} MB is free. Free up space and try again."
+        }
+    }
+
     private fun fetchText(url: String): String {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
@@ -1803,6 +1901,15 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         connection.setRequestProperty("Accept", "application/json")
         check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
         return connection.inputStream.bufferedReader().use { it.readText() }.also { connection.disconnect() }
+    }
+
+    /** Byte-exact fetch for content whose signature covers the served bytes (3k). */
+    private fun fetchBytes(url: String): ByteArray {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
+        return connection.inputStream.use { it.readBytes() }.also { connection.disconnect() }
     }
 
     private fun digest(file: File, algorithm: String): String {
@@ -1823,15 +1930,21 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     companion object {
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
+        // Signed agent update feed (roadmap 3k, ISSUE-002 long-term fix):
+        // a project-controlled channel on the repo's agent-updates branch.
+        // Every entry is Ed25519/minisign-signed with an offline key pinned
+        // in UpdateSigningKeys; dormant (empty keys) until activation — see
+        // docs/release/signing-agent-updates.md.
+        private const val SIGNED_UPDATE_MANIFEST_URL =
+            "https://raw.githubusercontent.com/techjarves/Mobile-Harness/agent-updates/agent-updates-manifest.json"
         private const val AGY_VERSION = "1.1.27"
         private const val AGY_RELEASE_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz"
-        private const val AGY_RELEASE_SHA512 = "ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9"
+        private val AGY_RELEASE_SHA512: String get() = VerifiedAgentReleases.agyDigest(AGY_VERSION).orEmpty()
         private const val GITHUB_CLI_VERSION = "2.100.0"
         private const val GITHUB_CLI_RELEASE_URL = "https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_linux_arm64.tar.gz"
         private const val GITHUB_CLI_RELEASE_SHA256 = "ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961"
         private const val LEGACY_README = "# Pocket Dev project\n\nThis project is managed locally on Android.\n"
         private const val LEGACY_INDEX = "<!doctype html><title>Pocket Dev</title><h1>Hello from Android</h1>\n"
-        private const val ROOTFS_VERSION = "ubuntu-20.04.5-arm64"
         private const val ROOTFS_FILE = "ubuntu-base-20.04.5-base-arm64.tar.gz"
         private const val ROOTFS_URL = "https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/$ROOTFS_FILE"
         private const val ROOTFS_SHA256 = "f9b999afb4c4b10193087ea8c11be36d688f19e609b05179b571f29357954b52"
@@ -1839,9 +1952,13 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
         private const val CORE_TOOLS_VERSION = "core-bundle-2026.09.5"
         private const val LEGACY_CORE_TOOLS_VERSION = "core-bundle-2026.09.4"
-        private const val SYSTEM_UPGRADE_VERSION = "ubuntu-maintenance-v1"
+        private const val SYSTEM_UPGRADE_VERSION = "ubuntu-maintenance-v3"
         private const val ANDROID_TOOLS_VERSION = "sdk36-build-tools35-gradle8.14.3-maven-2026.09"
-        private const val ANDROID_ASSET_BASE = "https://appdevforall.org/dev-assets/debug"
+        // Toolchain assets (ISSUE-003): served from the project's own release
+        // channel (same channel as the runtime bundles) instead of a personal
+        // third-party domain. SHA-256 pins below are unchanged and remain the
+        // integrity anchor; provenance notes live in THIRD_PARTY_NOTICES.md.
+        private const val ANDROID_ASSET_BASE = "https://github.com/techjarves/Mobile-Harness/releases/download/android-tools-2026.09.1"
         private const val ANDROID_SDK_URL = "$ANDROID_ASSET_BASE/android-sdk-arm64-v8a.zip"
         private const val ANDROID_SDK_SHA256 = "bfe5bc940a7ede14735817a40962256666ce4152b9f3135f34a4ab9bccb87c3f"
         private const val ANDROID_GRADLE_URL = "$ANDROID_ASSET_BASE/gradle-8.14.3-bin.zip"

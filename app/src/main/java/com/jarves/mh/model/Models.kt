@@ -225,6 +225,39 @@ data class WorkspaceEntry(
 enum class RiskLevel { SAFE, REVIEW, HIGH }
 
 /**
+ * How much freedom the coding agent gets over tool calls (ISSUE-001).
+ *
+ * The default is [APPROVE_RISKY]: everyday edits run automatically while
+ * destructive or network commands wait for an explicit user approval.
+ * [FULLY_AUTONOMOUS] restores the pre-v1.1.0 always-approve behavior and must
+ * stay an explicit, informed choice.
+ */
+enum class AgentAutonomyMode(val stableId: String, val title: String, val summary: String) {
+    FULLY_AUTONOMOUS(
+        "fully_autonomous",
+        "Fully autonomous",
+        "Every tool call is approved automatically. Fastest and most dangerous: a prompt injection can run any command inside the workspace.",
+    ),
+    APPROVE_RISKY(
+        "approve_risky",
+        "Approve risky actions (recommended)",
+        "Destructive and network commands wait for your approval. Everyday edits run automatically.",
+    ),
+    APPROVE_ALL(
+        "approve_all",
+        "Approve everything",
+        "Every tool call waits for your approval. Safest, and it needs you nearby.",
+    ),
+    ;
+
+    companion object {
+        /** Unknown or missing stored values fall back to the safe default, never to autonomy. */
+        fun fromStored(value: String?): AgentAutonomyMode =
+            entries.firstOrNull { it.stableId == value } ?: APPROVE_RISKY
+    }
+}
+
+/**
  * Optional development toolchains the user can pick during onboarding.
  * Node.js, npm, Git, and Claude Code itself are always installed because the
  * agent runtime depends on them; these stacks add heavier extras on demand.
@@ -269,6 +302,23 @@ data class ToolRequest(
     val affectedPaths: List<String> = emptyList(),
     val commandPreview: String? = null,
     val risk: RiskLevel,
+)
+
+/**
+ * A task that was in flight when the OS killed the app process (ISSUE-007,
+ * roadmap 3h). Detected at startup from the session journal and surfaced as a
+ * "Task interrupted — Resume / Dismiss" banner. `canResumeNatively` is true
+ * when the agent's own conversation id was captured before the kill, letting
+ * the resume continue the exact server-side context (--resume / --conversation)
+ * instead of rebuilding it from the persisted transcript.
+ */
+data class InterruptedSession(
+    val agentKind: AgentKind,
+    val projectId: String,
+    val projectSlug: String,
+    val request: String,
+    val startedAtMillis: Long,
+    val canResumeNatively: Boolean,
 )
 
 sealed interface RuntimeEvent {
@@ -354,4 +404,14 @@ data class ActivityItem(
     val detail: String,
     val isComplete: Boolean = true,
     val isCommand: Boolean = false,
+)
+
+/** A repository entry as reported by the official GitHub CLI (moved out of the retired GitHubClient). */
+data class GitHubRepository(
+    val fullName: String,
+    val cloneUrl: String,
+    val private: Boolean,
+    val defaultBranch: String,
+    val description: String,
+    val updatedAt: String,
 )
