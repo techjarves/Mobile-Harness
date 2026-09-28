@@ -27,12 +27,12 @@ jobs:
       - name: Build and verify
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest lintDebug assembleDebug
+          ./gradlew testOfflineDebugUnitTest lintOfflineDebug assembleOfflineDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: mobile-harness-claude-oauth-fix
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/offline/debug/app-offline-debug.apk
           if-no-files-found: error
           retention-days: 7
