@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,14 +32,20 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -121,6 +128,10 @@ fun TerminalScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+    var terminalFontSize by rememberSaveable { mutableStateOf(12) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
     val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
     val openTerminalKeyboard = {
         inputFocusRequester.requestFocus()
@@ -165,14 +176,16 @@ fun TerminalScreen(
     }
 
     val quickCommands = listOf(
-        "uname -a",
         "ls -la",
         "pwd",
+        "git status",
+        "git log --oneline -5",
         "node -v",
         "python3 --version",
         "df -h",
         "free -m",
-        "claude --version",
+        "clear",
+        "uname -a",
     )
 
     Scaffold(
@@ -197,15 +210,61 @@ fun TerminalScreen(
                             Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output", modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { showSearch = !showSearch }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Search, contentDescription = "Search", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = {
+                            val all = lines.joinToString("\n") { "${it.command}\n${it.output}" } + if (liveOutput.isNotBlank()) "\n$liveOutput" else ""
+                            clipboard.setText(AnnotatedString(all))
+                        }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy all output", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = { if (terminalFontSize > 9) terminalFontSize -= 1 }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Remove, contentDescription = "Zoom out", modifier = Modifier.size(16.dp))
+                        }
+                        IconButton(onClick = { if (terminalFontSize < 18) terminalFontSize += 1 }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Add, contentDescription = "Zoom in", modifier = Modifier.size(16.dp))
+                        }
+                        IconButton(onClick = onClear, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output", modifier = Modifier.size(18.dp))
                         }
                         if (showThemeAction) {
-                            IconButton(onClick = onToggleTheme) {
+                            IconButton(onClick = onToggleTheme, modifier = Modifier.size(36.dp)) {
                                 Icon(
                                     if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
                                     contentDescription = "Toggle theme",
+                                    modifier = Modifier.size(18.dp),
                                 )
+                            }
+                        }
+                    }
+                    if (showSearch) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                                decorationBox = { innerTextField ->
+                                    if (searchQuery.isEmpty()) {
+                                        Text("Filter output…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    innerTextField()
+                                },
+                            )
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Default.Close, "Clear search", modifier = Modifier.size(16.dp))
+                                }
                             }
                         }
                     }
@@ -245,6 +304,21 @@ fun TerminalScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = { showSearch = !showSearch }) {
+                            Icon(Icons.Default.Search, contentDescription = "Search")
+                        }
+                        IconButton(onClick = {
+                            val all = lines.joinToString("\n") { "${it.command}\n${it.output}" } + if (liveOutput.isNotBlank()) "\n$liveOutput" else ""
+                            clipboard.setText(AnnotatedString(all))
+                        }) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy all output")
+                        }
+                        IconButton(onClick = { if (terminalFontSize > 9) terminalFontSize -= 1 }) {
+                            Icon(Icons.Default.Remove, contentDescription = "Zoom out")
+                        }
+                        IconButton(onClick = { if (terminalFontSize < 18) terminalFontSize += 1 }) {
+                            Icon(Icons.Default.Add, contentDescription = "Zoom in")
+                        }
                         IconButton(onClick = onClear) {
                             Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output")
                         }
@@ -324,24 +398,35 @@ fun TerminalScreen(
                 ) {
                     SelectionContainer {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (lines.isEmpty()) {
+                            val visibleLines = if (searchQuery.isBlank()) lines else lines.filter {
+                                it.command.contains(searchQuery, ignoreCase = true) ||
+                                it.output.contains(searchQuery, ignoreCase = true)
+                            }
+                            if (visibleLines.isEmpty() && searchQuery.isNotBlank()) {
+                                Text(
+                                    "No matching terminal output for \"$searchQuery\"",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = terminalFontSize.sp,
+                                    color = emptyStateColor,
+                                )
+                            } else if (lines.isEmpty()) {
                                 Text(
                                     "Mobile Harness Terminal ready.\nType a bash command below or tap a quick command chip above.",
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
+                                    fontSize = terminalFontSize.sp,
                                     color = emptyStateColor,
                                 )
                             }
 
-                            lines.forEach { item ->
+                            visibleLines.forEach { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command, isDark = isDark)
                                     if (item.output.isNotEmpty()) {
                                         Text(
                                             text = sanitizeTerminalOutput(item.output),
                                             fontFamily = FontFamily.Monospace,
-                                            fontSize = 12.sp,
-                                            lineHeight = 18.sp,
+                                            fontSize = terminalFontSize.sp,
+                                            lineHeight = (terminalFontSize * 1.45).sp,
                                             color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else outputTextColor,
                                             modifier = Modifier.padding(start = 8.dp),
                                         )
@@ -353,12 +438,12 @@ fun TerminalScreen(
                                 TerminalCommandPrompt(promptPath = terminalPromptPath, command = currentCommand, isDark = isDark)
                             }
 
-                            if (liveOutput.isNotBlank()) {
+                            if (liveOutput.isNotBlank() && (searchQuery.isBlank() || liveOutput.contains(searchQuery, ignoreCase = true))) {
                                 Text(
                                     sanitizeTerminalOutput(liveOutput),
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    lineHeight = 18.sp,
+                                    fontSize = terminalFontSize.sp,
+                                    lineHeight = (terminalFontSize * 1.45).sp,
                                     color = outputTextColor,
                                 )
                             }
@@ -442,40 +527,61 @@ fun TerminalScreen(
                 }
             }
 
-            // Keyboard helper row. These operate on the command draft, so they are
-            // useful even when the phone keyboard does not expose terminal keys.
-            if (!keyboardVisible) {
+            // Keyboard & coding symbol helper row.
+            // Sits right above the soft keyboard or at the bottom so developers can type fast without switching keyboards.
+            val insertSymbol: (String) -> Unit = { sym ->
+                val current = commandInput
+                val start = current.selection.min.coerceIn(0, current.text.length)
+                val end = current.selection.max.coerceIn(0, current.text.length)
+                val newText = current.text.replaceRange(start, end, sym)
+                val newCursor = start + sym.length
+                commandInput = TextFieldValue(newText, TextRange(newCursor))
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = if (isDark) Color(0xFF161B22) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                tonalElevation = 2.dp,
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp)
-                        .padding(bottom = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TerminalKeyButton("↑", "Previous command") {
+                    TerminalKeyButton("TAB", "Tab indentation", minWidth = 44) { insertSymbol("  ") }
+                    TerminalKeyButton("↑", "Previous command", minWidth = 36) {
                         commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
                             historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
                             commandInput = TextFieldValue(it, TextRange(it.length))
                         }
                     }
-                    TerminalKeyButton("↓", "Next command") {
+                    TerminalKeyButton("↓", "Next command", minWidth = 36) {
                         if (historyIndex >= 0) {
                             historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
                             commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
                         }
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowBack, "Move cursor left") {
+                    TerminalIconKeyButton(Icons.AutoMirrored.Filled.ArrowBack, "Move cursor left") {
                         commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowForward, "Move cursor right") {
+                    TerminalIconKeyButton(Icons.AutoMirrored.Filled.ArrowForward, "Move cursor right") {
                         commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
                     }
-                    TerminalKeyButton("ALT", "Alt modifier", active = altActive, fixedWidth = true) { altActive = !altActive }
-                    TerminalKeyButton("ESC", "Escape") { commandInput = TextFieldValue() }
-                    TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
+                    TerminalKeyButton("ESC", "Escape", minWidth = 44) { commandInput = TextFieldValue() }
+                    TerminalKeyButton("CTRL", "Control modifier", active = ctrlActive, minWidth = 56) {
                         ctrlActive = !ctrlActive
                         if (ctrlActive) openTerminalKeyboard()
+                    }
+
+                    // Essential programming and shell symbol shortcuts
+                    val quickSymbols = listOf("|", "/", "-", "_", "~", "$", "\"", "'", ";", ":", "=", ">", "<", "{", "}", "(", ")", "[", "]", "&", "!")
+                    quickSymbols.forEach { sym ->
+                        TerminalKeyButton(sym, "Insert $sym", minWidth = 32) {
+                            insertSymbol(sym)
+                        }
                     }
                 }
             }
@@ -488,26 +594,29 @@ private fun TerminalKeyButton(
     label: String,
     description: String,
     active: Boolean = false,
-    fixedWidth: Boolean = false,
+    minWidth: Int = 34,
     onClick: () -> Unit,
 ) {
     androidx.compose.material3.OutlinedButton(
         onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-        modifier = Modifier.height(34.dp).then(if (fixedWidth) Modifier.width(78.dp) else Modifier),
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+        modifier = Modifier
+            .height(32.dp)
+            .widthIn(min = minWidth.dp),
         colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
             containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else Color.Transparent,
             contentColor = if (active) PocketOrange else MaterialTheme.colorScheme.onSurface,
         ),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (active) PocketOrange else MaterialTheme.colorScheme.outlineVariant,
+            if (active) PocketOrange else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
         ),
     ) {
         Text(
             if (active) "$label ✓" else label,
             fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
     }

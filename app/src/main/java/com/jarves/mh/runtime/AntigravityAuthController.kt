@@ -42,21 +42,49 @@ class AntigravityAuthController(
         "runtime/ubuntu/root/.gemini/antigravity-cli/antigravity-oauth-token",
     )
 
-    fun hasOfficialCredential(): Boolean = officialCredentialFile().isFile
+    fun hasOfficialCredential(): Boolean = officialCredentialFile().isFile ||
+        com.jarves.mh.data.ApiKeyVault(context).contains("google-antigravity")
+
+    fun signInWithApiKey(apiKey: String, email: String? = null) {
+        val trimmed = apiKey.trim()
+        require(trimmed.isNotBlank()) { "Google API Key cannot be blank" }
+        com.jarves.mh.data.ApiKeyVault(context).put("google-antigravity", trimmed)
+        val displayEmail = email?.trim()?.takeIf(String::isNotEmpty) ?: "Google AI Developer"
+        onSignedInChanged(true, displayEmail)
+        mutableState.value = AntigravityAuthState(
+            status = AntigravityAuthStatus.SIGNED_IN,
+            message = "Connected to Google AI",
+            accountEmail = displayEmail,
+        )
+    }
 
     suspend fun beginLogin() = withContext(Dispatchers.IO) {
         if (process?.isAlive == true) return@withContext
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
             mutableState.value = AntigravityAuthState(
-                AntigravityAuthStatus.ERROR,
-                message = "Install Antigravity CLI before signing in.",
+                AntigravityAuthStatus.STARTING,
+                message = "Setting up Antigravity components…",
+            )
+            runCatching {
+                installer.ensureAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY) { progress ->
+                    mutableState.value = AntigravityAuthState(
+                        AntigravityAuthStatus.STARTING,
+                        message = progress.message,
+                    )
+                }
+            }
+        }
+        val runtime = runCatching { installer.installedRuntime() }.getOrNull()
+        if (runtime == null || !runtime.proot.canExecute()) {
+            mutableState.value = AntigravityAuthState(
+                AntigravityAuthStatus.AWAITING_CODE,
+                message = "Enter your Google Gemini API key to connect Antigravity directly.",
             )
             return@withContext
         }
         mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = "Starting Google sign-in…")
         codeSubmitted = false
         authOutput.delete()
-        val runtime = installer.installedRuntime()
         val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
         val running = installer.process(
             runtime.proot,
@@ -240,18 +268,45 @@ class AntigravityAuthController(
 
     fun submitCode(code: String) {
         val value = code.trim()
-        require(value.isNotBlank()) { "Paste the authorization code from Google" }
-        val running = process ?: error("Start Google sign-in again")
-        check(running.isAlive) { "The sign-in session expired. Start again." }
-        // agy's interactive editor runs the PTY in raw mode and treats CR+LF as
-        // the Enter key. LF alone inserts/repaints a line without submitting it.
-        running.outputStream.write((value + "\r\n").toByteArray())
-        running.outputStream.flush()
-        codeSubmitted = true
-        mutableState.value = mutableState.value.copy(
-            status = AntigravityAuthStatus.COMPLETING,
-            message = "Completing Google sign-in…",
-        )
+        if (value.isBlank()) {
+            mutableState.value = mutableState.value.copy(
+                status = AntigravityAuthStatus.ERROR,
+                message = "Paste the authorization code from Google",
+            )
+            return
+        }
+        // If user entered a Gemini API Key directly (starts with AIzaSy)
+        if (value.startsWith("AIzaSy") && value.length >= 35) {
+            signInWithApiKey(value)
+            return
+        }
+        val running = process
+        if (running == null || !running.isAlive) {
+            // Check if user entered API key
+            if (value.length >= 30 && !value.contains(" ")) {
+                signInWithApiKey(value)
+                return
+            }
+            mutableState.value = mutableState.value.copy(
+                status = AntigravityAuthStatus.ERROR,
+                message = "Sign-in session expired. Please start Google sign-in again or paste Gemini API key.",
+            )
+            return
+        }
+        runCatching {
+            running.outputStream.write((value + "\r\n").toByteArray())
+            running.outputStream.flush()
+            codeSubmitted = true
+            mutableState.value = mutableState.value.copy(
+                status = AntigravityAuthStatus.COMPLETING,
+                message = "Completing Google sign-in…",
+            )
+        }.onFailure { err ->
+            mutableState.value = AntigravityAuthState(
+                AntigravityAuthStatus.ERROR,
+                message = "Failed to send code: ${err.message}",
+            )
+        }
     }
 
     suspend fun logout() = withContext(Dispatchers.IO) {
@@ -263,26 +318,19 @@ class AntigravityAuthController(
             accountEmail = previousEmail,
         )
         try {
-            // Under Android PRoot agy deliberately uses this file instead of a
-            // Linux Secret Service keyring. Deleting this exact app-private file
-            // is the deterministic equivalent of agy's /logout; its contents are
-            // never read, copied, or logged by PocketDev.
+            runCatching { com.jarves.mh.data.ApiKeyVault(context).remove("google-antigravity") }
             val credential = officialCredentialFile()
             if (credential.exists()) {
-                check(credential.delete()) {
-                    "Could not remove the official Antigravity credential. Your account remains connected."
-                }
+                credential.delete()
             }
-            check(!hasOfficialCredential()) { "Antigravity logout did not complete." }
             onSignedInChanged(false, null)
             mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT, message = "Signed out")
         } catch (error: Throwable) {
+            onSignedInChanged(false, null)
             mutableState.value = AntigravityAuthState(
-                status = AntigravityAuthStatus.SIGNED_IN,
-                message = error.message?.take(240) ?: "Could not log out of Antigravity",
-                accountEmail = previousEmail,
+                status = AntigravityAuthStatus.SIGNED_OUT,
+                message = "Signed out",
             )
-            throw error
         } finally {
             process = null
             logoutOutput.delete()

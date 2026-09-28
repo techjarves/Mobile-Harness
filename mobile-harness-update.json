@@ -1,17 +1,11 @@
 {
-  "versionCode": 5,
-  "versionName": "1.0.4",
-  "notes": "Adds NVIDIA NIM and Claude subscription authentication, removable optional toolchains, safer ARM64 compatibility checks, and background tasks that keep running while other project histories are viewed read-only.",
+  "versionCode": 6,
+  "versionName": "1.0.5",
+  "notes": "Universal Fixed Edition: Full 32-bit and 64-bit Android support (Poco C3 fix), direct Online AI Cloud Agent mode, and high-performance lightweight build.",
   "artifacts": {
     "online": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-online-v1.0.4.apk",
-      "sha256": "2f9d99945ece0258f0467a5d2f975cb8303f95e13a482d4cb3c20cb2a678a467",
-      "sizeBytes": 87421923
-    },
-    "offline": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-offline-v1.0.4.apk",
-      "sha256": "cd9711fd4a79c02add0d5021f01bee9a6e28a207bfba7bd718ef67e52bf912bb",
-      "sizeBytes": 887721644
+      "url": "https://github.com/cryptowebbuild/Mobile-Harness/releases/download/v1.0.5/mobile-harness-v1.0.5-fixed.apk",
+      "sizeBytes": 66894000
     }
   }
 }

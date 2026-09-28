@@ -231,6 +231,127 @@ class ProviderApiClient {
             .toString()
     }
 
+    suspend fun streamChatCompletion(
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        protocol: ProviderProtocol,
+        systemPrompt: String?,
+        messages: List<Pair<String, String>>,
+        onChunk: suspend (String) -> Unit,
+        onReasoning: suspend (String) -> Unit = {},
+    ): Boolean = withContext(Dispatchers.IO) {
+        val base = baseUrl.trim().trimEnd('/')
+        val endpoint = when (protocol) {
+            ProviderProtocol.OPENROUTER -> "$base/v1/chat/completions"
+            ProviderProtocol.OPENAI_CHAT, ProviderProtocol.OPENAI_RESPONSES -> "$base/chat/completions"
+            else -> {
+                if (base.contains("anthropic", ignoreCase = true) || protocol == ProviderProtocol.ANTHROPIC || protocol == ProviderProtocol.ANTHROPIC_GATEWAY) {
+                    if (base.endsWith("/v1")) "$base/messages" else "$base/v1/messages"
+                } else {
+                    "$base/chat/completions"
+                }
+            }
+        }
+
+        val isAnthropic = endpoint.endsWith("/messages")
+        val requestBody = if (isAnthropic) {
+            val msgs = JSONArray()
+            messages.forEach { (role, content) ->
+                val r = if (role == "user") "user" else "assistant"
+                msgs.put(JSONObject().put("role", r).put("content", content))
+            }
+            val obj = JSONObject()
+                .put("model", model)
+                .put("max_tokens", 8192)
+                .put("stream", true)
+                .put("messages", msgs)
+            if (!systemPrompt.isNullOrBlank()) {
+                obj.put("system", systemPrompt)
+            }
+            obj.toString()
+        } else {
+            val msgs = JSONArray()
+            if (!systemPrompt.isNullOrBlank()) {
+                msgs.put(JSONObject().put("role", "system").put("content", systemPrompt))
+            }
+            messages.forEach { (role, content) ->
+                msgs.put(JSONObject().put("role", role).put("content", content))
+            }
+            JSONObject()
+                .put("model", model)
+                .put("stream", true)
+                .put("messages", msgs)
+                .toString()
+        }
+
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Accept", "text/event-stream")
+            setRequestProperty("Content-Type", "application/json")
+            if (apiKey.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer $apiKey")
+                if (isAnthropic) {
+                    setRequestProperty("x-api-key", apiKey)
+                    setRequestProperty("anthropic-version", "2023-06-01")
+                }
+            }
+        }
+
+        try {
+            connection.outputStream.use { it.write(requestBody.toByteArray()) }
+
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val msg = providerErrorMessage(errorBody) ?: "HTTP $code from provider"
+                throw Exception(msg)
+            }
+
+            connection.inputStream.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val trimmed = line.trim()
+                    if (!trimmed.startsWith("data:")) continue
+                    val data = trimmed.removePrefix("data:").trim()
+                    if (data == "[DONE]") break
+                    if (data.isBlank()) continue
+
+                    runCatching {
+                        val root = JSONObject(data)
+                        if (isAnthropic) {
+                            val type = root.optString("type")
+                            if (type == "content_block_delta") {
+                                val delta = root.optJSONObject("delta")
+                                val text = delta?.optString("text").orEmpty()
+                                if (text.isNotEmpty()) onChunk(text)
+                                val thinking = delta?.optString("thinking").orEmpty()
+                                if (thinking.isNotEmpty()) onReasoning(thinking)
+                            }
+                        } else {
+                            val choices = root.optJSONArray("choices")
+                            if (choices != null && choices.length() > 0) {
+                                val choice = choices.getJSONObject(0)
+                                val delta = choice.optJSONObject("delta")
+                                val content = delta?.optString("content").takeIf { !it.isNullOrEmpty() }
+                                    ?: delta?.optString("text").orEmpty()
+                                if (content.isNotEmpty()) onChunk(content)
+                                val reasoning = delta?.optString("reasoning_content").takeIf { !it.isNullOrEmpty() }
+                                    ?: delta?.optString("reasoning").orEmpty()
+                                if (reasoning.isNotEmpty()) onReasoning(reasoning)
+                            }
+                        }
+                    }
+                }
+            }
+            true
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun friendlyHttpError(code: Int): String = when (code) {
         429 -> "The provider rate limit was reached. Wait a moment and try again."
         in 500..599 -> "The provider is temporarily unavailable (HTTP $code)."

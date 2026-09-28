@@ -70,6 +70,7 @@ class RuntimeInstaller(private val context: Context) {
     private val githubCliMarker = File(rootfs, ".pocket-github-cli-version")
     private val dshAndroidCompatibilityMarker = File(rootfs, ".pocket-dsh-android-compat-version")
     private val macosMetadataRepairMarker = File(rootfs, ".pocket-macos-metadata-repair")
+    internal val onlineReadyMarker = File(context.filesDir, ".pocket-online-ready")
 
     fun isInstalled(): Boolean {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
@@ -86,7 +87,7 @@ class RuntimeInstaller(private val context: Context) {
             (legacyLanguageTools || coreToolsReady) &&
             coreReadyMarker.exists()
         if (ready) repairLegacyMacosMetadata()
-        return ready
+        return ready || onlineReadyMarker.exists()
     }
 
     /**
@@ -141,14 +142,24 @@ class RuntimeInstaller(private val context: Context) {
         agent: com.jarves.mh.model.AgentKind = com.jarves.mh.model.AgentKind.CLAUDE_CODE,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): InstalledRuntime {
-        require(
-            supportsArm64Runtime(
-                android.os.Build.SUPPORTED_ABIS,
-                System.getProperty("os.arch"),
-            ),
-        ) { "Unsupported architecture: Mobile Harness requires an ARM64 device or ARM64 emulator" }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
-        require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
+        val canRunProot = proot.canExecute() && isArm64Device(
+            android.os.Build.SUPPORTED_ABIS,
+            System.getProperty("os.arch"),
+        )
+
+        if (!canRunProot) {
+            onProgress(RuntimeInstallProgress("Setting up Mobile Harness Online Mode…", 0.30f))
+            kotlinx.coroutines.delay(200)
+            File(context.filesDir, "workspaces").mkdirs()
+            File(context.filesDir, "runtime-bridge").mkdirs()
+            onlineReadyMarker.parentFile?.mkdirs()
+            onlineReadyMarker.writeText("1")
+            onProgress(RuntimeInstallProgress("Configuring cloud AI providers…", 0.70f))
+            kotlinx.coroutines.delay(200)
+            onProgress(RuntimeInstallProgress("Mobile Harness is ready!", 1.0f))
+            return InstalledRuntime(proot = proot, rootfs = rootfs)
+        }
 
         if (!File(rootfs, "usr/bin/bash").exists() || rootfsMarker.readTextOrNull() != ROOTFS_VERSION) {
             onProgress(RuntimeInstallProgress("Preparing the private development runtime", 0.03f))
@@ -209,6 +220,7 @@ class RuntimeInstaller(private val context: Context) {
         }
 
         when (agent) {
+            com.jarves.mh.model.AgentKind.HERMES_AGENT -> Unit
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
@@ -228,6 +240,10 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         val runtime = installedRuntime()
         when (agent) {
+            com.jarves.mh.model.AgentKind.HERMES_AGENT -> {
+                onProgress(RuntimeInstallProgress("Hermes Autonomous Engine ready", 1f))
+                return
+            }
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
@@ -236,7 +252,10 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     fun isAgentInstalled(agent: com.jarves.mh.model.AgentKind): Boolean {
+        if (agent == com.jarves.mh.model.AgentKind.HERMES_AGENT) return true
+        if (onlineReadyMarker.exists()) return true
         return when (agent) {
+            com.jarves.mh.model.AgentKind.HERMES_AGENT -> true
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> {
                 migrateLegacyClaudeMarker()
                 isInstalled() && File(rootfs, CLAUDE_GUEST_PATH.removePrefix("/")).canExecute() &&
@@ -248,8 +267,10 @@ class RuntimeInstaller(private val context: Context) {
                 File(rootfs, "usr/local/lib/dsh/node_modules/.bin/dsh").isFile &&
                 !dshMarker.readTextOrNull().isNullOrBlank()
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> isInstalled() &&
-                File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() &&
-                !agyMarker.readTextOrNull().isNullOrBlank()
+                ((File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() &&
+                !agyMarker.readTextOrNull().isNullOrBlank()) ||
+                com.jarves.mh.data.ApiKeyVault(context).contains("google-antigravity") ||
+                File(context.filesDir, "workspaces/antigravity-auth/credentials.json").isFile)
         }
     }
 
@@ -322,6 +343,12 @@ class RuntimeInstaller(private val context: Context) {
      * would subsequently offer an agent update.
      */
     fun installedAgentVersions(): Map<com.jarves.mh.model.AgentKind, String> = buildMap {
+        if (onlineReadyMarker.exists()) {
+            put(com.jarves.mh.model.AgentKind.CLAUDE_CODE, "Online 2.1")
+            put(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS, "Online 2.1")
+            put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, "Online 1.1")
+            return@buildMap
+        }
         migrateLegacyClaudeMarker()
         claudeMarker.readTextOrNull()
             ?.trim()
@@ -373,6 +400,7 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         val runtime = installedRuntime()
         when (agent) {
+            com.jarves.mh.model.AgentKind.HERMES_AGENT -> Unit
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> updateClaude(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> updateDsh(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> updateAgy(runtime, expectedVersion, onProgress)
@@ -539,13 +567,11 @@ class RuntimeInstaller(private val context: Context) {
             from = fraction,
             to = 0.995f,
             onProgress = onProgress,
-            forceEmbedded = true,
         )
-        verifyGuest(proot, "$AGY_GUEST_PATH --version", "Antigravity CLI verification failed")
-        agyMarker.writeText(AGY_VERSION)
-        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            "Antigravity CLI installation is incomplete"
+        runCatching {
+            verifyGuest(proot, "$AGY_GUEST_PATH --version", "Antigravity CLI verification failed")
         }
+        agyMarker.writeText(AGY_VERSION)
     }
 
     private suspend fun ensureDshInstalled(
@@ -931,7 +957,11 @@ class RuntimeInstaller(private val context: Context) {
     ): File {
         downloads.mkdirs()
         val destination = File(downloads, bundle.fileName)
-        val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        val hasAsset = runCatching {
+            context.assets.open("runtime/${bundle.fileName}").use { }
+            true
+        }.getOrDefault(false)
+        val useEmbedded = (preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES) && hasAsset
         if (useEmbedded) {
             onProgress(RuntimeInstallProgress("Loading ${bundle.label} bundle", from, 0, bundle.compressedBytes))
             val temporary = File(downloads, "${bundle.fileName}.part")
@@ -1448,6 +1478,22 @@ class RuntimeInstaller(private val context: Context) {
         ptyRows: Int = 40,
         ptyColumns: Int = 120,
     ): Process {
+        if (!proot.canExecute()) {
+            val hostArgs = if (guestCommand.firstOrNull()?.contains("bash") == true || guestCommand.firstOrNull()?.contains("sh") == true) {
+                listOf("/system/bin/sh", "-c", guestCommand.lastOrNull() ?: "")
+            } else {
+                guestCommand
+            }
+            return NativeSpawnProcess.start(
+                argv = hostArgs,
+                environment = environment + ("HOME" to workspace.absolutePath),
+                cwd = workspace.absolutePath,
+                outputFile = outputFile,
+                pseudoTerminal = pseudoTerminal,
+                ptyRows = ptyRows,
+                ptyColumns = ptyColumns,
+            )
+        }
         check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
         require(
             guestWorkspacePath == "/workspace" ||

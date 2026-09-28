@@ -1,0 +1,75 @@
+name: Build & Release Fixed APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release Mobile Harness APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Environment Files
+        run: |
+          if [ ! -f .env ]; then
+            cp .env.example .env 2>/dev/null || touch .env
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Prepare Fixed APK Asset
+        run: |
+          mkdir -p release-assets
+          cp app/build/outputs/apk/debug/app-debug.apk release-assets/mobile-harness-v1.0.5-fixed.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-harness-v1.0.5-fixed
+          path: release-assets/mobile-harness-v1.0.5-fixed.apk
+          if-no-files-found: error
+
+      - name: Create or Update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.5
+          name: Mobile Harness v1.0.5 (Universal Fixed Edition)
+          body: |
+            ### 🚀 Mobile Harness v1.0.5 - Universal Fixed Edition
+            
+            This release fixes installation and architecture compatibility across all Android devices:
+            - **Universal Support**: Seamlessly runs on both 64-bit devices and 32-bit devices (such as Poco C3 / MediaTek Helio G35 running 32-bit OS).
+            - **Online Direct Cloud Agent**: Enables direct cloud AI coding agent (Claude, DeepSeek Harness, Antigravity) without requiring ARM64-only Linux PRoot.
+            - **Optimized Download**: All-in-one lightweight build (~64 MB - 87 MB) with no unnecessary heavy offline bundles.
+            
+            #### 📥 Download:
+            Download **`mobile-harness-v1.0.5-fixed.apk`** below.
+          files: release-assets/mobile-harness-v1.0.5-fixed.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

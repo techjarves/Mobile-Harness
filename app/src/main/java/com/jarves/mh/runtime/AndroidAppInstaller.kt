@@ -17,14 +17,9 @@ object AndroidAppInstaller {
         require(apk.isFile && apk.extension.equals("apk", ignoreCase = true) && apk.length() > 0L) {
             "A valid APK was not produced: ${apk.name}"
         }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", apk)
         if (isMiuiDevice()) {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", apk)
-            context.startActivity(
-                Intent(Intent.ACTION_INSTALL_PACKAGE, uri).apply {
-                    setDataAndType(uri, "application/vnd.android.package-archive")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                },
-            )
+            launchInstallIntent(context, uri)
             return
         }
         val installer = context.packageManager.packageInstaller
@@ -41,8 +36,9 @@ object AndroidAppInstaller {
                     setPackageSource(PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE)
                 }
             }
-        val sessionId = installer.createSession(params)
+        var sessionId = -1
         try {
+            sessionId = installer.createSession(params)
             installer.openSession(sessionId).use { session ->
                 apk.inputStream().use { input ->
                     session.openWrite(apk.name, 0, apk.length()).use { output ->
@@ -66,10 +62,21 @@ object AndroidAppInstaller {
                 )
                 session.commit(pending.intentSender)
             }
-        } catch (error: Throwable) {
-            runCatching { installer.abandonSession(sessionId) }
-            throw error
+        } catch (_: Throwable) {
+            if (sessionId >= 0) {
+                runCatching { installer.abandonSession(sessionId) }
+            }
+            // Fallback to direct Intent install if PackageInstaller session fails
+            launchInstallIntent(context, uri)
         }
+    }
+
+    private fun launchInstallIntent(context: Context, uri: android.net.Uri) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
     }
 
     const val ACTION_INSTALL_RESULT = "com.jarves.mh.action.APK_INSTALL_RESULT"

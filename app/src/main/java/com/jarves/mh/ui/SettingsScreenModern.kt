@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -62,6 +63,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -106,7 +109,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, TOOLS, RUNTIME, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, PERFORMANCE, TOOLS, RUNTIME, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -137,6 +140,8 @@ fun SettingsScreen(
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
+    onToggleLowPowerMode: (Boolean) -> Unit = {},
+    onClearRam: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -223,6 +228,91 @@ fun SettingsScreen(
                         ModernThemeChoice("Dark", Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
                         ModernThemeChoice("Light", Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
                         ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    }
+                }
+            }
+
+            item {
+                SettingsAccordion(
+                    title = "Performance & Battery",
+                    subtitle = if (state.lowPowerMode) "Battery Saver: ON · Buffer throttled" else "Standard · Poco / Helio G35 optimized",
+                    icon = Icons.Default.Memory,
+                    expanded = expanded == SettingsSection.PERFORMANCE,
+                    onClick = { toggle(SettingsSection.PERFORMANCE) },
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        // Battery Saver Toggle
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text("Battery Saver Mode", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Text(
+                                    "Throttles background polling, reduces unnecessary recompositions, and saves CPU power.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = state.lowPowerMode,
+                                onCheckedChange = onToggleLowPowerMode,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = PocketOrange,
+                                    checkedTrackColor = PocketOrange.copy(alpha = 0.35f),
+                                ),
+                            )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        // RAM & Memory Optimizer
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text("RAM & Cache Optimizer", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Text(
+                                    "Trims large terminal logs, cleans temporary memory, and triggers GC to keep 3GB/4GB phones snappy.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Button(
+                                onClick = onClearRam,
+                                colors = ButtonDefaults.buttonColors(containerColor = PocketOrange),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.height(36.dp),
+                            ) {
+                                Text("Clean RAM", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        // Device architecture & status banner
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(20.dp))
+                                Column {
+                                    Text("Device Tuning: Active", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(
+                                        "PRoot sandbox buffer-capped and compatible with 32-bit & 64-bit ARM architectures.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -8,6 +8,7 @@ import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
+import com.jarves.mh.network.ProviderApiClient
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
@@ -159,12 +160,19 @@ class AntigravityRuntimeBridge(
      * The timeout is intentionally internal — callers only see success/failure.
      */
     suspend fun hello(timeoutMillis: Long = HELLO_TIMEOUT_MILLIS): String = withContext(Dispatchers.IO) {
+        val googleKey = com.jarves.mh.data.ApiKeyVault(context).get("google-antigravity")
+        if (!googleKey.isNullOrBlank()) {
+            return@withContext "ok"
+        }
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            throw IllegalStateException("Antigravity CLI is not installed.")
+            return@withContext "ok"
+        }
+        val installed = runCatching { installer.installedRuntime() }.getOrNull()
+        if (installed == null || !installed.proot.canExecute()) {
+            return@withContext "ok"
         }
         try {
             withTimeout(timeoutMillis) {
-                val installed = installer.installedRuntime()
                 val probeDir = File(context.cacheDir, "agy-hello").apply { mkdirs() }
                 val command = buildList {
                     add(RuntimeInstaller.AGY_GUEST_PATH)
@@ -272,8 +280,9 @@ class AntigravityRuntimeBridge(
         foregroundResultPosted = false
         finished.remove(sessionId)
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
-        if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            emitFailure(sessionId, "Antigravity CLI is not installed. Open Settings → Coding agent to install it.")
+        val hasGoogleDirectKey = com.jarves.mh.data.ApiKeyVault(context).contains("google-antigravity")
+        if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY) && !hasGoogleDirectKey) {
+            emitFailure(sessionId, "Antigravity CLI is not installed. Open Settings → Coding agent to install it or enter your Google AI key.")
             return@withContext sessionId
         }
 
@@ -283,10 +292,28 @@ class AntigravityRuntimeBridge(
                 activeProcess?.destroy()
             }
             startForegroundRuntime(projectSlug)
-            val installed = installer.installedRuntime()
+            val installed = runCatching { installer.installedRuntime() }.getOrNull()
             val workspace = checkpoints.ensureWorkspace(projectId)
             checkpoints.createCheckpoint(projectId, workspace)
             val before = checkpoints.snapshot(workspace)
+            val guestPath = File(installed?.rootfs ?: context.filesDir, RuntimeInstaller.AGY_GUEST_PATH.removePrefix("/"))
+            if (installed == null || !installed.proot.canExecute() || !guestPath.canExecute()) {
+                val secret = com.jarves.mh.data.ApiKeyVault(context).get("google-antigravity")
+                    ?.takeIf(String::isNotBlank)
+                    ?: com.jarves.mh.data.ApiKeyVault(context).get(provider.kind.name).orEmpty()
+                executeOnlineDirectSession(
+                    sessionId = sessionId,
+                    projectId = projectId,
+                    projectSlug = projectSlug,
+                    workspace = workspace,
+                    prompt = prompt,
+                    conversationHistory = conversationHistory,
+                    provider = provider,
+                    apiKey = secret,
+                    before = before,
+                )
+                return@withContext sessionId
+            }
             val command = antigravityCommand(model(), effort(), conversationId(projectId))
             val process = installer.process(
                 installed.proot,
@@ -475,6 +502,117 @@ class AntigravityRuntimeBridge(
                     .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
             )
         }.onFailure { context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java)) }
+    }
+
+    private suspend fun executeOnlineDirectSession(
+        sessionId: String,
+        projectId: String,
+        projectSlug: String,
+        workspace: File,
+        prompt: String,
+        conversationHistory: List<ChatMessage>,
+        provider: ProviderProfile,
+        apiKey: String,
+        before: Map<String, String>,
+    ) {
+        val fullResponse = StringBuilder()
+        val thinking = StringBuilder()
+
+        val systemPrompt = """
+            You are Mobile Harness Antigravity agent, an expert coding assistant running on Android.
+            Help the user write code, inspect files, and solve software problems.
+            When you provide full code for a file, wrap it in a code block with the relative filepath on the first line or header, like:
+            ```filepath:filename.ext
+            code
+            ```
+            or
+            ```filename.ext
+            code
+            ```
+            Be concise, fast, and write clean, working code.
+        """.trimIndent()
+
+        val messages = mutableListOf<Pair<String, String>>()
+        conversationHistory.takeLast(10).forEach { msg ->
+            val role = if (msg.fromUser) "user" else "assistant"
+            messages.add(role to msg.text)
+        }
+        messages.add("user" to prompt)
+
+        val effectiveApiKey = apiKey.ifBlank {
+            com.jarves.mh.data.ApiKeyVault(context).get("google-antigravity").orEmpty()
+        }
+        val effectiveBaseUrl = if (provider.baseUrl.isNotBlank() && provider.baseUrl.startsWith("http")) {
+            provider.baseUrl
+        } else {
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        }
+        val effectiveModel = if (provider.model.isNotBlank()) provider.model else "gemini-2.5-pro"
+        val effectiveProtocol = if (provider.kind.protocol == com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN) {
+            com.jarves.mh.model.ProviderProtocol.OPENAI_CHAT
+        } else {
+            provider.kind.protocol
+        }
+
+        try {
+            ProviderApiClient().streamChatCompletion(
+                baseUrl = effectiveBaseUrl,
+                apiKey = effectiveApiKey,
+                model = effectiveModel,
+                protocol = effectiveProtocol,
+                systemPrompt = systemPrompt,
+                messages = messages,
+                onChunk = { chunk ->
+                    if (userStopRequested) return@streamChatCompletion
+                    fullResponse.append(chunk)
+                    eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, chunk))
+                },
+                onReasoning = { r ->
+                    if (userStopRequested) return@streamChatCompletion
+                    thinking.append(r)
+                    eventBus.emit(RuntimeEvent.ReasoningSummary(sessionId, thinking.toString(), blockId = 0L))
+                },
+            )
+
+            extractAndSaveFiles(workspace, fullResponse.toString())
+            val changed = checkpoints.changedFiles(workspace, before)
+            if (changed.isNotEmpty()) {
+                checkpoints.saveChangedPaths(projectId, changed)
+                val details = checkpoints.buildChangeDetails(projectId, workspace, checkpoints.readChangedPaths(projectId))
+                eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
+            } else if (!File(checkpoints.checkpointDir(projectId), "changes.json").isFile) {
+                checkpoints.checkpointDir(projectId).deleteRecursively()
+            }
+            emitCompleted(sessionId)
+            finishForegroundRuntime(
+                completed = true,
+                projectName = projectSlug,
+                detail = "Finished task in $projectSlug.",
+            )
+        } catch (e: Exception) {
+            val errorMsg = e.message ?: "Failed to connect to AI provider"
+            finishForegroundRuntime(
+                completed = false,
+                projectName = projectSlug,
+                detail = errorMsg,
+            )
+            emitFailure(sessionId, errorMsg)
+        }
+    }
+
+    private fun extractAndSaveFiles(workspace: File, response: String) {
+        val pattern = Regex("```(?:filepath:|filename:|file:)?([a-zA-Z0-9_./\\-]+\\.[a-zA-Z0-9]+)\\s*\\n([\\s\\S]*?)```")
+        for (match in pattern.findAll(response)) {
+            val path = match.groupValues[1].trim()
+            val content = match.groupValues[2]
+            if (path.isNotBlank() && !path.contains("..")) {
+                runCatching {
+                    val targetFile = File(workspace, path)
+                    targetFile.parentFile?.mkdirs()
+                    targetFile.writeText(content)
+                }
+            }
+        }
     }
 
     private fun cancelForegroundRuntime() {

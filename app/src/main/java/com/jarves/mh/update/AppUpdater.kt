@@ -110,8 +110,16 @@ class AppUpdater(
         val archiveVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
         check(archiveVersion == expectedVersionCode && archiveVersion > BuildConfig.VERSION_CODE) { "Update version does not match its manifest" }
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)
-        val archiveSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.signingInfo?.apkContentsSigners else archive.signatures
-        val installedSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) installed.signingInfo?.apkContentsSigners else installed.signatures
+        val archiveSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            archive.signingInfo?.let {
+                if (it.hasMultipleSigners()) it.apkContentsSigners else it.signingCertificateHistory
+            } ?: archive.signatures
+        } else archive.signatures
+        val installedSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            installed.signingInfo?.let {
+                if (it.hasMultipleSigners()) it.apkContentsSigners else it.signingCertificateHistory
+            } ?: installed.signatures
+        } else installed.signatures
         check(!archiveSignatures.isNullOrEmpty() && !installedSignatures.isNullOrEmpty() &&
             archiveSignatures.map { sha256(it.toByteArray()) }.toSet() == installedSignatures.map { sha256(it.toByteArray()) }.toSet()
         ) { "Update is not signed with the installed app's signing key" }

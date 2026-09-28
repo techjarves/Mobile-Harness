@@ -119,6 +119,10 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("debug_update_manifest_url", "") ?: ""
         set(value) { preferences.edit().putString("debug_update_manifest_url", value).apply() }
 
+    var lowPowerMode: Boolean
+        get() = preferences.getBoolean("low_power_mode", false)
+        set(value) { preferences.edit().putBoolean("low_power_mode", value).apply() }
+
     /** Development stacks the user picked during onboarding (names of DevStack). */
     var selectedDevStacks: Set<String>
         get() {

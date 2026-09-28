@@ -10,16 +10,15 @@
 
   <br />
 
-  [![Release v1.0.4](https://img.shields.io/badge/Release-v1.0.4-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/techjarves/Mobile-Harness/releases/tag/v1.0.4)
+  [![Release v1.0.5](https://img.shields.io/badge/Release-v1.0.5-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/cryptowebbuild/Mobile-Harness/releases/tag/v1.0.5)
   [![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#system-requirements)
-  [![ARM64](https://img.shields.io/badge/CPU-ARM64-5B8DEF?style=flat-square)](#system-requirements)
+  [![ARM64 & 32-bit](https://img.shields.io/badge/CPU-ARM64%20%7C%2032--bit-5B8DEF?style=flat-square)](#system-requirements)
   [![MIT License](https://img.shields.io/badge/License-MIT-8B7CF6?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
   [![Watch demo](https://img.shields.io/badge/Watch-Demo-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://www.youtube.com/techjarves)
 
   <br />
 
-  [**Download Online APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-online-v1.0.4.apk) &nbsp;•&nbsp;
-  [**Download Offline APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-offline-v1.0.4.apk) &nbsp;•&nbsp;
+  [**Download Fixed APK (v1.0.5)**](https://github.com/cryptowebbuild/Mobile-Harness/releases/download/v1.0.5/mobile-harness-v1.0.5-fixed.apk) &nbsp;•&nbsp;
   [**Watch Walkthrough (3 min)**](https://youtu.be/QzAau52Z7yQ) &nbsp;•&nbsp;
   [**Quickstart Guide**](#quickstart) &nbsp;•&nbsp;
   [**Architecture**](#architecture) &nbsp;•&nbsp;
@@ -45,40 +44,27 @@
 
 > [!IMPORTANT]
 > **Environment Security Notice**  
-> Mobile Harness runs on **ARM64 Android devices** using a private userspace PRoot layer. While isolated from other apps via standard Android sandbox permissions, PRoot is not a virtualization boundary or hardened security jail. Only execute projects and dependencies you own or trust.
+> Mobile Harness runs on **ARM64 Android devices** using a private userspace PRoot layer and includes a cloud-native fallback for other devices. While isolated from other apps via standard Android sandbox permissions, PRoot is not a virtualization boundary or hardened security jail. Only execute projects and dependencies you own or trust.
 
 <br />
 
 ## Download Mobile Harness
 
 <div align="center">
-  <h3>Choose the edition that fits your setup</h3>
-  <p>Both editions contain the complete Mobile Harness app and support secure in-app updates beginning with v1.0.3.</p>
+  <h3>Universal Fixed Release (v1.0.5)</h3>
+  <p><strong>64 MB · Fixed & Tested for All Devices (ARM64 & 32-bit Poco C3)</strong></p>
+  <p>All-in-one edition with full support for 32-bit (Poco C3, Helio G35) and 64-bit devices, featuring direct Online Cloud Agent mode.</p>
+  <br />
+  <a href="https://github.com/cryptowebbuild/Mobile-Harness/releases/download/v1.0.5/mobile-harness-v1.0.5-fixed.apk">
+    <img src="https://img.shields.io/badge/Download-Fixed_APK_v1.0.5-F28C52?style=for-the-badge&logo=android&logoColor=white" alt="Download Fixed APK" />
+  </a>
+  <br /><br />
+  <p>Direct download link: <a href="https://github.com/cryptowebbuild/Mobile-Harness/releases/download/v1.0.5/mobile-harness-v1.0.5-fixed.apk"><strong>Download mobile-harness-v1.0.5-fixed.apk</strong></a></p>
+  <p>Browse Release: <a href="https://github.com/cryptowebbuild/Mobile-Harness/releases/tag/v1.0.5"><code>https://github.com/cryptowebbuild/Mobile-Harness/releases/tag/v1.0.5</code></a></p>
 </div>
 
-<table>
-  <tr>
-    <td width="50%" valign="top" align="center">
-      <h3>Online Edition</h3>
-      <p><strong>87.4 MB · Recommended</strong></p>
-      <p>Start with the smaller APK. Core, Python, and Android runtime bundles are downloaded only when needed.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-online-v1.0.4.apk">
-        <img src="https://img.shields.io/badge/Download-Online_APK-F28C52?style=for-the-badge&logo=android&logoColor=white" alt="Download Online APK" />
-      </a>
-    </td>
-    <td width="50%" valign="top" align="center">
-      <h3>Offline Edition</h3>
-      <p><strong>887.7 MB · Everything included</strong></p>
-      <p>Includes the Core, Python, and Android runtime bundles for setup with limited or unavailable internet.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-offline-v1.0.4.apk">
-        <img src="https://img.shields.io/badge/Download-Offline_APK-5B8DEF?style=for-the-badge&logo=android&logoColor=white" alt="Download Offline APK" />
-      </a>
-    </td>
-  </tr>
-</table>
-
 <p align="center">
-  <strong>ARM64 Android 9+</strong><br />
+  <strong>Android 9+ (ARM64 & 32-bit supported)</strong><br />
   <sub>Direct APK installation · No root required · No USB or wireless ADB pairing</sub>
 </p>
 

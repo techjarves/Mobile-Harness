@@ -41,6 +41,34 @@ enum class ProviderKind(
         fixedBaseUrl = true,
         fixedProtocol = true,
     ),
+    OPENAI(
+        "ChatGPT / OpenAI",
+        "OpenAI API or ChatGPT Plus/Pro Token",
+        ProviderProtocol.OPENAI_CHAT,
+        "https://api.openai.com/v1",
+        "gpt-4o",
+    ),
+    GEMINI_PRO(
+        "Google Gemini",
+        "Direct Google AI Studio Gemini API",
+        ProviderProtocol.OPENAI_CHAT,
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "gemini-2.5-pro",
+    ),
+    GROQ(
+        "Groq Fast LPU",
+        "Ultra fast inference for open models",
+        ProviderProtocol.OPENAI_CHAT,
+        "https://api.groq.com/openai/v1",
+        "llama-3.3-70b-versatile",
+    ),
+    OLLAMA(
+        "Ollama / Local LLM",
+        "Local model via localhost or LAN",
+        ProviderProtocol.OPENAI_CHAT,
+        "http://localhost:11434/v1",
+        "llama3.2",
+    ),
     CUSTOM("Custom API", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "", "", true),
 }
 
@@ -54,6 +82,12 @@ enum class AgentKind(
     val subtitle: String,
     val downloadNote: String,
 ) {
+    HERMES_AGENT(
+        "hermes-agent",
+        "Hermes / OpenClaw",
+        "Autonomous self-improving agent · MCP Tools & Auto-Loop",
+        "16.2 MB",
+    ),
     CLAUDE_CODE(
         "claude-code",
         "Claude Code",
@@ -89,6 +123,10 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OPENAI,
+    ProviderKind.GEMINI_PRO,
+    ProviderKind.GROQ,
+    ProviderKind.OLLAMA,
     ProviderKind.CUSTOM,
 )
 
@@ -96,12 +134,20 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OPENAI,
+    ProviderKind.GEMINI_PRO,
+    ProviderKind.GROQ,
+    ProviderKind.OLLAMA,
     ProviderKind.CUSTOM,
 )
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.OPENCODE_ZEN -> "openai-responses"
-    ProviderKind.NVIDIA_NIM -> "openai-completions"
+    ProviderKind.NVIDIA_NIM,
+    ProviderKind.OPENAI,
+    ProviderKind.GEMINI_PRO,
+    ProviderKind.GROQ,
+    ProviderKind.OLLAMA -> "openai-completions"
     else -> "anthropic-messages"
 }
 
@@ -134,6 +180,7 @@ fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): Provid
 
 /** Provider choices shown for the selected coding agent. */
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
+    AgentKind.HERMES_AGENT -> ProviderKind.entries
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
     AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot { it == ProviderKind.OPENCODE_ZEN }
     AgentKind.ANTIGRAVITY -> emptyList()

@@ -1,5 +1,7 @@
 # Built application files
 *.apk
+!releases/*.apk
+!mobile-harness-v1.0.5-fixed.apk
 *.aar
 *.ap_
 *.aab

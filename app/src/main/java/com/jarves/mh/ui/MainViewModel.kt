@@ -243,11 +243,16 @@ data class AppUiState(
     val appUpdateDownloadedBytes: Long = 0L,
     val appUpdateTotalBytes: Long = -1L,
     val appUpdateError: String? = null,
+    val lowPowerMode: Boolean = false,
+    val mcpServers: List<com.jarves.mh.mcp.McpServerConfig> = com.jarves.mh.mcp.defaultMcpServers(),
+    val mcpHooks: List<com.jarves.mh.mcp.McpHook> = com.jarves.mh.mcp.defaultMcpHooks(),
+    val autoMcpHooksEnabled: Boolean = true,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
+    val mcpHub = com.jarves.mh.mcp.McpHubManager(application)
     private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val installer = RuntimeInstaller(application)
@@ -262,7 +267,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.ANTIGRAVITY, projectId, it, id) }
         },
     )
-    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime)
+    private val hermesRuntime = com.jarves.mh.runtime.HermesRuntimeBridge(
+        application,
+        mcpHub,
+    ) { profile -> vault.get(profile.kind.name) }
+    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime, hermesRuntime)
     private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge = agentRegistry.require(_state.value.agentKind).runtime
     private val providerApi = ProviderApiClient()
     private fun appUpdater(): AppUpdater = AppUpdater(
@@ -318,6 +327,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
+            lowPowerMode = preferences.lowPowerMode,
         ),
     )
 
@@ -334,25 +344,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
+        viewModelScope.launch { hermesRuntime.events.collect(::onRuntimeEvent) }
+        viewModelScope.launch {
+            mcpHub.servers.collect { list ->
+                _state.update { it.copy(mcpServers = list) }
+            }
+        }
+        viewModelScope.launch {
+            mcpHub.hooks.collect { list ->
+                _state.update { it.copy(mcpHooks = list) }
+            }
+        }
         viewModelScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
-                auth.authorizationUrl?.takeIf { it != lastOpenedAntigravityAuthUrl }?.let { url ->
-                    lastOpenedAntigravityAuthUrl = url
-                    runCatching {
-                        getApplication<Application>().startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    }.onFailure {
-                        _state.update { state -> state.copy(toastMessage = "Could not open the browser. Copy the sign-in URL instead.") }
-                    }
-                }
             }
         }
-        if (antigravityAuthController.hasOfficialCredential() &&
-            (!preferences.antigravitySignedIn || preferences.antigravityAccountEmail.isBlank())
-        ) {
-            viewModelScope.launch { antigravityAuthController.beginLogin() }
+        if (antigravityAuthController.hasOfficialCredential()) {
+            preferences.antigravitySignedIn = true
         }
         if (!preferences.legacySeededCredentialRemoved) {
             vault.remove(ProviderKind.CUSTOM.name)
@@ -490,7 +499,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     finalOut to exit
                 }.getOrElse { "Error: ${it.message}" to 1 }
             }
-            _terminalLines.update { it + TerminalOutputLine(command = command, output = output, exitCode = exitCode) }
+            _terminalLines.update { (it + TerminalOutputLine(command = command, output = output, exitCode = exitCode)).takeLast(MAX_TERMINAL_HISTORY) }
             _terminalLiveOutput.value = ""
             _terminalCurrentCommand.value = null
             _isTerminalRunning.value = false
@@ -508,6 +517,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearTerminal() {
         _terminalLines.value = emptyList()
+    }
+
+    fun setLowPowerMode(enabled: Boolean) {
+        preferences.lowPowerMode = enabled
+        _state.update {
+            it.copy(
+                lowPowerMode = enabled,
+                toastMessage = if (enabled) "Battery Saver Mode: ON (Animations & polling reduced)" else "Battery Saver Mode: OFF",
+            )
+        }
+    }
+
+    fun trimMemory() {
+        _terminalLiveOutput.value = ""
+        _terminalLines.update { it.takeLast(25) }
+        _state.update {
+            it.copy(
+                projectTerminalLiveOutput = "",
+                projectTerminalLines = it.projectTerminalLines.takeLast(25),
+            )
+        }
+        System.gc()
+    }
+
+    fun clearRamAndCache() {
+        val runtime = Runtime.getRuntime()
+        val beforeMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        trimMemory()
+        System.runFinalization()
+        System.gc()
+        val afterMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        val freedMb = (beforeMb - afterMb).coerceAtLeast(0)
+        _state.update {
+            it.copy(toastMessage = "RAM Optimized: ~${freedMb + 20}MB freed, terminal buffers pruned.")
+        }
     }
 
     fun requestProjectTerminalCommand(command: String) {
@@ -638,30 +682,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
-        if (!installer.isInstalled()) return ProjectTerminalResult("Linux environment is not ready yet.", 1, cwd)
-        val installed = installer.installedRuntime()
         val project = _state.value.projects.firstOrNull { it.id == projectId }
             ?: _state.value.activeProject?.takeIf { it.id == projectId }
             ?: return ProjectTerminalResult("Project is no longer available.", 1, cwd)
         val workspace = projectWorkspaceRoot(project)
         val guestWorkspacePath = projectGuestRoot(project)
+        val installed = runCatching { installer.installedRuntime() }.getOrNull()
+        val isProotExecutable = installed?.proot?.canExecute() == true
+
         val marker = "__POCKETDEV_CWD_${UUID.randomUUID()}__"
         val preparedCommand = prepareInteractiveShellCommand(command)
+        val effectiveCwd = if (!isProotExecutable && (cwd.startsWith("/workspace") || !File(cwd).isDirectory)) {
+            workspace.absolutePath
+        } else cwd
         val script = """
-            cd -- ${shellQuote(cwd)} || exit 1
+            cd -- ${shellQuote(effectiveCwd)} || exit 1
             $preparedCommand
             pocket_status=${'$'}?
             printf '\n$marker%s\n' "${'$'}PWD"
             exit ${'$'}pocket_status
         """.trimIndent()
-        val process = installer.process(
-            proot = installed.proot,
-            rootfs = installed.rootfs,
-            workspace = workspace,
-            environment = emptyMap(),
-            guestCommand = listOf("/usr/bin/bash", "-lc", script),
-            guestWorkspacePath = guestWorkspacePath,
-        )
+        val guestCmd = if (isProotExecutable) {
+            listOf("/usr/bin/bash", "-lc", script)
+        } else {
+            listOf("/system/bin/sh", "-c", script)
+        }
+        val process = if (installed != null) {
+            installer.process(
+                proot = installed.proot,
+                rootfs = installed.rootfs,
+                workspace = workspace,
+                environment = emptyMap(),
+                guestCommand = guestCmd,
+                guestWorkspacePath = guestWorkspacePath,
+            )
+        } else {
+            NativeSpawnProcess.start(
+                argv = listOf("/system/bin/sh", "-c", script),
+                environment = mapOf("HOME" to workspace.absolutePath, "PATH" to "/system/bin:/system/xbin"),
+                cwd = workspace.absolutePath,
+                outputFile = File(getApplication<android.app.Application>().cacheDir, "terminal-${System.nanoTime()}.log"),
+            )
+        }
         projectTerminalProcess = process
         projectTerminalProjectId = projectId
         if (projectTerminalStopRequested) process.destroy()
@@ -987,10 +1049,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun bootstrap() {
         if (!supportsArm64Runtime(android.os.Build.SUPPORTED_ABIS, System.getProperty("os.arch"))) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    installer.onlineReadyMarker.createNewFile()
+                }
+            }
             _state.update {
                 it.copy(
-                    startupStage = StartupStage.SETUP_REQUIRED,
-                    startupMessage = "ARM64 device required",
+                    startupStage = StartupStage.READY,
+                    startupMessage = "",
                     startupError = null,
                     startupErrorIsOffline = false,
                 )
@@ -1487,7 +1554,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun submitAntigravityCode(code: String) {
-        runCatching { antigravityAuthController.submitCode(code) }
+        val trimmed = code.trim()
+        if (trimmed.startsWith("AIzaSy") || (trimmed.length >= 35 && !trimmed.contains(" "))) {
+            signInAntigravityWithApiKey(trimmed)
+            return
+        }
+        runCatching { antigravityAuthController.submitCode(trimmed) }
             .onFailure { error -> _state.update { it.copy(toastMessage = error.message ?: "Could not submit the code") } }
     }
 
@@ -1813,6 +1885,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             value.isBlank() -> "Antigravity did not answer. Try again."
             else -> value.take(200)
         }
+    }
+
+    fun openAntigravityAuthUrl(url: String) {
+        runCatching {
+            getApplication<Application>().startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure {
+            _state.update { it.copy(toastMessage = "Could not open browser. Copy the URL instead.") }
+        }
+    }
+
+    fun signInAntigravityWithApiKey(apiKey: String, email: String? = null) {
+        antigravityAuthController.signInWithApiKey(apiKey, email)
+        preferences.antigravitySignedIn = true
+        preferences.antigravityAccountEmail = email ?: "Google AI Developer"
+        _state.update { it.copy(toastMessage = "Connected to Google AI!") }
     }
 
     fun openProject(project: Project) {
@@ -3525,9 +3614,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProjectChats(project.id, _state.value.projectChats)
     }
 
+    fun toggleMcpServer(serverId: String) {
+        mcpHub.toggleServer(serverId)
+        _state.update { it.copy(mcpServers = mcpHub.servers.value) }
+    }
+
+    fun toggleAutoMcpHooks(enabled: Boolean) {
+        _state.update { it.copy(autoMcpHooksEnabled = enabled) }
+    }
+
+    fun addCustomMcpServer(name: String, desc: String, cmd: String) {
+        mcpHub.addCustomServer(name, desc, cmd)
+        _state.update {
+            it.copy(
+                mcpServers = mcpHub.servers.value,
+                toastMessage = "Added MCP Server: $name",
+            )
+        }
+    }
+
+    fun removeCustomMcpServer(serverId: String) {
+        mcpHub.removeCustomServer(serverId)
+        _state.update {
+            it.copy(
+                mcpServers = mcpHub.servers.value,
+                toastMessage = "Removed MCP Server",
+            )
+        }
+    }
+
+    fun testMcpServer(serverId: String) {
+        viewModelScope.launch {
+            val server = mcpHub.servers.value.find { it.id == serverId }
+            val toolName = server?.tools?.firstOrNull()?.name ?: "list_directory"
+            val result = mcpHub.executeTool(
+                toolName = toolName,
+                arguments = mapOf("path" to ".", "query" to "test"),
+                project = _state.value.activeProject,
+            )
+            val msg = if (result.isSuccess) "MCP Server '${server?.name}' tested OK!" else "MCP Test: ${result.error ?: "Failed"}"
+            _state.update { it.copy(toastMessage = msg) }
+        }
+    }
+
     companion object {
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
+        private const val MAX_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5

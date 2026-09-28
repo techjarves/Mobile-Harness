@@ -45,8 +45,21 @@ class AgentRegistry(drivers: List<AgentDriver>) {
             claude: RuntimeBridge,
             deepSeek: RuntimeBridge,
             antigravity: RuntimeBridge,
+            hermes: RuntimeBridge,
         ) = AgentRegistry(
             listOf(
+                BuiltInAgentDriver(
+                    AgentKind.HERMES_AGENT,
+                    hermes,
+                    setOf(
+                        AgentCapability.API_KEY,
+                        AgentCapability.PROVIDER_PICKER,
+                        AgentCapability.MODEL_PICKER,
+                        AgentCapability.REASONING_EFFORT,
+                        AgentCapability.RESUME,
+                        AgentCapability.INTERACTIVE_APPROVALS,
+                    ),
+                ),
                 BuiltInAgentDriver(
                     AgentKind.CLAUDE_CODE,
                     claude,

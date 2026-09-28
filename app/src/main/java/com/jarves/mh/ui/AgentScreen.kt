@@ -103,6 +103,7 @@ import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.ui.theme.PocketBlue
+import com.jarves.mh.ui.theme.PocketGreen
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
@@ -173,6 +174,7 @@ fun AgentScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    onOpenAntigravityUrl: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
@@ -740,16 +742,36 @@ fun AgentScreen(
                             }
                         }
                         Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text("AI Agent", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (isAntigravity) {
+                                        showAntigravityModelSheet = true
+                                    } else {
+                                        showModels = true
+                                    }
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("AI Agent", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Spacer(Modifier.width(2.dp))
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Switch Model or Agent",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
                             Text(
                                 if (isAntigravity) {
-                                    "Antigravity · ${formatAntigravityModelName(state.antigravityModel)}"
+                                    "⚡ ${formatAntigravityModelName(state.antigravityModel)}"
                                 } else {
-                                    "${state.agentKind.title} · ${model.ifBlank { selectedKind.title }}"
+                                    "⚡ ${model.ifBlank { selectedKind.title }}"
                                 },
                                 fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = PocketOrange,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -757,6 +779,22 @@ fun AgentScreen(
                     }
                 },
                 actions = {
+                    if (state.lowPowerMode) {
+                        Surface(
+                            color = PocketGreen.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.dp, PocketGreen.copy(alpha = 0.4f)),
+                        ) {
+                            Text(
+                                "ECO",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PocketGreen,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
                     // Top Bar Live Status Pill
                     Surface(
                         color = pillBg,
@@ -809,6 +847,7 @@ fun AgentScreen(
                                 val isInstalled = agent == state.agentKind || state.installedAgentVersions.containsKey(agent)
                                 val updateAvailable = state.agentUpdates.containsKey(agent)
                                 val shortTitle = when (agent) {
+                                    AgentKind.HERMES_AGENT -> "Hermes"
                                     AgentKind.ANTIGRAVITY -> "Antigravity"
                                     AgentKind.DEEPSEEK_HARNESS -> "DeepSeek"
                                     AgentKind.CLAUDE_CODE -> "Claude Code"
@@ -940,6 +979,30 @@ fun AgentScreen(
             item {
                 if (!viewedAgentInstalled || viewedAgent != state.agentKind) {
                     // Installation/selection guidance is shown directly below the tabs.
+                } else if (state.agentKind == AgentKind.HERMES_AGENT) {
+                    AgentHermesCard(
+                        state = state,
+                        selectedKind = selectedKind,
+                        baseUrl = baseUrl,
+                        model = model,
+                        apiKey = apiKey,
+                        models = models,
+                        status = status,
+                        statusOk = statusOk == true,
+                        onProvider = { kind ->
+                            selectedKind = kind
+                            baseUrl = kind.defaultBaseUrl
+                            model = kind.defaultModel
+                            models = emptyList()
+                            status = null
+                            statusOk = false
+                        },
+                        onModel = { model = it },
+                        onBaseUrl = { baseUrl = it },
+                        onApiKey = { apiKey = it },
+                        onSave = { onSaveProvider(ProviderProfile(selectedKind, baseUrl, model), apiKey) },
+                        onTest = { onPing() },
+                    )
                 } else if (state.agentKind == AgentKind.ANTIGRAVITY) {
                     AgentAntigravityCard(
                         state = state,
@@ -952,6 +1015,7 @@ fun AgentScreen(
                         onOpenModelSheet = { showAntigravityModelSheet = true },
                         onSetEffort = onSetAntigravityEffort,
                         onTest = onPing,
+                        onOpenBrowserUrl = onOpenAntigravityUrl,
                     )
                 } else {
                     AgentProviderCard(
@@ -1122,6 +1186,7 @@ private fun AgentAntigravityCard(
     onOpenModelSheet: () -> Unit,
     onSetEffort: (String) -> Unit,
     onTest: () -> Unit,
+    onOpenBrowserUrl: (String) -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
     val auth = state.antigravityAuth
@@ -1183,22 +1248,40 @@ private fun AgentAntigravityCard(
             // Authentication actions if not signed in
             when (auth.status) {
                 AntigravityAuthStatus.STARTING, AntigravityAuthStatus.COMPLETING -> {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        auth.message?.let {
+                            Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
                 AntigravityAuthStatus.AWAITING_CODE -> {
                     auth.authorizationUrl?.let { url ->
-                        OutlinedButton(
-                            onClick = { clipboard.setText(AnnotatedString(url)) },
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text("Copy Google Sign-in URL")
+                            Button(
+                                onClick = { onOpenBrowserUrl(url) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Text("Open Browser")
+                            }
+                            OutlinedButton(
+                                onClick = { clipboard.setText(AnnotatedString(url)) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Text("Copy Link")
+                            }
                         }
                     }
                     OutlinedTextField(
                         value = code,
                         onValueChange = onCode,
-                        label = { Text("One-time authorization code") },
+                        label = { Text("Code or Google Gemini API Key") },
+                        placeholder = { Text("Paste code or AIzaSy...") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -1209,16 +1292,41 @@ private fun AgentAntigravityCard(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text("Complete Sign-in")
+                        Text("Connect Antigravity")
                     }
                 }
                 AntigravityAuthStatus.SIGNED_OUT, AntigravityAuthStatus.ERROR -> {
-                    Button(
-                        onClick = onStartLogin,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Text(if (auth.status == AntigravityAuthStatus.ERROR) "Reconnect with Google" else "Sign in with Google")
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = onStartLogin,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text(if (auth.status == AntigravityAuthStatus.ERROR) "Reconnect with Google" else "Sign in with Google")
+                        }
+                        auth.message?.takeIf { it.isNotBlank() }?.let { msg ->
+                            Text(msg, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+                        Text("Or connect with Gemini API Key directly:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(
+                            value = code,
+                            onValueChange = onCode,
+                            label = { Text("Gemini API Key") },
+                            placeholder = { Text("AIzaSy...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        if (code.isNotBlank()) {
+                            Button(
+                                onClick = onSubmitCode,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Text("Connect Gemini API Key")
+                            }
+                        }
                     }
                 }
                 AntigravityAuthStatus.SIGNED_IN -> {}
@@ -1974,6 +2082,27 @@ private fun AgentSelectionDot(selected: Boolean) {
 
 /** Provides popular default models for providers when discovery hasn't been run or is unavailable. */
 private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> = when (kind) {
+    ProviderKind.OPENAI -> listOf(
+        DiscoveredModel("gpt-4o", "GPT-4o (Omni)"),
+        DiscoveredModel("gpt-4o-mini", "GPT-4o Mini"),
+        DiscoveredModel("o1", "OpenAI o1 Reasoning"),
+        DiscoveredModel("o3-mini", "OpenAI o3-mini"),
+    )
+    ProviderKind.GEMINI_PRO -> listOf(
+        DiscoveredModel("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        DiscoveredModel("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        DiscoveredModel("gemini-2.0-flash", "Gemini 2.0 Flash"),
+    )
+    ProviderKind.GROQ -> listOf(
+        DiscoveredModel("llama-3.3-70b-versatile", "Llama 3.3 70B Versatile"),
+        DiscoveredModel("mixtral-8x7b-32768", "Mixtral 8x7B"),
+        DiscoveredModel("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill 70B"),
+    )
+    ProviderKind.OLLAMA -> listOf(
+        DiscoveredModel("llama3.2", "Llama 3.2"),
+        DiscoveredModel("qwen2.5-coder", "Qwen 2.5 Coder"),
+        DiscoveredModel("deepseek-r1", "DeepSeek R1"),
+    )
     ProviderKind.DEEPSEEK -> listOf(
         DiscoveredModel("deepseek-v4-flash", "DeepSeek-V4 Flash"),
     )
@@ -2002,4 +2131,263 @@ private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> 
     else -> if (kind.defaultModel.isNotBlank()) listOf(
         DiscoveredModel(kind.defaultModel, "${kind.title} Default (${kind.defaultModel})")
     ) else emptyList()
+}
+
+@Composable
+private fun AgentHermesCard(
+    state: AppUiState,
+    selectedKind: ProviderKind,
+    baseUrl: String,
+    model: String,
+    apiKey: String,
+    models: List<DiscoveredModel>,
+    status: String?,
+    statusOk: Boolean,
+    onProvider: (ProviderKind) -> Unit,
+    onModel: (String) -> Unit,
+    onBaseUrl: (String) -> Unit,
+    onApiKey: (String) -> Unit,
+    onSave: () -> Unit,
+    onTest: () -> Unit,
+) {
+    var expandedProviders by rememberSaveable { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            // ── Header ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            "Hermes / OpenClaw",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "Autonomous self-healing & MCP agent",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.16f),
+                ) {
+                    Text(
+                        text = "AGENTIC READY",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(Modifier.height(14.dp))
+
+            // ── Agent Capabilities Pills ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        "🛠️ Auto Bug Fixer",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        "🔌 MCP Protocol Hub",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        "🧠 Self-Reflect Loop",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── Active Model & Provider Selection ──
+            Text(
+                "Backing Model Engine",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(6.dp))
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expandedProviders = !expandedProviders },
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column {
+                        Text(
+                            selectedKind.title,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "Model: ${model.ifBlank { selectedKind.defaultModel }}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Icon(
+                        if (expandedProviders) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = expandedProviders) {
+                Column(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    listOf(
+                        ProviderKind.OPENAI,
+                        ProviderKind.GEMINI_PRO,
+                        ProviderKind.ANTHROPIC,
+                        ProviderKind.DEEPSEEK,
+                        ProviderKind.LLM_ROUTER,
+                        ProviderKind.GROQ,
+                        ProviderKind.OLLAMA,
+                    ).forEach { kind ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selectedKind == kind) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onProvider(kind)
+                                    expandedProviders = false
+                                },
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    kind.title,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (selectedKind == kind) FontWeight.Bold else FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    kind.subtitle,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // ── API Key / Auth Token Input ──
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = onApiKey,
+                label = { Text("API Key or Account Token") },
+                placeholder = { Text("Enter key for ${selectedKind.title}") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            // ── Save & Test Action Buttons ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onTest,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Test Connection")
+                }
+                Button(
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save & Apply")
+                }
+            }
+
+            if (status != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = status,
+                    fontSize = 12.sp,
+                    color = if (statusOk) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
 }
