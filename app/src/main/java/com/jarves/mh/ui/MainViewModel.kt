@@ -1628,13 +1628,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 when { apk == null -> "No debug APK has been built yet."; isDebugApkStale(root, apk) -> "The latest APK is older than the project source."; else -> "The debug APK matches the current project source." },
                 when { apk == null -> AndroidHealthStatus.WARNING; isDebugApkStale(root, apk) -> AndroidHealthStatus.WARNING; else -> AndroidHealthStatus.PASSED },
             )
-            val logAccess = hasLogcatAccess()
-            checks += AndroidHealthCheck(
-                "logcat", "Logcat access",
-                if (logAccess) "Target-app logs can be read." else "Grant READ_LOGS with ADB to view target-app logs.",
-                if (logAccess) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
-                if (logAccess) AndroidHealthFix.NONE else AndroidHealthFix.COPY_LOGCAT_COMMAND,
-            )
             _state.update { it.copy(androidHealthRunning = false, androidHealthChecks = checks) }
         }
     }

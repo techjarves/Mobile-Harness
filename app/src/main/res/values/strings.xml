@@ -323,4 +323,26 @@
     <string name="show_build_details">Show build details</string><string name="hide_build_details">Hide build details</string><string name="copy_log">Copy log</string>
     <string name="logcat_access_required">Logcat access required</string><string name="logcat_access_description">Grant the development log permission once with ADB, then refresh this screen.</string><string name="copy_command">Copy command</string><string name="search_logs">Search logs</string><string name="pause">Pause</string><string name="resume">Resume</string><string name="clear">Clear</string>
     <string name="project_health">Project health</string><string name="fix">Fix</string>
+    <string name="android_screen_title">Android</string>
+    <string name="android_ready_to_build">Ready to build</string>
+    <string name="android_ready_to_rebuild">Ready to rebuild</string>
+    <string name="android_ready_to_run">Ready to run</string>
+    <string name="android_ready_to_install">Ready to install</string>
+    <string name="android_build_failed_title">Build failed</string>
+    <string name="android_no_apk_description">Create a debug APK to run this project.</string>
+    <string name="android_source_changed_short">Source changed since the last build.</string>
+    <string name="android_build_current_installed">Build is up to date · Installed on this device</string>
+    <string name="android_build_current_not_installed">Build is up to date · Ready to install</string>
+    <string name="run_app">Run app</string>
+    <string name="android_build_again">Build again</string>
+    <string name="android_build_output">Build output</string>
+    <string name="android_view">View</string>
+    <string name="android_completed_in">Completed in %1$s</string>
+    <string name="android_build_in_progress">Running for %1$s</string>
+    <string name="android_no_build_yet">No build yet</string>
+    <string name="android_no_build_output">No build output yet.</string>
+    <string name="android_checking_health">Checking project…</string>
+    <string name="android_health_needs_attention">%1$d checks need attention</string>
+    <string name="android_health_not_checked">Tap to check the project</string>
+    <string name="android_health_checks_passed">%1$d checks passed</string>
 </resources>

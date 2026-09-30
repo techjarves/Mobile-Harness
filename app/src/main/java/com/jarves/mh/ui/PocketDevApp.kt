@@ -4740,7 +4740,7 @@ private fun ChatSwitcherDialog(
     )
 }
 
-private enum class AndroidDashboardSection { BUILD, LOGCAT, HEALTH }
+private enum class AndroidDashboardSection { OVERVIEW, BUILD, LOGCAT, HEALTH }
 
 @Composable
 private fun androidStageLabel(stage: AndroidBuildStage): String = stringResource(
@@ -4787,29 +4787,19 @@ private fun AndroidDashboardScreen(
 ) {
     BackHandler(onBack = onClose)
     val clipboard = LocalClipboardManager.current
-    var section by rememberSaveable { mutableStateOf(AndroidDashboardSection.BUILD) }
+    var section by rememberSaveable { mutableStateOf(AndroidDashboardSection.OVERVIEW) }
     var showBuildMenu by remember { mutableStateOf(false) }
     var showRawLog by rememberSaveable { mutableStateOf(false) }
     val liveElapsedSeconds = state.androidBuildStartedAtMillis?.let { rememberLiveElapsedSeconds(it) }
     LaunchedEffect(Unit) { onRefresh() }
-    LaunchedEffect(section) {
-        if (section == AndroidDashboardSection.LOGCAT) onStartLogcat() else onStopLogcat()
-    }
+    LaunchedEffect(section) { onStopLogcat() }
     DisposableEffect(Unit) { onDispose(onStopLogcat) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(stringResource(R.string.android_dashboard), fontWeight = FontWeight.Bold)
-                        Text(
-                            state.androidBuildMessage ?: stringResource(R.string.android_ready),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
+                    Text(stringResource(R.string.android_screen_title), fontWeight = FontWeight.Bold)
                 },
                 navigationIcon = {
                     IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.close)) }
@@ -4831,6 +4821,45 @@ private fun AndroidDashboardScreen(
                                 enabled = !state.androidBuildRunning,
                                 onClick = { showBuildMenu = false; onAction(AndroidAction.CLEAN) },
                             )
+                            if (state.androidApkInfo != null) {
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.install)) },
+                                    leadingIcon = { Icon(Icons.Default.InstallMobile, null) },
+                                    enabled = !state.androidBuildRunning,
+                                    onClick = { showBuildMenu = false; onAction(AndroidAction.INSTALL) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.share)) },
+                                    leadingIcon = { Icon(Icons.Default.Share, null) },
+                                    onClick = { showBuildMenu = false; onShareApk() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.save_copy)) },
+                                    leadingIcon = { Icon(Icons.Default.Download, null) },
+                                    onClick = { showBuildMenu = false; onSaveApk() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.copy_path)) },
+                                    leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                                    onClick = {
+                                        state.androidApkInfo?.path?.let { clipboard.setText(AnnotatedString(it)) }
+                                        showBuildMenu = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.app_info)) },
+                                    leadingIcon = { Icon(Icons.Default.Info, null) },
+                                    enabled = state.androidApkInfo?.installed == true,
+                                    onClick = { showBuildMenu = false; onOpenAppDetails() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.uninstall)) },
+                                    leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                    enabled = state.androidApkInfo?.installed == true,
+                                    onClick = { showBuildMenu = false; onUninstallApp() },
+                                )
+                            }
                         }
                     }
                 },
@@ -4838,28 +4867,31 @@ private fun AndroidDashboardScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            TabRow(selectedTabIndex = section.ordinal) {
+            TabRow(selectedTabIndex = if (section == AndroidDashboardSection.HEALTH) 1 else 0) {
                 Tab(
-                    selected = section == AndroidDashboardSection.BUILD,
-                    onClick = { section = AndroidDashboardSection.BUILD },
+                    selected = section != AndroidDashboardSection.HEALTH,
+                    onClick = { section = AndroidDashboardSection.OVERVIEW },
                     text = { Text(stringResource(R.string.android_build_tab)) },
-                    icon = { Icon(Icons.Default.Build, null) },
-                )
-                Tab(
-                    selected = section == AndroidDashboardSection.LOGCAT,
-                    onClick = { section = AndroidDashboardSection.LOGCAT },
-                    text = { Text(stringResource(R.string.android_logcat_tab)) },
-                    icon = { Icon(Icons.Default.BugReport, null) },
                 )
                 Tab(
                     selected = section == AndroidDashboardSection.HEALTH,
                     onClick = { section = AndroidDashboardSection.HEALTH },
                     text = { Text(stringResource(R.string.android_health_tab)) },
-                    icon = { Icon(Icons.Default.HealthAndSafety, null) },
                 )
             }
 
             when (section) {
+                AndroidDashboardSection.OVERVIEW -> ProfessionalAndroidOverview(
+                    state = state,
+                    liveElapsedSeconds = liveElapsedSeconds,
+                    showRawLog = showRawLog,
+                    onToggleRawLog = { showRawLog = !showRawLog },
+                    onAction = onAction,
+                    onCancelBuild = onCancelBuild,
+                    onInstallTools = onInstallTools,
+                    onOpenIssue = onOpenIssue,
+                    onOpenHealth = { section = AndroidDashboardSection.HEALTH },
+                )
                 AndroidDashboardSection.BUILD -> {
                     LazyColumn(
                         Modifier.fillMaxSize(),
@@ -5092,6 +5124,231 @@ private fun AndroidDashboardScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ProfessionalAndroidOverview(
+    state: AppUiState,
+    liveElapsedSeconds: Int?,
+    showRawLog: Boolean,
+    onToggleRawLog: () -> Unit,
+    onAction: (AndroidAction) -> Unit,
+    onCancelBuild: () -> Unit,
+    onInstallTools: () -> Unit,
+    onOpenIssue: (AndroidBuildIssue) -> Unit,
+    onOpenHealth: () -> Unit,
+) {
+    val apk = state.androidApkInfo
+    val toolsInstalled = DevStack.ANDROID in state.installedDevStacks
+    val primaryAction = when {
+        apk == null -> AndroidAction.BUILD
+        apk.stale -> AndroidAction.BUILD_AND_RUN
+        apk.installedMatches -> AndroidAction.RUN
+        else -> AndroidAction.INSTALL
+    }
+    val primaryLabel = when (primaryAction) {
+        AndroidAction.BUILD -> R.string.build
+        AndroidAction.INSTALL -> R.string.install
+        AndroidAction.RUN -> R.string.run_app
+        else -> R.string.build_and_run
+    }
+    val statusTitle = when {
+        state.androidBuildRunning -> androidStageLabel(state.androidBuildStage)
+        state.androidBuildStage == AndroidBuildStage.FAILED -> stringResource(R.string.android_build_failed_title)
+        apk == null -> stringResource(R.string.android_ready_to_build)
+        apk.stale -> stringResource(R.string.android_ready_to_rebuild)
+        apk.installedMatches -> stringResource(R.string.android_ready_to_run)
+        else -> stringResource(R.string.android_ready_to_install)
+    }
+    val statusDescription = when {
+        state.androidBuildRunning -> state.androidBuildMessage ?: androidStageLabel(state.androidBuildStage)
+        apk == null -> stringResource(R.string.android_no_apk_description)
+        apk.stale -> stringResource(R.string.android_source_changed_short)
+        apk.installedMatches -> stringResource(R.string.android_build_current_installed)
+        else -> stringResource(R.string.android_build_current_not_installed)
+    }
+    val elapsedSeconds = state.androidBuildStartedAtMillis?.let { start ->
+        if (state.androidBuildRunning) liveElapsedSeconds?.toLong()
+        else ((state.androidBuildFinishedAtMillis ?: start) - start).coerceAtLeast(0L) / 1_000L
+    }
+    val buildSummary = when {
+        state.androidBuildRunning -> stringResource(R.string.android_build_in_progress, formatDuration(elapsedSeconds ?: 0L))
+        state.androidBuildStage == AndroidBuildStage.FAILED -> state.androidBuildMessage ?: stringResource(R.string.android_build_failed_title)
+        state.androidBuildFinishedAtMillis != null -> stringResource(R.string.android_completed_in, formatDuration(elapsedSeconds ?: 0L))
+        else -> stringResource(R.string.android_no_build_yet)
+    }
+    val passedChecks = state.androidHealthChecks.count { it.status == AndroidHealthStatus.PASSED }
+    val failedChecks = state.androidHealthChecks.count { it.status == AndroidHealthStatus.FAILED }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)),
+                shape = RoundedCornerShape(22.dp),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            modifier = Modifier.size(54.dp),
+                            shape = CircleShape,
+                            color = when {
+                                state.androidBuildStage == AndroidBuildStage.FAILED -> MaterialTheme.colorScheme.errorContainer
+                                apk?.stale == true -> PocketOrange.copy(alpha = 0.18f)
+                                else -> PocketGreen.copy(alpha = 0.18f)
+                            },
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (state.androidBuildRunning) {
+                                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Icon(
+                                        if (state.androidBuildStage == AndroidBuildStage.FAILED || apk?.stale == true) Icons.Default.Warning else Icons.Default.Check,
+                                        null,
+                                        tint = if (state.androidBuildStage == AndroidBuildStage.FAILED) MaterialTheme.colorScheme.error else if (apk?.stale == true) PocketOrange else PocketGreen,
+                                        modifier = Modifier.size(28.dp),
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(statusTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Text(statusDescription, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                            apk?.let {
+                                Text(
+                                    "${it.fileName} · ${formatFileSize(it.sizeBytes)}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
+                    }
+                    if (state.androidBuildRunning) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (!toolsInstalled) {
+                        Button(onClick = onInstallTools, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                            Text(stringResource(R.string.install_android_tools))
+                        }
+                    } else if (state.androidBuildRunning) {
+                        OutlinedButton(onClick = onCancelBuild, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                            Icon(Icons.Default.Stop, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.cancel_operation))
+                        }
+                    } else {
+                        Button(
+                            onClick = { onAction(primaryAction) },
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(primaryLabel), fontWeight = FontWeight.SemiBold)
+                        }
+                        if (apk != null) {
+                            TextButton(onClick = { onAction(AndroidAction.BUILD) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                                Text(stringResource(R.string.android_build_again))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (state.androidBuildIssues.isNotEmpty()) {
+            item { Text(stringResource(R.string.build_issues), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            items(state.androidBuildIssues) { issue ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = issue.filePath != null) { onOpenIssue(issue) },
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(issue.title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(issue.detail, fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                        issue.suggestion?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)) }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column {
+                    AndroidDashboardSummaryRow(
+                        icon = Icons.Default.Description,
+                        title = stringResource(R.string.android_build_output),
+                        subtitle = buildSummary,
+                        trailing = stringResource(R.string.android_view),
+                        tint = PocketOrange,
+                        onClick = onToggleRawLog,
+                    )
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                    AndroidDashboardSummaryRow(
+                        icon = Icons.Default.HealthAndSafety,
+                        title = stringResource(R.string.project_health),
+                        subtitle = when {
+                            state.androidHealthRunning -> stringResource(R.string.android_checking_health)
+                            failedChecks > 0 -> stringResource(R.string.android_health_needs_attention, failedChecks)
+                            state.androidHealthChecks.isEmpty() -> stringResource(R.string.android_health_not_checked)
+                            else -> stringResource(R.string.android_health_checks_passed, passedChecks)
+                        },
+                        tint = if (failedChecks > 0) MaterialTheme.colorScheme.error else PocketGreen,
+                        onClick = onOpenHealth,
+                    )
+                }
+            }
+        }
+
+        if (showRawLog) {
+            item {
+                Surface(color = Color(0xFF11141A), shape = RoundedCornerShape(16.dp)) {
+                    SelectionContainer {
+                        Text(
+                            state.androidBuildLog.ifBlank { stringResource(R.string.android_no_build_output) },
+                            Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()).padding(14.dp),
+                            color = Color(0xFFD7DEE9),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AndroidDashboardSummaryRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    tint: Color,
+    trailing: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 17.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+        }
+        trailing?.let {
+            Text(it, color = PocketOrange, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.width(6.dp))
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
