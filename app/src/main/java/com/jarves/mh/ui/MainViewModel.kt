@@ -247,7 +247,6 @@ data class AppUiState(
     val projectChats: List<ProjectChat> = emptyList(),
     val activeChatId: String? = null,
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
-    val workspaceHasMoreFiles: Boolean = false,
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
     val openedFile: OpenedFileState? = null,
@@ -493,7 +492,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     val state: StateFlow<AppUiState> = _state.asStateFlow()
-    private var workspaceEntryLimit = WORKSPACE_PAGE_SIZE
 
     private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(
         listOf(
@@ -2146,7 +2144,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         configureBridgeRoots(project.id, project.rootPath)
-        workspaceEntryLimit = WORKSPACE_PAGE_SIZE
         val terminal = loadProjectTerminal(project)
         val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
@@ -2173,7 +2170,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
-                workspaceHasMoreFiles = false,
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = terminal.lines,
@@ -3137,9 +3133,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val project = _state.value.activeProject ?: return
         _state.update { it.copy(filesLoading = true) }
         viewModelScope.launch {
-            val (entriesAndMore, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
+            val (entries, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
                 Triple(
-                    readWorkspace(project, workspaceEntryLimit),
+                    readWorkspaceDirectory(project, ""),
                     if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
                     findAndroidProjectRoot(projectWorkspaceRoot(project)) != null,
                 )
@@ -3147,8 +3143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (_state.value.activeProject?.id == project.id) {
                 _state.update {
                     it.copy(
-                        workspaceFiles = entriesAndMore.first,
-                        workspaceHasMoreFiles = entriesAndMore.second,
+                        workspaceFiles = entries,
                         filesLoading = false,
                         suggestedProjectRoot = suggestedRoot,
                         androidProjectDetected = androidProjectDetected,
@@ -3158,10 +3153,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun loadMoreProjectFiles() {
-        if (_state.value.filesLoading || !_state.value.workspaceHasMoreFiles) return
-        workspaceEntryLimit += WORKSPACE_PAGE_SIZE
-        refreshProjectFiles()
+    fun loadProjectDirectory(relativePath: String) {
+        val project = _state.value.activeProject ?: return
+        viewModelScope.launch {
+            val children = withContext(Dispatchers.IO) { readWorkspaceDirectory(project, relativePath) }
+            if (_state.value.activeProject?.id != project.id) return@launch
+            _state.update { current ->
+                val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
+                val retained = current.workspaceFiles.filterNot { entry ->
+                    entry.path.startsWith(prefix) && entry.path.removePrefix(prefix).let { !it.contains('/') }
+                }
+                current.copy(workspaceFiles = (retained + children).distinctBy { it.path }.sortedBy { it.path.lowercase() })
+            }
+        }
     }
 
     fun openFile(entry: WorkspaceEntry) {
@@ -3302,26 +3306,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    private fun readWorkspace(project: Project, limit: Int): Pair<List<WorkspaceEntry>, Boolean> {
+    private fun readWorkspaceDirectory(project: Project, relativePath: String): List<WorkspaceEntry> {
         val root = projectWorkspaceRoot(project)
-        if (!root.isDirectory) return emptyList<WorkspaceEntry>() to false
+        if (!root.isDirectory) return emptyList()
         val rootPath = root.canonicalFile.toPath()
-        val entries = root.walkTopDown()
-            .onEnter { directory ->
-                val relative = if (directory == root) "" else directory.relativeTo(root).invariantSeparatorsPath
-                directory == root || (!isClaudeRuntimeMetadata(relative) &&
-                    !Files.isSymbolicLink(directory.toPath()) &&
-                    runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-                    )
-            }
-            .drop(1)
+        val directory = if (relativePath.isBlank()) root else File(root, relativePath)
+        if (!directory.isDirectory || Files.isSymbolicLink(directory.toPath()) ||
+            !runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+        ) return emptyList()
+        return directory.listFiles().orEmpty()
+            .asSequence()
             .filter { file ->
                 val relative = file.relativeTo(root).invariantSeparatorsPath
                 !isClaudeRuntimeMetadata(relative) &&
                     !Files.isSymbolicLink(file.toPath()) &&
                     runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
             }
-            .take(limit + 1)
             .map { file ->
                 val relative = file.relativeTo(root).invariantSeparatorsPath
                 WorkspaceEntry(
@@ -3332,10 +3332,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     sizeBytes = if (file.isFile) file.length() else 0,
                 )
             }
-            .sortedWith(compareBy<WorkspaceEntry> { it.path.lowercase() }.thenByDescending { it.isDirectory })
+            .sortedWith(compareByDescending<WorkspaceEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
             .toList()
-        val hasMore = entries.size > limit
-        return entries.take(limit) to hasMore
     }
 
     private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {
@@ -4107,7 +4105,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
-        private const val WORKSPACE_PAGE_SIZE = 200
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000

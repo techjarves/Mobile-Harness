@@ -368,7 +368,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRemoveFollowUp = viewModel::removeQueuedFollowUp,
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
-            onLoadMoreFiles = viewModel::loadMoreProjectFiles,
+            onLoadProjectDirectory = viewModel::loadProjectDirectory,
             onOpenFile = viewModel::openFile,
             onCloseFile = viewModel::closeFile,
             onBeginFileEdit = viewModel::beginFileEdit,
@@ -4269,7 +4269,7 @@ private fun WorkspaceScreen(
     onRemoveFollowUp: (String) -> Unit,
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
-    onLoadMoreFiles: () -> Unit,
+    onLoadProjectDirectory: (String) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onCloseFile: () -> Unit,
     onBeginFileEdit: () -> Unit,
@@ -4635,10 +4635,9 @@ private fun WorkspaceScreen(
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
                     loading = state.filesLoading,
-                    hasMoreFiles = state.workspaceHasMoreFiles,
                     suggestedProjectRoot = state.suggestedProjectRoot,
                     onRefresh = onRefreshFiles,
-                    onLoadMore = onLoadMoreFiles,
+                    onLoadDirectory = onLoadProjectDirectory,
                     onOpenFile = onOpenFile,
                     onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
                     selectionMode = exportSelectionMode,
@@ -5053,10 +5052,9 @@ private fun FileViewerScreen(
 private fun FilesTab(
     files: List<WorkspaceEntry>,
     loading: Boolean,
-    hasMoreFiles: Boolean,
     suggestedProjectRoot: String?,
     onRefresh: () -> Unit,
-    onLoadMore: () -> Unit,
+    onLoadDirectory: (String) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
     selectionMode: Boolean,
@@ -5169,6 +5167,7 @@ private fun FilesTab(
                         if (selectionMode) {
                             onToggleSelection(entry)
                         } else if (entry.isDirectory) {
+                            if (entry.path !in expandedSet) onLoadDirectory(entry.path)
                             expandedDirectories = if (entry.path in expandedSet) {
                                 expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
                             } else {
@@ -5201,6 +5200,7 @@ private fun FilesTab(
                         if (entry.path in expandedSet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         stringResource(if (entry.path in expandedSet) R.string.collapse_folder else R.string.expand_folder),
                         Modifier.size(28.dp).clickable {
+                            if (entry.path !in expandedSet) onLoadDirectory(entry.path)
                             expandedDirectories = if (entry.path in expandedSet) {
                                 expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
                             } else expandedDirectories + entry.path
@@ -5251,13 +5251,6 @@ private fun FilesTab(
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(if (exportRunning) R.string.creating_zip else R.string.download_zip))
-                }
-            }
-        }
-        if (hasMoreFiles) {
-            item(key = "load-more-files") {
-                TextButton(onClick = onLoadMore, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.load_more_files))
                 }
             }
         }
