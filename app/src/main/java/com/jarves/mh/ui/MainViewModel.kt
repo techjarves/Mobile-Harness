@@ -1579,8 +1579,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (launcher) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
             )
             if (toolsInstalled && root != null) {
-                val (_, output) = runAndroidGuestCommand(project, "java -version 2>&1; gradle --version; aapt2 version")
-                val ok = "version \"17" in output && "gradle" in output.lowercase() && "aapt2" in output.lowercase()
+                val (toolchainExit, output) = runAndroidGuestCommand(
+                    project,
+                    "java -version 2>&1 | grep -E '\"17\\.|version 17' >/dev/null && " +
+                        "gradle --version >/dev/null && " +
+                        "/root/android-sdk/build-tools/35.0.0/aapt2 version >/dev/null && " +
+                        "printf POCKETDEV_TOOLCHAIN_OK",
+                )
+                val ok = toolchainExit == 0 && "POCKETDEV_TOOLCHAIN_OK" in output
                 checks += AndroidHealthCheck(
                     "toolchain", "Java, Gradle, and AAPT2",
                     if (ok) "Java 17, Gradle, and AAPT2 responded successfully." else "One or more Android build tools could not be verified.",
@@ -1635,7 +1641,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun performAndroidHealthFix(fix: AndroidHealthFix) {
         val app = getApplication<Application>()
         when (fix) {
-            AndroidHealthFix.INSTALL_TOOLS -> installDevStack(DevStack.ANDROID)
+            AndroidHealthFix.INSTALL_TOOLS -> {
+                _state.update { current ->
+                    current.copy(
+                        androidHealthRunning = true,
+                        androidHealthChecks = current.androidHealthChecks.map { check ->
+                            if (check.fix == AndroidHealthFix.INSTALL_TOOLS) {
+                                check.copy(
+                                    detail = "Repairing Android development tools…",
+                                    status = AndroidHealthStatus.RUNNING,
+                                    fix = AndroidHealthFix.NONE,
+                                )
+                            } else check
+                        },
+                    )
+                }
+                installDevStack(DevStack.ANDROID, refreshAndroidHealthAfter = true)
+            }
             AndroidHealthFix.OPEN_INSTALL_SETTINGS -> app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             AndroidHealthFix.OPEN_NETWORK_SETTINGS -> app.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             AndroidHealthFix.OPEN_STORAGE_SETTINGS -> app.startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -2445,7 +2467,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Installs one development stack on demand (Settings) with live progress. */
-    fun installDevStack(stack: DevStack) {
+    fun installDevStack(stack: DevStack, refreshAndroidHealthAfter: Boolean = false) {
         if (_state.value.devStackInstalling != null) return
         _state.update {
             it.copy(
@@ -2508,8 +2530,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         onSuccess = { "${stack.label} tools are ready" },
                         onFailure = { _ -> result.exceptionOrNull()?.message?.take(200) ?: "Could not install ${stack.label}" },
                     ),
+                    androidHealthRunning = if (refreshAndroidHealthAfter) false else current.androidHealthRunning,
                 )
             }
+            if (refreshAndroidHealthAfter) refreshAndroidHealth()
         }
     }
 

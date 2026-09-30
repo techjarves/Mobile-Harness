@@ -633,7 +633,10 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         val runtime = installedRuntime()
-        if (isStackInstalled(stack)) return
+        // Android's installer also repairs executable bits, Gradle configuration,
+        // and compatibility links. Let it run when the bundle is already present;
+        // installAndroidToolchain avoids downloading complete artifacts again.
+        if (isStackInstalled(stack) && stack != DevStack.ANDROID) return
         applyStack(runtime.proot, stack, 0.05f, 0.95f, onProgress)
         onProgress(RuntimeInstallProgress("${stack.label} tools are ready", 1f))
     }
