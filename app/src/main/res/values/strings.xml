@@ -311,4 +311,16 @@
     <string name="next_match">Next match</string>
     <string name="unsaved">Unsaved</string>
     <string name="saved">Saved</string>
+    <string name="android_dashboard">Android dashboard</string>
+    <string name="android_build_tab">Build</string><string name="android_logcat_tab">Logcat</string><string name="android_health_tab">Health</string>
+    <string name="android_ready">Ready for Android development</string><string name="close">Close</string><string name="refresh">Refresh</string><string name="more_options">More options</string>
+    <string name="force_rebuild">Force rebuild</string><string name="clean_project">Clean project</string><string name="build_progress">Build progress</string>
+    <string name="android_stage_idle">Ready</string><string name="android_stage_preparing">Preparing</string><string name="android_stage_resolving">Resolving</string><string name="android_stage_compiling">Compiling</string><string name="android_stage_resources">Resources</string><string name="android_stage_packaging">Packaging</string><string name="android_stage_finding_apk">Finding APK</string><string name="android_stage_installing">Installing</string><string name="android_stage_launching">Launching</string><string name="android_stage_complete">Complete</string><string name="android_stage_failed">Failed</string><string name="android_stage_cancelling">Cancelling</string><string name="android_stage_cancelled">Cancelled</string>
+    <string name="android_tools_required">Android development tools are required before building.</string><string name="install_android_tools">Install Android tools</string>
+    <string name="build">Build</string><string name="install">Install</string><string name="run">Run</string><string name="build_and_run">Build &amp; run</string><string name="cancel_operation">Cancel operation</string>
+    <string name="build_issues">Build issues</string><string name="unknown_package">Unknown package</string><string name="installed">Installed</string><string name="not_installed">Not installed</string><string name="stale_apk_warning">Source files changed after this APK was built. You can still use it, or build a current APK.</string>
+    <string name="apk_version_info">Version %1$s (%2$s) · min SDK %3$s · target SDK %4$s</string><string name="share">Share</string><string name="save_copy">Save copy</string><string name="copy_path">Copy path</string><string name="app_info">App info</string><string name="uninstall">Uninstall</string>
+    <string name="show_build_details">Show build details</string><string name="hide_build_details">Hide build details</string><string name="copy_log">Copy log</string>
+    <string name="logcat_access_required">Logcat access required</string><string name="logcat_access_description">Grant the development log permission once with ADB, then refresh this screen.</string><string name="copy_command">Copy command</string><string name="search_logs">Search logs</string><string name="pause">Pause</string><string name="resume">Resume</string><string name="clear">Clear</string>
+    <string name="project_health">Project health</string><string name="fix">Fix</string>
 </resources>

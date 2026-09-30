@@ -11,16 +11,35 @@ import android.os.Process
 import androidx.core.content.FileProvider
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+
+data class AndroidInstallEvent(
+    val operationId: String,
+    val packageName: String?,
+    val success: Boolean,
+    val launched: Boolean,
+    val message: String? = null,
+)
 
 /** Installs a locally-built APK through Android's package manager, without ADB. */
 object AndroidAppInstaller {
+    private val _events = MutableSharedFlow<AndroidInstallEvent>(extraBufferCapacity = 8)
+    val events = _events.asSharedFlow()
+
     fun openIfAlreadyInstalled(context: Context, apk: File): Boolean {
         val packageName = archivePackageName(context, apk) ?: return false
         if (installedFingerprint(context, packageName) != fingerprint(apk)) return false
         return launch(context, packageName)
     }
 
-    fun install(context: Context, apk: File) {
+    fun install(
+        context: Context,
+        apk: File,
+        launchAfterInstall: Boolean = true,
+        operationId: String = UUID.randomUUID().toString(),
+    ): String {
         require(apk.isFile && apk.extension.equals("apk", ignoreCase = true) && apk.length() > 0L) {
             "A valid APK was not produced: ${apk.name}"
         }
@@ -32,7 +51,7 @@ object AndroidAppInstaller {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 },
             )
-            return
+            return operationId
         }
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
@@ -63,6 +82,8 @@ object AndroidAppInstaller {
                     .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
                     .putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId)
                     .putExtra(EXTRA_APK_FINGERPRINT, fingerprint(apk))
+                    .putExtra(EXTRA_OPERATION_ID, operationId)
+                    .putExtra(EXTRA_LAUNCH_AFTER_INSTALL, launchAfterInstall)
                 val mutabilityFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     PendingIntent.FLAG_MUTABLE
                 } else {
@@ -78,10 +99,31 @@ object AndroidAppInstaller {
             runCatching { installer.abandonSession(sessionId) }
             throw error
         }
+        return operationId
     }
 
     const val ACTION_INSTALL_RESULT = "com.jarves.mh.action.APK_INSTALL_RESULT"
     const val EXTRA_APK_FINGERPRINT = "com.jarves.mh.extra.APK_FINGERPRINT"
+    const val EXTRA_OPERATION_ID = "com.jarves.mh.extra.OPERATION_ID"
+    const val EXTRA_LAUNCH_AFTER_INSTALL = "com.jarves.mh.extra.LAUNCH_AFTER_INSTALL"
+
+    internal fun publish(event: AndroidInstallEvent) {
+        _events.tryEmit(event)
+    }
+
+    fun packageName(context: Context, apk: File): String? = archivePackageName(context, apk)
+
+    fun isInstalled(context: Context, packageName: String): Boolean = runCatching {
+        context.packageManager.getPackageInfo(packageName, 0)
+        true
+    }.getOrDefault(false)
+
+    fun installedMatches(context: Context, apk: File): Boolean {
+        val packageName = archivePackageName(context, apk) ?: return false
+        return installedFingerprint(context, packageName) == fingerprint(apk)
+    }
+
+    fun apkFingerprint(apk: File): String = fingerprint(apk)
 
     internal fun rememberInstalled(context: Context, packageName: String, fingerprint: String) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
