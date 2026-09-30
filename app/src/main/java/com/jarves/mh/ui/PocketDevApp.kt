@@ -3789,26 +3789,34 @@ private fun ProjectsScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true)
                 Text(stringResource(R.string.project_type), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ProjectTypeOption(
-                        selected = androidTemplate == null,
-                        title = stringResource(R.string.project_type_general),
-                        description = stringResource(R.string.project_type_general_desc),
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AssistChip(
                         onClick = { androidTemplate = null },
+                        label = { Text(stringResource(R.string.project_type_general)) },
+                        leadingIcon = { if (androidTemplate == null) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                     )
-                    ProjectTypeOption(
-                        selected = androidTemplate == AndroidTemplate.COMPOSE,
-                        title = stringResource(R.string.project_type_compose),
-                        description = stringResource(R.string.project_type_compose_desc),
+                    AssistChip(
                         onClick = { androidTemplate = AndroidTemplate.COMPOSE },
+                        label = { Text(stringResource(R.string.project_type_compose)) },
+                        leadingIcon = { if (androidTemplate == AndroidTemplate.COMPOSE) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                     )
-                    ProjectTypeOption(
-                        selected = androidTemplate == AndroidTemplate.XML,
-                        title = stringResource(R.string.project_type_xml),
-                        description = stringResource(R.string.project_type_xml_desc),
+                    AssistChip(
                         onClick = { androidTemplate = AndroidTemplate.XML },
+                        label = { Text(stringResource(R.string.project_type_xml)) },
+                        leadingIcon = { if (androidTemplate == AndroidTemplate.XML) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                     )
                 }
+                Text(
+                    stringResource(
+                        when (androidTemplate) {
+                            AndroidTemplate.COMPOSE -> R.string.project_type_compose_desc
+                            AndroidTemplate.XML -> R.string.project_type_xml_desc
+                            null -> R.string.project_type_general_desc
+                        },
+                    ),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (androidTemplate != null) {
                     Text(
                         "Kotlin · min SDK 28 · target SDK 36",
@@ -4111,29 +4119,6 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ProjectTypeOption(
-    selected: Boolean,
-    title: String,
-    description: String,
-    onClick: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        border = BorderStroke(1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-            }
-            if (selected) Icon(Icons.Default.Check, null, tint = PocketOrange, modifier = Modifier.size(18.dp))
         }
     }
 }
