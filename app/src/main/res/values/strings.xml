@@ -345,4 +345,11 @@
     <string name="android_health_needs_attention">%1$d checks need attention</string>
     <string name="android_health_not_checked">Tap to check the project</string>
     <string name="android_health_checks_passed">%1$d checks passed</string>
+    <string name="project_type">Project type</string>
+    <string name="project_type_general">General</string>
+    <string name="project_type_general_desc">Any coding project</string>
+    <string name="project_type_compose">Compose</string>
+    <string name="project_type_compose_desc">Modern Android UI</string>
+    <string name="project_type_xml">XML</string>
+    <string name="project_type_xml_desc">Classic Android UI</string>
 </resources>

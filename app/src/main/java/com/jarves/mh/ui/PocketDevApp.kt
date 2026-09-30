@@ -3788,22 +3788,25 @@ private fun ProjectsScreen(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true)
-                Text("Project type", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AssistChip(
+                Text(stringResource(R.string.project_type), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ProjectTypeOption(
+                        selected = androidTemplate == null,
+                        title = stringResource(R.string.project_type_general),
+                        description = stringResource(R.string.project_type_general_desc),
                         onClick = { androidTemplate = null },
-                        label = { Text("General") },
-                        leadingIcon = { if (androidTemplate == null) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                     )
-                    AssistChip(
+                    ProjectTypeOption(
+                        selected = androidTemplate == AndroidTemplate.COMPOSE,
+                        title = stringResource(R.string.project_type_compose),
+                        description = stringResource(R.string.project_type_compose_desc),
                         onClick = { androidTemplate = AndroidTemplate.COMPOSE },
-                        label = { Text("Compose") },
-                        leadingIcon = { if (androidTemplate == AndroidTemplate.COMPOSE) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                     )
-                    AssistChip(
+                    ProjectTypeOption(
+                        selected = androidTemplate == AndroidTemplate.XML,
+                        title = stringResource(R.string.project_type_xml),
+                        description = stringResource(R.string.project_type_xml_desc),
                         onClick = { androidTemplate = AndroidTemplate.XML },
-                        label = { Text("XML") },
-                        leadingIcon = { if (androidTemplate == AndroidTemplate.XML) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                     )
                 }
                 if (androidTemplate != null) {
@@ -4112,7 +4115,28 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
     }
 }
 
-
+@Composable
+private fun ProjectTypeOption(
+    selected: Boolean,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+            }
+            if (selected) Icon(Icons.Default.Check, null, tint = PocketOrange, modifier = Modifier.size(18.dp))
+        }
+    }
+}
 
 @Composable
 private fun ProjectCard(
