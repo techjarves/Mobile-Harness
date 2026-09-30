@@ -270,4 +270,46 @@
     <string name="agent_not_installed">%1$s is not installed</string><string name="agent_install_description">Install its %1$s agent package to use it with your existing projects.</string><string name="agent_install_action">Install %1$s</string>
     <string name="agent_installing_binary">Installing agent binary…</string><string name="chat_welcome">Hi! Tell me what you want to build or change.</string><string name="chat_message_agent">Message %1$s…</string><string name="workspace_files">Files</string><string name="workspace_no_files">No files yet</string><string name="workspace_no_files_description">Ask your coding agent to create something in this project.</string><string name="workspace_project_terminal">Project Terminal</string><string name="workspace_terminal_ready">Mobile Harness Terminal ready.\nType a bash command below or tap a quick command chip above.</string><string name="workspace_preview_url">Preview URL</string><string name="workspace_preview_not_running">Preview not running</string><string name="workspace_preview_not_running_description">Enter a localhost URL above, or start a local web server in the project Terminal.</string>
     <string name="agent_connection_verified">%1$s connection verified.</string><string name="agent_status_verified">Verified</string>
+    <string name="export_busy">Stop the running task, terminal command, build, or file save before exporting.</string>
+    <string name="export_success">%1$s exported</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="unknown_error">Unknown error</string>
+    <string name="file_saved">File saved</string>
+    <string name="file_save_failed">The file could not be saved</string>
+    <string name="select_files">Select files</string>
+    <string name="select_all">Select all</string>
+    <string name="collapse_all">Collapse all</string>
+    <string name="export_project_zip">Export project as ZIP</string>
+    <string name="collapse_folder">Collapse folder</string>
+    <string name="expand_folder">Expand folder</string>
+    <string name="creating_zip">Creating ZIP…</string>
+    <string name="download_zip">Download ZIP</string>
+    <string name="unsaved_changes">Unsaved changes</string>
+    <string name="unsaved_changes_description">Save your changes before leaving this file?</string>
+    <string name="save">Save</string>
+    <string name="discard">Discard</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="file_changed_title">File changed</string>
+    <string name="file_changed_description">This file changed outside the editor. Reload it to avoid overwriting newer changes.</string>
+    <string name="reload">Reload</string>
+    <string name="cancel">Cancel</string>
+    <string name="close_file">Close file</string>
+    <string name="save_file">Save file</string>
+    <string name="copy_file_contents">Copy file contents</string>
+    <string name="edit_file">Edit file</string>
+    <string name="no_content">No content</string>
+    <string name="file_could_not_read">The file could not be read.</string>
+    <string name="file_binary_description">Binary files cannot be displayed or edited.</string>
+    <string name="file_invalid_utf8_description">Only valid UTF-8 text files can be edited.</string>
+    <string name="file_unsafe_description">This protected or unsafe path cannot be opened.</string>
+    <string name="file_too_large_description">Files larger than 512 KB are previewed and remain read-only.</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="find_in_file">Find in file</string>
+    <string name="find">Find</string>
+    <string name="previous_match">Previous match</string>
+    <string name="next_match">Next match</string>
+    <string name="unsaved">Unsaved</string>
+    <string name="saved">Saved</string>
+    <string name="load_more_files">Load 200 more files</string>
 </resources>

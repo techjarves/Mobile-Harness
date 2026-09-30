@@ -59,6 +59,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -70,6 +71,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -106,12 +109,15 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -121,6 +127,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
@@ -140,6 +147,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -158,6 +166,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -357,8 +368,15 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRemoveFollowUp = viewModel::removeQueuedFollowUp,
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
+            onLoadMoreFiles = viewModel::loadMoreProjectFiles,
             onOpenFile = viewModel::openFile,
             onCloseFile = viewModel::closeFile,
+            onBeginFileEdit = viewModel::beginFileEdit,
+            onUpdateFileDraft = viewModel::updateFileDraft,
+            onCancelFileEdit = viewModel::cancelFileEdit,
+            onSaveFile = viewModel::saveOpenedFile,
+            onReloadFile = viewModel::reloadOpenedFile,
+            onDismissFileConflict = viewModel::dismissFileConflict,
             onUndoChanges = viewModel::undoLastChanges,
             onKeepChanges = viewModel::keepLastChanges,
             onUndoFileChange = viewModel::undoFileChange,
@@ -4251,8 +4269,15 @@ private fun WorkspaceScreen(
     onRemoveFollowUp: (String) -> Unit,
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
+    onLoadMoreFiles: () -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onCloseFile: () -> Unit,
+    onBeginFileEdit: () -> Unit,
+    onUpdateFileDraft: (String) -> Unit,
+    onCancelFileEdit: () -> Unit,
+    onSaveFile: () -> Unit,
+    onReloadFile: () -> Unit,
+    onDismissFileConflict: () -> Unit,
     onUndoChanges: () -> Unit,
     onKeepChanges: () -> Unit,
     onUndoFileChange: (String) -> Unit,
@@ -4270,7 +4295,7 @@ private fun WorkspaceScreen(
     onTerminalConfirm: () -> Unit,
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
-    onExportProject: (Uri) -> Unit,
+    onExportProject: (Uri, ExportSelection) -> Unit,
     onAddAttachments: (List<Uri>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
@@ -4283,9 +4308,11 @@ private fun WorkspaceScreen(
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var exportSelection by remember(state.activeProject?.id) { mutableStateOf(ExportSelection()) }
+    var exportSelectionMode by remember(state.activeProject?.id) { mutableStateOf(false) }
     val exportProjectLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
-        onResult = { uri -> if (uri != null) onExportProject(uri) },
+        onResult = { uri -> if (uri != null) onExportProject(uri, exportSelection) },
     )
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
@@ -4345,6 +4372,13 @@ private fun WorkspaceScreen(
     var showChats by rememberSaveable { mutableStateOf(false) }
     var showAndroidBuild by rememberSaveable { mutableStateOf(false) }
     val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
+
+    LaunchedEffect(state.projectExportSucceededAtMillis) {
+        if (state.projectExportSucceededAtMillis != null) {
+            exportSelectionMode = false
+            exportSelection = ExportSelection()
+        }
+    }
 
     if (showAndroidBuild) {
         val clipboard = LocalClipboardManager.current
@@ -4446,19 +4480,20 @@ private fun WorkspaceScreen(
     }
 
     // If a file is open, show the FileViewerScreen on top
-    if (state.openedFilePath != null) {
-        BackHandler(onBack = {
-            onCloseFile()
-            selectedTab = WorkspaceTab.FILES
-        })
+    if (state.openedFile != null) {
         FileViewerScreen(
-            filePath = state.openedFilePath,
-            content = state.openedFileContent,
-            loading = state.fileContentLoading,
+            file = state.openedFile,
+            editingAllowed = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
             onClose = {
                 onCloseFile()
                 selectedTab = WorkspaceTab.FILES
             },
+            onBeginEdit = onBeginFileEdit,
+            onDraftChange = onUpdateFileDraft,
+            onCancelEdit = onCancelFileEdit,
+            onSave = onSaveFile,
+            onReload = onReloadFile,
+            onDismissConflict = onDismissFileConflict,
         )
         return
     }
@@ -4600,11 +4635,27 @@ private fun WorkspaceScreen(
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
                     loading = state.filesLoading,
+                    hasMoreFiles = state.workspaceHasMoreFiles,
                     suggestedProjectRoot = state.suggestedProjectRoot,
                     onRefresh = onRefreshFiles,
+                    onLoadMore = onLoadMoreFiles,
                     onOpenFile = onOpenFile,
                     onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
-                    onExport = {
+                    selectionMode = exportSelectionMode,
+                    exportSelection = exportSelection,
+                    exportRunning = state.projectExportRunning,
+                    exportEnabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+                    onEnterSelection = {
+                        exportSelection = ExportSelection()
+                        exportSelectionMode = true
+                    },
+                    onCancelSelection = {
+                        exportSelectionMode = false
+                        exportSelection = ExportSelection()
+                    },
+                    onToggleSelection = { entry -> exportSelection = exportSelection.toggled(entry.path, entry.isDirectory) },
+                    onSelectAll = { exportSelection = ExportSelection() },
+                    onDownloadSelection = {
                         exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
                     },
                 )
@@ -4699,17 +4750,75 @@ private fun ChatSwitcherDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileViewerScreen(
-    filePath: String,
-    content: String?,
-    loading: Boolean,
+    file: OpenedFileState,
+    editingAllowed: Boolean,
     onClose: () -> Unit,
+    onBeginEdit: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    onCancelEdit: () -> Unit,
+    onSave: () -> Unit,
+    onReload: () -> Unit,
+    onDismissConflict: () -> Unit,
 ) {
-    val fileName = filePath.substringAfterLast('/')
+    val fileName = file.path.substringAfterLast('/')
     val ext = fileName.substringAfterLast('.', "")
     val isMarkdown = ext == "md"
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
+    var showUnsavedDialog by remember { mutableStateOf(false) }
+    var showFind by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+    var editorValue by remember(file.path, file.editing) { mutableStateOf(TextFieldValue(file.draft)) }
+    var undoHistory by remember(file.path, file.editing) { mutableStateOf(emptyList<TextFieldValue>()) }
+    var redoHistory by remember(file.path, file.editing) { mutableStateOf(emptyList<TextFieldValue>()) }
+    val matches = remember(editorValue.text, findQuery) {
+        if (findQuery.isBlank()) emptyList() else buildList {
+            var start = 0
+            while (start <= editorValue.text.length - findQuery.length) {
+                val index = editorValue.text.indexOf(findQuery, start, ignoreCase = true)
+                if (index < 0) break
+                add(index)
+                start = index + findQuery.length.coerceAtLeast(1)
+            }
+        }
+    }
+    val currentMatch = matches.indexOfFirst { it >= editorValue.selection.start }.let { if (it < 0 && matches.isNotEmpty()) 0 else it }
+
+    fun leaveEditor() {
+        if (file.dirty) showUnsavedDialog = true else onCancelEdit()
+    }
+
+    BackHandler {
+        if (file.editing) leaveEditor() else onClose()
+    }
+
+    if (showUnsavedDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnsavedDialog = false },
+            title = { Text(stringResource(R.string.unsaved_changes)) },
+            text = { Text(stringResource(R.string.unsaved_changes_description)) },
+            confirmButton = {
+                TextButton(onClick = { showUnsavedDialog = false; onSave() }) { Text(stringResource(R.string.save)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { showUnsavedDialog = false; onCancelEdit() }) { Text(stringResource(R.string.discard)) }
+                    TextButton(onClick = { showUnsavedDialog = false }) { Text(stringResource(R.string.keep_editing)) }
+                }
+            },
+        )
+    }
+
+    if (file.conflict) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.file_changed_title)) },
+            text = { Text(stringResource(R.string.file_changed_description)) },
+            confirmButton = { TextButton(onClick = onReload) { Text(stringResource(R.string.reload)) } },
+            dismissButton = { TextButton(onClick = onDismissConflict) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -4717,24 +4826,37 @@ private fun FileViewerScreen(
                 title = {
                     Column {
                         Text(fileName, fontWeight = FontWeight.SemiBold)
-                        Text(filePath, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(file.path, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close file") }
+                    IconButton(onClick = { if (file.editing) leaveEditor() else onClose() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.close_file))
+                    }
                 },
                 actions = {
-                    if (!content.isNullOrEmpty()) {
+                    if (file.editing) {
+                        TextButton(onClick = ::leaveEditor, enabled = !file.saving) { Text(stringResource(R.string.cancel)) }
+                        IconButton(onClick = onSave, enabled = file.dirty && !file.saving && editingAllowed) {
+                            if (file.saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.Save, stringResource(R.string.save_file))
+                        }
+                    } else if (!file.content.isNullOrEmpty()) {
                         IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(content))
+                            clipboard.setText(AnnotatedString(file.content))
                             copied = true
                             scope.launch { delay(2000); copied = false }
                         }) {
                             Icon(
                                 if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                                "Copy file contents",
+                                stringResource(R.string.copy_file_contents),
                                 tint = if (copied) PocketOrange else MaterialTheme.colorScheme.onSurface,
                             )
+                        }
+                        if (file.readOnlyReason == null) {
+                            IconButton(onClick = onBeginEdit, enabled = editingAllowed) {
+                                Icon(Icons.Default.Edit, stringResource(R.string.edit_file))
+                            }
                         }
                     }
                 },
@@ -4744,13 +4866,125 @@ private fun FileViewerScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                loading -> {
+                file.loading -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = PocketOrange)
                     }
                 }
-                content == null -> {
-                    EmptyState(Icons.Default.Description, "No content", "The file could not be read.")
+                file.content == null -> {
+                    val reason = when (file.readOnlyReason) {
+                        FileReadOnlyReason.BINARY -> R.string.file_binary_description
+                        FileReadOnlyReason.INVALID_UTF8 -> R.string.file_invalid_utf8_description
+                        FileReadOnlyReason.UNSAFE -> R.string.file_unsafe_description
+                        else -> R.string.file_could_not_read
+                    }
+                    EmptyState(Icons.Default.Description, stringResource(R.string.no_content), stringResource(reason))
+                }
+                file.editing -> {
+                    val vertical = rememberScrollState()
+                    val horizontal = rememberScrollState()
+                    Column(Modifier.fillMaxSize().background(Color(0xFF0D1117))) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val previous = undoHistory.lastOrNull() ?: return@IconButton
+                                    undoHistory = undoHistory.dropLast(1)
+                                    redoHistory = (redoHistory + editorValue).takeLast(50)
+                                    editorValue = previous
+                                    onDraftChange(previous.text)
+                                },
+                                enabled = undoHistory.isNotEmpty(),
+                            ) { Icon(Icons.Default.Undo, stringResource(R.string.undo)) }
+                            IconButton(
+                                onClick = {
+                                    val next = redoHistory.lastOrNull() ?: return@IconButton
+                                    redoHistory = redoHistory.dropLast(1)
+                                    undoHistory = (undoHistory + editorValue).takeLast(50)
+                                    editorValue = next
+                                    onDraftChange(next.text)
+                                },
+                                enabled = redoHistory.isNotEmpty(),
+                            ) { Icon(Icons.Default.Redo, stringResource(R.string.redo)) }
+                            IconButton(onClick = { showFind = !showFind }) {
+                                Icon(Icons.Default.Search, stringResource(R.string.find_in_file))
+                            }
+                            Text(
+                                if (file.dirty) stringResource(R.string.unsaved) else stringResource(R.string.saved),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        if (showFind) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                OutlinedTextField(
+                                    value = findQuery,
+                                    onValueChange = { findQuery = it },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    label = { Text(stringResource(R.string.find)) },
+                                )
+                                Text(
+                                    if (matches.isEmpty()) "0/0" else "${currentMatch + 1}/${matches.size}",
+                                    Modifier.padding(horizontal = 8.dp),
+                                    fontSize = 12.sp,
+                                )
+                                IconButton(onClick = {
+                                    if (matches.isNotEmpty()) {
+                                        val index = if (currentMatch <= 0) matches.lastIndex else currentMatch - 1
+                                        editorValue = editorValue.copy(selection = TextRange(matches[index], matches[index] + findQuery.length))
+                                    }
+                                }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.previous_match)) }
+                                IconButton(onClick = {
+                                    if (matches.isNotEmpty()) {
+                                        val index = if (currentMatch >= matches.lastIndex) 0 else currentMatch + 1
+                                        editorValue = editorValue.copy(selection = TextRange(matches[index], matches[index] + findQuery.length))
+                                    }
+                                }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.next_match)) }
+                            }
+                        }
+                        Row(
+                            Modifier.fillMaxSize().verticalScroll(vertical),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Text(
+                                (1..editorValue.text.count { it == '\n' } + 1).joinToString("\n"),
+                                modifier = Modifier.width(48.dp).padding(horizontal = 8.dp, vertical = 10.dp),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
+                                color = Color(0xFF4A5568),
+                                textAlign = TextAlign.End,
+                            )
+                            BasicTextField(
+                                value = editorValue,
+                                onValueChange = { next ->
+                                    if (next.text != editorValue.text) {
+                                        undoHistory = (undoHistory + editorValue).takeLast(50)
+                                        redoHistory = emptyList()
+                                    }
+                                    editorValue = next
+                                    onDraftChange(next.text)
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .horizontalScroll(horizontal)
+                                    .widthIn(min = 720.dp)
+                                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    fontSize = 13.sp,
+                                    lineHeight = 20.sp,
+                                    color = Color(0xFFE2E8F0),
+                                ),
+                            )
+                        }
+                    }
                 }
                 isMarkdown -> {
                     LazyColumn(
@@ -4758,7 +4992,7 @@ private fun FileViewerScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        item { MarkdownText(markdown = content, color = MaterialTheme.colorScheme.onSurface) }
+                        item { MarkdownText(markdown = file.content, color = MaterialTheme.colorScheme.onSurface) }
                     }
                 }
                 else -> {
@@ -4769,7 +5003,7 @@ private fun FileViewerScreen(
                             .fillMaxSize()
                             .background(Color(0xFF0D1117)),
                     ) {
-                        val lines = content.lines()
+                        val lines = file.content.lines()
                         items(lines.size) { idx ->
                             Row(
                                 modifier = Modifier
@@ -4802,6 +5036,15 @@ private fun FileViewerScreen(
                     }
                 }
             }
+            if (!file.editing && file.readOnlyReason == FileReadOnlyReason.TOO_LARGE) {
+                Surface(
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(stringResource(R.string.file_too_large_description), Modifier.padding(12.dp), fontSize = 12.sp)
+                }
+            }
         }
     }
 }
@@ -4810,11 +5053,21 @@ private fun FileViewerScreen(
 private fun FilesTab(
     files: List<WorkspaceEntry>,
     loading: Boolean,
+    hasMoreFiles: Boolean,
     suggestedProjectRoot: String?,
     onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
-    onExport: () -> Unit,
+    selectionMode: Boolean,
+    exportSelection: ExportSelection,
+    exportRunning: Boolean,
+    exportEnabled: Boolean,
+    onEnterSelection: () -> Unit,
+    onCancelSelection: () -> Unit,
+    onToggleSelection: (WorkspaceEntry) -> Unit,
+    onSelectAll: () -> Unit,
+    onDownloadSelection: () -> Unit,
 ) {
     var expandedDirectories by rememberSaveable { mutableStateOf(emptyList<String>()) }
     LaunchedEffect(files.map { it.path }) {
@@ -4831,6 +5084,18 @@ private fun FilesTab(
     val directChildCounts = files.filter { candidate ->
         candidate.path.contains('/')
     }.groupingBy { candidate -> candidate.path.substringBeforeLast('/') }.eachCount()
+    fun selectionState(entry: WorkspaceEntry): ToggleableState {
+        if (!entry.isDirectory) return if (exportSelection.includes(entry.path)) ToggleableState.On else ToggleableState.Off
+        val descendants = files.filter { it.path == entry.path || it.path.startsWith("${entry.path}/") }
+        val selected = descendants.count { exportSelection.includes(it.path) }
+        return when {
+            selected == 0 -> ToggleableState.Off
+            selected == descendants.size -> ToggleableState.On
+            else -> ToggleableState.Indeterminate
+        }
+    }
+    val hasSelection = files.any { !it.isDirectory && exportSelection.includes(it.path) } ||
+        files.any { it.isDirectory && selectionState(it) != ToggleableState.Off }
 
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
@@ -4848,20 +5113,25 @@ private fun FilesTab(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        stringResource(R.string.workspace_files),
+                        stringResource(if (selectionMode) R.string.select_files else R.string.workspace_files),
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    if (expandedDirectories.isNotEmpty()) {
+                    if (selectionMode) {
+                        TextButton(onClick = onSelectAll) { Text(stringResource(R.string.select_all), fontSize = 11.sp) }
+                        TextButton(onClick = onCancelSelection, enabled = !exportRunning) { Text(stringResource(R.string.cancel), fontSize = 11.sp) }
+                    } else if (expandedDirectories.isNotEmpty()) {
                         TextButton(onClick = { expandedDirectories = emptyList() }) {
                             Icon(Icons.Default.KeyboardArrowUp, null, Modifier.size(17.dp))
                             Spacer(Modifier.width(3.dp))
-                            Text("Collapse all", fontSize = 11.sp)
+                            Text(stringResource(R.string.collapse_all), fontSize = 11.sp)
                         }
                     }
-                    if (!loading && files.any { !it.isDirectory }) {
-                        IconButton(onClick = onExport) { Icon(Icons.Default.Download, "Export project as ZIP") }
+                    if (!selectionMode && !loading && files.any { !it.isDirectory }) {
+                        IconButton(onClick = onEnterSelection, enabled = exportEnabled) {
+                            Icon(Icons.Default.Download, stringResource(R.string.export_project_zip))
+                        }
                     }
                     if (loading) {
                         CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
@@ -4896,7 +5166,9 @@ private fun FilesTab(
                 Modifier
                     .fillMaxWidth()
                     .clickable {
-                        if (entry.isDirectory) {
+                        if (selectionMode) {
+                            onToggleSelection(entry)
+                        } else if (entry.isDirectory) {
                             expandedDirectories = if (entry.path in expandedSet) {
                                 expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
                             } else {
@@ -4910,11 +5182,29 @@ private fun FilesTab(
                     .padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (selectionMode) {
+                    if (entry.isDirectory) {
+                        TriStateCheckbox(
+                            state = selectionState(entry),
+                            onClick = { onToggleSelection(entry) },
+                        )
+                    } else {
+                        Checkbox(
+                            checked = exportSelection.includes(entry.path),
+                            onCheckedChange = { onToggleSelection(entry) },
+                        )
+                    }
+                    Spacer(Modifier.width(2.dp))
+                }
                 if (entry.isDirectory) {
                     Icon(
                         if (entry.path in expandedSet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        if (entry.path in expandedSet) "Collapse folder" else "Expand folder",
-                        Modifier.size(18.dp),
+                        stringResource(if (entry.path in expandedSet) R.string.collapse_folder else R.string.expand_folder),
+                        Modifier.size(28.dp).clickable {
+                            expandedDirectories = if (entry.path in expandedSet) {
+                                expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
+                            } else expandedDirectories + entry.path
+                        }.padding(5.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.width(5.dp))
@@ -4944,6 +5234,31 @@ private fun FilesTab(
             }
             if (!entry.isDirectory) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f), modifier = Modifier.padding(start = (entry.depth * 20 + 42).dp))
+            }
+        }
+        if (selectionMode) {
+            item(key = "download-selection") {
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onDownloadSelection,
+                    enabled = hasSelection && !exportRunning && exportEnabled,
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                ) {
+                    if (exportRunning) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Download, null)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(if (exportRunning) R.string.creating_zip else R.string.download_zip))
+                }
+            }
+        }
+        if (hasMoreFiles) {
+            item(key = "load-more-files") {
+                TextButton(onClick = onLoadMore, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.load_more_files))
+                }
             }
         }
     }

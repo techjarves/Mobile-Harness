@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.jarves.mh.BuildConfig
+import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.data.AppPreferences
@@ -70,9 +71,13 @@ import com.jarves.mh.update.AppUpdateInfo
 import com.jarves.mh.update.AppUpdater
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.net.UnknownHostException
 import java.net.URI
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -94,6 +99,53 @@ enum class StartupStage { CHECKING, SETUP_REQUIRED, INSTALLING, MODEL_SETUP, INI
 enum class ApiPingStatus { IDLE, PINGING, OK, FAILED }
 enum class AppUpdateStatus { AVAILABLE, PERMISSION_REQUIRED, DOWNLOADING, INSTALLING, ERROR }
 enum class GitHubAuthStatus { DISCONNECTED, STARTING, AWAITING_USER, CONNECTED, ERROR }
+
+data class ExportSelection(
+    val defaultIncluded: Boolean = true,
+    val overrides: Map<String, Boolean> = emptyMap(),
+) {
+    fun includes(path: String): Boolean {
+        val normalized = path.trim('/')
+        return overrides.entries
+            .asSequence()
+            .filter { (rule, _) -> normalized == rule || normalized.startsWith("$rule/") }
+            .maxByOrNull { it.key.length }
+            ?.value ?: defaultIncluded
+    }
+
+    fun canContainIncluded(path: String): Boolean {
+        val normalized = path.trim('/')
+        return includes(normalized) || overrides.any { (rule, included) ->
+            included && rule.startsWith("$normalized/")
+        }
+    }
+
+    fun toggled(path: String, directory: Boolean): ExportSelection {
+        val normalized = path.trim('/')
+        val nextValue = !includes(normalized)
+        val next = overrides.toMutableMap()
+        if (directory) next.keys.filter { it.startsWith("$normalized/") }.forEach(next::remove)
+        next[normalized] = nextValue
+        return copy(overrides = next)
+    }
+}
+
+enum class FileReadOnlyReason { TOO_LARGE, BINARY, INVALID_UTF8, UNSAFE, READ_ERROR }
+
+data class OpenedFileState(
+    val path: String,
+    val content: String? = null,
+    val draft: String = "",
+    val loading: Boolean = true,
+    val editing: Boolean = false,
+    val saving: Boolean = false,
+    val dirty: Boolean = false,
+    val conflict: Boolean = false,
+    val readOnlyReason: FileReadOnlyReason? = null,
+    val originalFingerprint: String? = null,
+    val lineEnding: String = "\n",
+    val hadTrailingNewline: Boolean = false,
+)
 
 data class TerminalOutputLine(
     val id: String = java.util.UUID.randomUUID().toString(),
@@ -195,11 +247,12 @@ data class AppUiState(
     val projectChats: List<ProjectChat> = emptyList(),
     val activeChatId: String? = null,
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
+    val workspaceHasMoreFiles: Boolean = false,
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
-    val openedFilePath: String? = null,
-    val openedFileContent: String? = null,
-    val fileContentLoading: Boolean = false,
+    val openedFile: OpenedFileState? = null,
+    val projectExportRunning: Boolean = false,
+    val projectExportSucceededAtMillis: Long? = null,
     val messages: List<ChatMessage> = listOf(
         ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change."),
     ),
@@ -440,6 +493,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     val state: StateFlow<AppUiState> = _state.asStateFlow()
+    private var workspaceEntryLimit = WORKSPACE_PAGE_SIZE
 
     private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(
         listOf(
@@ -2092,6 +2146,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         configureBridgeRoots(project.id, project.rootPath)
+        workspaceEntryLimit = WORKSPACE_PAGE_SIZE
         val terminal = loadProjectTerminal(project)
         val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
@@ -2118,6 +2173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                workspaceHasMoreFiles = false,
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = terminal.lines,
@@ -2966,13 +3022,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshProjectFiles()
     }
 
-    fun exportActiveProject(uri: Uri) {
+    fun exportActiveProject(uri: Uri, selection: ExportSelection) {
         val current = _state.value
         val project = current.activeProject ?: return
-        if (current.isRunning || current.projectTerminalRunning) {
-            _state.update { it.copy(toastMessage = "Stop the running task before exporting") }
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning ||
+            current.projectExportRunning || current.openedFile?.saving == true
+        ) {
+            _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.export_busy)) }
             return
         }
+        _state.update { it.copy(projectExportRunning = true) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -2990,7 +3049,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         true
                                     } else {
                                         val relative = directory.relativeTo(root).invariantSeparatorsPath
-                                        !isExportExcludedPath(relative) &&
+                                        selection.canContainIncluded(relative) &&
+                                            !isClaudeRuntimeMetadata(relative) &&
                                             !Files.isSymbolicLink(directory.toPath()) &&
                                             runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
                                     }
@@ -2999,7 +3059,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 .filter { file ->
                                     !Files.isSymbolicLink(file.toPath()) &&
                                         runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
-                                        !isExportExcludedPath(file.relativeTo(root).invariantSeparatorsPath)
+                                        !isClaudeRuntimeMetadata(file.relativeTo(root).invariantSeparatorsPath) &&
+                                        if (file.isDirectory) {
+                                            selection.canContainIncluded(file.relativeTo(root).invariantSeparatorsPath)
+                                        } else {
+                                            selection.includes(file.relativeTo(root).invariantSeparatorsPath)
+                                        }
                                 }
                                 .forEach { file ->
                                     val relative = file.relativeTo(root).invariantSeparatorsPath
@@ -3014,9 +3079,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             _state.update {
                 it.copy(
+                    projectExportRunning = false,
+                    projectExportSucceededAtMillis = result.getOrNull()?.let { System.currentTimeMillis() },
                     toastMessage = result.fold(
-                        onSuccess = { "${project.slug}.zip exported" },
-                        onFailure = { error -> "Export failed: ${error.message ?: "Unknown error"}" },
+                        onSuccess = { getApplication<Application>().getString(R.string.export_success, "${project.slug}.zip") },
+                        onFailure = { error -> getApplication<Application>().getString(R.string.export_failed, error.message ?: getApplication<Application>().getString(R.string.unknown_error)) },
                     ),
                 )
             }
@@ -3070,9 +3137,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val project = _state.value.activeProject ?: return
         _state.update { it.copy(filesLoading = true) }
         viewModelScope.launch {
-            val (entries, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
+            val (entriesAndMore, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
                 Triple(
-                    readWorkspace(project),
+                    readWorkspace(project, workspaceEntryLimit),
                     if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
                     findAndroidProjectRoot(projectWorkspaceRoot(project)) != null,
                 )
@@ -3080,7 +3147,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (_state.value.activeProject?.id == project.id) {
                 _state.update {
                     it.copy(
-                        workspaceFiles = entries,
+                        workspaceFiles = entriesAndMore.first,
+                        workspaceHasMoreFiles = entriesAndMore.second,
                         filesLoading = false,
                         suggestedProjectRoot = suggestedRoot,
                         androidProjectDetected = androidProjectDetected,
@@ -3090,40 +3158,155 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadMoreProjectFiles() {
+        if (_state.value.filesLoading || !_state.value.workspaceHasMoreFiles) return
+        workspaceEntryLimit += WORKSPACE_PAGE_SIZE
+        refreshProjectFiles()
+    }
+
     fun openFile(entry: WorkspaceEntry) {
         if (entry.isDirectory) return
         val project = _state.value.activeProject ?: return
-        _state.update { it.copy(openedFilePath = entry.path, openedFileContent = null, fileContentLoading = true) }
+        _state.update { it.copy(openedFile = OpenedFileState(path = entry.path)) }
+        loadOpenedFile(project, entry.path)
+    }
+
+    private fun loadOpenedFile(project: Project, path: String) {
         viewModelScope.launch {
-            val content = withContext(Dispatchers.IO) {
-                val file = File(projectWorkspaceRoot(project), entry.path)
+            val loaded = withContext(Dispatchers.IO) {
+                val file = safeWorkspaceFile(project, path)
+                    ?: return@withContext OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.UNSAFE)
                 runCatching {
-                    if (file.length() > 512_000L) {
-                        file.inputStream().use { stream ->
-                            val buf = ByteArray(512_000)
-                            val read = stream.read(buf)
-                            String(buf, 0, read)
-                        } + "\n\n[File truncated — too large to display fully]"
+                    val tooLarge = file.length() > MAX_EDITABLE_FILE_BYTES
+                    val bytes = if (tooLarge) file.inputStream().use { it.readNBytes(MAX_EDITABLE_FILE_BYTES.toInt()) } else file.readBytes()
+                    if (bytes.any { it == 0.toByte() }) {
+                        OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.BINARY)
                     } else {
-                        file.readText()
+                        val decoder = Charsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                        val decoded = runCatching { decoder.decode(ByteBuffer.wrap(bytes)).toString() }.getOrNull()
+                        if (decoded == null) {
+                            OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.INVALID_UTF8)
+                        } else {
+                            val content = if (tooLarge) decoded + "\n\n…" else decoded
+                            OpenedFileState(
+                                path = path,
+                                content = content,
+                                draft = content,
+                                loading = false,
+                                readOnlyReason = FileReadOnlyReason.TOO_LARGE.takeIf { tooLarge },
+                                originalFingerprint = if (tooLarge) null else fingerprint(file),
+                                lineEnding = if (decoded.contains("\r\n")) "\r\n" else "\n",
+                                hadTrailingNewline = decoded.endsWith("\n") || decoded.endsWith("\r"),
+                            )
+                        }
                     }
-                }.getOrElse { "Could not read file: ${it.message}" }
+                }.getOrElse {
+                    OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.READ_ERROR)
+                }
             }
-            _state.update { it.copy(openedFileContent = content, fileContentLoading = false) }
+            if (_state.value.openedFile?.path == path) _state.update { it.copy(openedFile = loaded) }
         }
     }
 
     fun closeFile() {
-        _state.update { it.copy(openedFilePath = null, openedFileContent = null, fileContentLoading = false) }
+        _state.update { it.copy(openedFile = null) }
+    }
+
+    fun beginFileEdit() {
+        val current = _state.value
+        val opened = current.openedFile ?: return
+        if (opened.loading || opened.readOnlyReason != null || opened.content == null ||
+            current.isRunning || current.projectTerminalRunning || current.androidBuildRunning
+        ) return
+        _state.update { it.copy(openedFile = opened.copy(editing = true, draft = opened.content, dirty = false, conflict = false)) }
+    }
+
+    fun updateFileDraft(value: String) {
+        val opened = _state.value.openedFile ?: return
+        if (!opened.editing || opened.saving) return
+        _state.update { it.copy(openedFile = opened.copy(draft = value, dirty = value != opened.content, conflict = false)) }
+    }
+
+    fun cancelFileEdit() {
+        val opened = _state.value.openedFile ?: return
+        _state.update { it.copy(openedFile = opened.copy(editing = false, draft = opened.content.orEmpty(), dirty = false, conflict = false)) }
+    }
+
+    fun reloadOpenedFile() {
+        val project = _state.value.activeProject ?: return
+        val path = _state.value.openedFile?.path ?: return
+        _state.update { it.copy(openedFile = OpenedFileState(path = path)) }
+        loadOpenedFile(project, path)
+    }
+
+    fun dismissFileConflict() {
+        val opened = _state.value.openedFile ?: return
+        _state.update { it.copy(openedFile = opened.copy(conflict = false, saving = false)) }
+    }
+
+    fun saveOpenedFile() {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        val opened = current.openedFile ?: return
+        if (!opened.editing || opened.saving || !opened.dirty || current.isRunning ||
+            current.projectTerminalRunning || current.androidBuildRunning
+        ) return
+        _state.update { it.copy(openedFile = opened.copy(saving = true, conflict = false)) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val file = safeWorkspaceFile(project, opened.path) ?: error("unsafe_path")
+                    if (opened.originalFingerprint == null || fingerprint(file) != opened.originalFingerprint) {
+                        return@runCatching false
+                    }
+                    var normalized = opened.draft.replace("\r\n", "\n").replace('\r', '\n')
+                    normalized = normalized.trimEnd('\n') + if (opened.hadTrailingNewline) "\n" else ""
+                    if (opened.lineEnding == "\r\n") normalized = normalized.replace("\n", "\r\n")
+                    val temporary = File(file.parentFile, ".${file.name}.${UUID.randomUUID()}.tmp")
+                    try {
+                        temporary.writeText(normalized, Charsets.UTF_8)
+                        if (file.canExecute()) temporary.setExecutable(true, false)
+                        runCatching {
+                            Files.move(
+                                temporary.toPath(), file.toPath(),
+                                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+                            )
+                        }.getOrElse {
+                            Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                        }
+                    } finally {
+                        temporary.delete()
+                    }
+                    true
+                }
+            }
+            when {
+                result.getOrNull() == false -> _state.update {
+                    it.copy(openedFile = it.openedFile?.copy(saving = false, conflict = true))
+                }
+                result.isSuccess -> {
+                    _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.file_saved)) }
+                    refreshProjectFiles()
+                    loadOpenedFile(project, opened.path)
+                }
+                else -> _state.update {
+                    it.copy(
+                        openedFile = it.openedFile?.copy(saving = false),
+                        toastMessage = getApplication<Application>().getString(R.string.file_save_failed),
+                    )
+                }
+            }
+        }
     }
 
 
-    private fun readWorkspace(project: Project): List<WorkspaceEntry> {
+    private fun readWorkspace(project: Project, limit: Int): Pair<List<WorkspaceEntry>, Boolean> {
         val root = projectWorkspaceRoot(project)
-        if (!root.isDirectory) return emptyList()
+        if (!root.isDirectory) return emptyList<WorkspaceEntry>() to false
         val rootPath = root.canonicalFile.toPath()
-        return root.walkTopDown()
-            .maxDepth(12)
+        val entries = root.walkTopDown()
             .onEnter { directory ->
                 val relative = if (directory == root) "" else directory.relativeTo(root).invariantSeparatorsPath
                 directory == root || (!isClaudeRuntimeMetadata(relative) &&
@@ -3138,7 +3321,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     !Files.isSymbolicLink(file.toPath()) &&
                     runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
             }
-            .take(MAX_VISIBLE_WORKSPACE_ENTRIES)
+            .take(limit + 1)
             .map { file ->
                 val relative = file.relativeTo(root).invariantSeparatorsPath
                 WorkspaceEntry(
@@ -3151,6 +3334,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             .sortedWith(compareBy<WorkspaceEntry> { it.path.lowercase() }.thenByDescending { it.isDirectory })
             .toList()
+        val hasMore = entries.size > limit
+        return entries.take(limit) to hasMore
     }
 
     private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {
@@ -3159,12 +3344,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             relativePath.startsWith(".claude/")
     }
 
-    private fun isExportExcludedPath(relativePath: String): Boolean {
-        val excludedNames = setOf(
-            ".git", ".claude", ".gradle", ".idea", ".next", ".cache",
-            "node_modules", ".venv", "venv", "__pycache__", "build",
-        )
-        return relativePath.split('/').any { it in excludedNames } || isClaudeRuntimeMetadata(relativePath)
+    private fun safeWorkspaceFile(project: Project, relativePath: String): File? {
+        if (relativePath.isBlank() || isClaudeRuntimeMetadata(relativePath)) return null
+        val root = projectWorkspaceRoot(project).canonicalFile
+        var cursor = root
+        for (segment in relativePath.replace('\\', '/').split('/')) {
+            if (segment.isBlank() || segment == "." || segment == "..") return null
+            cursor = File(cursor, segment)
+            if (Files.isSymbolicLink(cursor.toPath())) return null
+        }
+        val canonical = runCatching { cursor.canonicalFile }.getOrNull() ?: return null
+        return canonical.takeIf { it.toPath().startsWith(root.toPath()) && it.isFile }
+    }
+
+    private fun fingerprint(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     fun addChatAttachments(uris: List<Uri>) {
@@ -3904,7 +4107,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
-        private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
+        private const val WORKSPACE_PAGE_SIZE = 200
+        private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
         private const val MAX_ANDROID_BUILD_LOG = 300_000
