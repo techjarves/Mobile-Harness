@@ -128,15 +128,16 @@ internal fun findReusableDebugApk(projectRoot: File): File? {
     val apk = findDebugApk(projectRoot) ?: return null
     val ignoredDirectories = setOf("build", ".gradle", ".idea", ".git")
     val buildInputExtensions = setOf(
-        "kt", "java", "xml", "gradle", "kts", "properties", "toml", "pro", "json",
+        "kt", "java", "xml", "gradle", "kts", "properties", "toml", "pro", "json", "jar", "aar",
     )
     val changedAfterApk = projectRoot.walkTopDown()
         .onEnter { directory -> directory == projectRoot || directory.name !in ignoredDirectories }
         .filter { file ->
-            file.isFile && (
-                file.extension.lowercase() in buildInputExtensions ||
-                    file.name in setOf("gradlew", "gradlew.bat")
-                )
+            if (!file.isFile) return@filter false
+            val relative = file.relativeTo(projectRoot).invariantSeparatorsPath
+            val isAndroidSource = relative.startsWith("src/") || "/src/" in relative
+            isAndroidSource || file.extension.lowercase() in buildInputExtensions ||
+                file.name in setOf("gradlew", "gradlew.bat")
         }
         .any { it.lastModified() > apk.lastModified() }
     return apk.takeUnless { changedAfterApk }

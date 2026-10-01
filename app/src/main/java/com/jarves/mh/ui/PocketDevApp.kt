@@ -5280,7 +5280,7 @@ private fun ProfessionalAndroidOverview(
                             Text(stringResource(primaryLabel), fontWeight = FontWeight.SemiBold)
                         }
                         if (apk != null) {
-                            TextButton(onClick = { onAction(AndroidAction.BUILD) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                            TextButton(onClick = { onAction(AndroidAction.FORCE_BUILD) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                                 Text(stringResource(R.string.android_build_again))
                             }
                         }
