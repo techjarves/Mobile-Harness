@@ -134,6 +134,26 @@ private fun redactToolDetail(value: String): String = value
 
 /** Official Antigravity CLI bridge. OAuth and credentials remain owned by agy. */
 private const val HELLO_TIMEOUT_MILLIS = 90_000L
+
+/**
+ * Stream-json's result event is terminal, but agy may keep its input loop alive
+ * after emitting it. Stop the entire spawned process group so task completion is
+ * driven by the protocol rather than an implementation-specific process exit.
+ */
+private suspend fun stopAfterTerminalResult(process: Process) {
+    if (!process.isAlive) return
+    process.destroy()
+    repeat(20) {
+        if (!process.isAlive) return
+        delay(50)
+    }
+    if (process.isAlive) process.destroyForcibly()
+    repeat(20) {
+        if (!process.isAlive) return
+        delay(50)
+    }
+}
+
 class AntigravityRuntimeBridge(
     private val context: Context,
     private val model: () -> String,
@@ -238,11 +258,8 @@ class AntigravityRuntimeBridge(
                         }
                     }
                     pending.toString().trim().takeIf(String::isNotEmpty)?.let { if (!done) done = handleLine(it) }
-                    // Drain process exit without hanging past the timeout.
-                    withContext(NonCancellable) {
-                        runCatching { process.waitFor() }
-                    }
                     check(done) { friendlyError(pending.toString().takeLast(500).ifBlank { "Antigravity exited without answering" }) }
+                    stopAfterTerminalResult(process)
                     reply?.trim().takeUnless { it.isNullOrEmpty() } ?: "ok"
                 } finally {
                     runCatching { process.destroy() }
@@ -334,7 +351,7 @@ class AntigravityRuntimeBridge(
                     null -> Unit
                 }
             }
-            while (process.isAlive || native.outputFile.length() > offset) {
+            outputLoop@ while (process.isAlive || native.outputFile.length() > offset) {
                 val available = native.outputFile.length() - offset
                 if (available <= 0) {
                     delay(50)
@@ -353,13 +370,18 @@ class AntigravityRuntimeBridge(
                     val line = pending.substring(0, newline).trimEnd('\r')
                     pending.delete(0, newline + 1)
                     handleLine(line)
+                    if (resultSeen) break@outputLoop
                     newline = pending.indexOf("\n")
                 }
             }
-            pending.toString().trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
-            val exit = process.waitFor()
-            check(exit == 0 && resultSeen) {
-                friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
+            if (resultSeen) {
+                stopAfterTerminalResult(process)
+            } else {
+                pending.toString().trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
+                val exit = process.waitFor()
+                check(exit == 0 && resultSeen) {
+                    friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
+                }
             }
             val paths = checkpoints.changedFiles(workspace, before)
             checkpoints.saveChangedPaths(projectId, paths)
