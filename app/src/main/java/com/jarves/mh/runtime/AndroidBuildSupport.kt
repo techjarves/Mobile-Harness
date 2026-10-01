@@ -78,6 +78,7 @@ data class AndroidBuildRecord(
     val action: AndroidAction = AndroidAction.NONE,
     val stage: AndroidBuildStage = AndroidBuildStage.IDLE,
     val issues: List<AndroidBuildIssue> = emptyList(),
+    val recentDurationsMillis: List<Long> = emptyList(),
 )
 
 internal fun androidGradleCommand(root: File, task: String): String {

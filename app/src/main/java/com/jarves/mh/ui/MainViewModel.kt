@@ -347,6 +347,7 @@ data class AppUiState(
     val androidBuildFinishedAtMillis: Long? = null,
     val androidBuildApkPath: String? = null,
     val androidBuildApkSizeBytes: Long? = null,
+    val androidBuildRecentDurationsMillis: List<Long> = emptyList(),
     val androidApkInfo: AndroidApkInfo? = null,
     val androidHealthChecks: List<AndroidHealthCheck> = emptyList(),
     val androidHealthRunning: Boolean = false,
@@ -1268,17 +1269,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess { apk ->
                 val shouldInstallAndRun = apk != null && action == AndroidAction.BUILD_AND_RUN
                 val message = if (apk == null) "Project cleaned successfully" else "Debug APK built successfully"
+                val buildCompletedAt = System.currentTimeMillis()
                 withContext(Dispatchers.Main) {
-                    _state.update {
-                        it.copy(
+                    _state.update { current ->
+                        val duration = (buildCompletedAt - startedAt).coerceAtLeast(1L)
+                        val recentDurations = if (apk != null) {
+                            (current.androidBuildRecentDurationsMillis + duration).takeLast(5)
+                        } else current.androidBuildRecentDurationsMillis
+                        current.copy(
                             androidBuildRunning = shouldInstallAndRun,
                             androidBuildPhase = AndroidBuildPhase.SUCCEEDED,
                             androidBuildStage = if (shouldInstallAndRun) AndroidBuildStage.INSTALLING else AndroidBuildStage.COMPLETE,
                             androidBuildMessage = message,
                             androidBuildIssues = emptyList(),
-                            androidBuildFinishedAtMillis = System.currentTimeMillis(),
+                            androidBuildFinishedAtMillis = buildCompletedAt,
                             androidBuildApkPath = apk?.absolutePath,
                             androidBuildApkSizeBytes = apk?.length(),
+                            androidBuildRecentDurationsMillis = recentDurations,
                             toastMessage = message,
                         )
                     }
@@ -1397,6 +1404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         .put("apkSizeBytes", state.androidBuildApkSizeBytes)
                         .put("action", state.androidBuildAction.name)
                         .put("stage", state.androidBuildStage.name)
+                        .put("recentDurationsMillis", JSONArray(state.androidBuildRecentDurationsMillis))
                         .put("issues", JSONArray().apply {
                             state.androidBuildIssues.forEach { issue ->
                                 put(JSONObject()
@@ -1432,6 +1440,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 apkPath = json.optString("apkPath").takeIf { it.isNotBlank() && File(it).isFile },
                 apkSizeBytes = json.optLong("apkSizeBytes").takeIf { it > 0L },
                 action = runCatching { AndroidAction.valueOf(json.optString("action")) }.getOrDefault(AndroidAction.NONE),
+                recentDurationsMillis = json.optJSONArray("recentDurationsMillis")?.let { array ->
+                    (0 until array.length()).mapNotNull { index -> array.optLong(index).takeIf { it > 0L } }
+                }.orEmpty(),
                 stage = runCatching { AndroidBuildStage.valueOf(json.optString("stage")) }.getOrDefault(
                     when (phase) {
                         AndroidBuildPhase.SUCCEEDED -> AndroidBuildStage.COMPLETE
@@ -2767,6 +2778,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidBuildFinishedAtMillis = androidBuild.finishedAtMillis,
                 androidBuildApkPath = androidBuild.apkPath,
                 androidBuildApkSizeBytes = androidBuild.apkSizeBytes,
+                androidBuildRecentDurationsMillis = androidBuild.recentDurationsMillis,
             )
         }
         refreshProjectFiles()

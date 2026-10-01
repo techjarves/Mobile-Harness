@@ -352,4 +352,8 @@
     <string name="project_type_compose_desc">Modern Android UI</string>
     <string name="project_type_xml">XML</string>
     <string name="project_type_xml_desc">Classic Android UI</string>
+    <string name="android_estimated_remaining">About %1$s remaining</string>
+    <string name="android_finishing_build">Finishing build…</string>
+    <string name="android_estimating_build">Learning build time…</string>
+    <string name="android_usually_takes">Usually about %1$s</string>
 </resources>

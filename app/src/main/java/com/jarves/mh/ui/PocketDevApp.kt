@@ -5181,6 +5181,22 @@ private fun ProfessionalAndroidOverview(
         if (state.androidBuildRunning) liveElapsedSeconds?.toLong()
         else ((state.androidBuildFinishedAtMillis ?: start) - start).coerceAtLeast(0L) / 1_000L
     }
+    val expectedBuildSeconds = state.androidBuildRecentDurationsMillis
+        .sorted()
+        .takeIf { it.isNotEmpty() }
+        ?.let { durations -> durations[durations.size / 2] / 1_000L }
+        ?.coerceAtLeast(1L)
+    val estimateText = when {
+        state.androidBuildRunning && expectedBuildSeconds != null -> {
+            val remaining = (expectedBuildSeconds - (elapsedSeconds ?: 0L)).coerceAtLeast(0L)
+            if (remaining > 0L) stringResource(R.string.android_estimated_remaining, formatDuration(remaining))
+            else stringResource(R.string.android_finishing_build)
+        }
+        state.androidBuildRunning -> stringResource(R.string.android_estimating_build)
+        primaryAction in setOf(AndroidAction.BUILD, AndroidAction.BUILD_AND_RUN) && expectedBuildSeconds != null ->
+            stringResource(R.string.android_usually_takes, formatDuration(expectedBuildSeconds))
+        else -> null
+    }
     val buildSummary = when {
         state.androidBuildRunning -> stringResource(R.string.android_build_in_progress, formatDuration(elapsedSeconds ?: 0L))
         state.androidBuildStage == AndroidBuildStage.FAILED -> state.androidBuildMessage ?: stringResource(R.string.android_build_failed_title)
@@ -5237,6 +5253,9 @@ private fun ProfessionalAndroidOverview(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
                                     fontSize = 11.sp,
                                 )
+                            }
+                            estimateText?.let {
+                                Text(it, color = PocketOrange, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
