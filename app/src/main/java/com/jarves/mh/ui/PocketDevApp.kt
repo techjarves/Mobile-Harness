@@ -4899,7 +4899,6 @@ private fun AndroidDashboardScreen(
                     onCancelBuild = onCancelBuild,
                     onInstallTools = onInstallTools,
                     onOpenIssue = onOpenIssue,
-                    onOpenHealth = { section = AndroidDashboardSection.HEALTH },
                 )
                 AndroidDashboardSection.BUILD -> {
                     LazyColumn(
@@ -5146,7 +5145,6 @@ private fun ProfessionalAndroidOverview(
     onCancelBuild: () -> Unit,
     onInstallTools: () -> Unit,
     onOpenIssue: (AndroidBuildIssue) -> Unit,
-    onOpenHealth: () -> Unit,
 ) {
     val apk = state.androidApkInfo
     val toolsInstalled = DevStack.ANDROID in state.installedDevStacks
@@ -5203,9 +5201,6 @@ private fun ProfessionalAndroidOverview(
         state.androidBuildFinishedAtMillis != null -> stringResource(R.string.android_completed_in, formatDuration(elapsedSeconds ?: 0L))
         else -> stringResource(R.string.android_no_build_yet)
     }
-    val passedChecks = state.androidHealthChecks.count { it.status == AndroidHealthStatus.PASSED }
-    val failedChecks = state.androidHealthChecks.count { it.status == AndroidHealthStatus.FAILED }
-
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 20.dp),
@@ -5308,29 +5303,14 @@ private fun ProfessionalAndroidOverview(
 
         item {
             Card(shape = RoundedCornerShape(20.dp)) {
-                Column {
-                    AndroidDashboardSummaryRow(
-                        icon = Icons.Default.Description,
-                        title = stringResource(R.string.android_build_output),
-                        subtitle = buildSummary,
-                        trailing = stringResource(R.string.android_view),
-                        tint = PocketOrange,
-                        onClick = onToggleRawLog,
-                    )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-                    AndroidDashboardSummaryRow(
-                        icon = Icons.Default.HealthAndSafety,
-                        title = stringResource(R.string.project_health),
-                        subtitle = when {
-                            state.androidHealthRunning -> stringResource(R.string.android_checking_health)
-                            failedChecks > 0 -> stringResource(R.string.android_health_needs_attention, failedChecks)
-                            state.androidHealthChecks.isEmpty() -> stringResource(R.string.android_health_not_checked)
-                            else -> stringResource(R.string.android_health_checks_passed, passedChecks)
-                        },
-                        tint = if (failedChecks > 0) MaterialTheme.colorScheme.error else PocketGreen,
-                        onClick = onOpenHealth,
-                    )
-                }
+                AndroidDashboardSummaryRow(
+                    icon = Icons.Default.Description,
+                    title = stringResource(R.string.android_build_output),
+                    subtitle = buildSummary,
+                    trailing = stringResource(R.string.android_view),
+                    tint = PocketOrange,
+                    onClick = onToggleRawLog,
+                )
             }
         }
 
