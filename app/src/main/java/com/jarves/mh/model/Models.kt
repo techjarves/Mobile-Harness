@@ -41,6 +41,13 @@ enum class ProviderKind(
         fixedBaseUrl = true,
         fixedProtocol = true,
     ),
+    OMNIROUTE(
+        "OmniRoute",
+        "Self-hosted AI gateway via Tailscale or LAN",
+        ProviderProtocol.OPENAI_CHAT,
+        "http://100.64.0.1:20128/v1",
+        "auto",
+    ),
     CUSTOM("Custom API", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "", "", true),
 }
 
@@ -89,6 +96,7 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OMNIROUTE,
     ProviderKind.CUSTOM,
 )
 
@@ -96,12 +104,13 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OMNIROUTE,
     ProviderKind.CUSTOM,
 )
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.OPENCODE_ZEN -> "openai-responses"
-    ProviderKind.NVIDIA_NIM -> "openai-completions"
+    ProviderKind.NVIDIA_NIM, ProviderKind.OMNIROUTE -> "openai-completions"
     else -> "anthropic-messages"
 }
 
@@ -114,6 +123,7 @@ fun inferredDshApiForUrl(baseUrl: String): String {
     return when {
         normalized.endsWith("/responses") -> "openai-responses"
         "/anthropic" in normalized || "api.anthropic.com" in normalized -> "anthropic-messages"
+        ":20128" in normalized || "omniroute" in normalized -> "openai-completions"
         normalized.endsWith("/v1") -> "openai-completions"
         else -> "anthropic-messages"
     }

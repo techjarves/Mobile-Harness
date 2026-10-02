@@ -165,7 +165,12 @@ internal class LocalFormatGateway(
     }
 
     private fun callProvider(body: JSONObject): Pair<Int, String> {
-        val endpoint = profile.baseUrl.trimEnd('/') + "/chat/completions"
+        val base = profile.baseUrl.trim().trimEnd('/')
+        val endpoint = when {
+            base.endsWith("/chat/completions") -> base
+            base.endsWith("/v1") -> "$base/chat/completions"
+            else -> "$base/v1/chat/completions"
+        }
         val connection = URL(endpoint).openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = "POST"
@@ -173,7 +178,9 @@ internal class LocalFormatGateway(
             connection.readTimeout = 180_000
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer $apiKey")
+            if (apiKey.isNotBlank()) {
+                connection.setRequestProperty("Authorization", "Bearer $apiKey")
+            }
             connection.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
@@ -244,6 +251,7 @@ internal class LocalFormatGateway(
         .removePrefix("anthropic/")
         .substringBefore('[')
         .trim()
+        .ifBlank { "auto" }
 
     private fun errorJson(type: String, message: String) = JSONObject().put("type", "error").put("error", JSONObject().put("type", type).put("message", message)).toString()
 

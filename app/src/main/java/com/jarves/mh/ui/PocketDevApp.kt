@@ -2343,7 +2343,7 @@ private fun ProviderSetupScreen(
                     apiKey = apiKey,
                     onBaseUrl = {
                         baseUrl = it
-                        if (agentKind == AgentKind.DEEPSEEK_HARNESS && selected == ProviderKind.CUSTOM) {
+                        if (agentKind == AgentKind.DEEPSEEK_HARNESS && (selected == ProviderKind.CUSTOM || selected == ProviderKind.OMNIROUTE)) {
                             dshApi = inferredDshApiForUrl(it)
                         }
                     },
@@ -2575,6 +2575,7 @@ private fun ProviderChoiceRow(
         ProviderKind.LLM_ROUTER -> Color(0xFF5B8DEF)
         ProviderKind.DEEPSEEK -> Color(0xFF4D6BFE)
         ProviderKind.KIMI -> Color(0xFF8B7CF6)
+        ProviderKind.OMNIROUTE -> Color(0xFF10B981)
         ProviderKind.OPENCODE_ZEN -> Color(0xFF22C55E)
         ProviderKind.NVIDIA_NIM -> Color(0xFF76B900)
         ProviderKind.CUSTOM -> PocketOrange
@@ -2585,6 +2586,7 @@ private fun ProviderChoiceRow(
         ProviderKind.LLM_ROUTER -> "OR"
         ProviderKind.DEEPSEEK -> "DS"
         ProviderKind.KIMI -> "K"
+        ProviderKind.OMNIROUTE -> "OM"
         ProviderKind.OPENCODE_ZEN -> "Z"
         ProviderKind.NVIDIA_NIM -> "NV"
         ProviderKind.CUSTOM -> "<>"
@@ -2706,6 +2708,14 @@ private fun ProviderCredentialsStep(
     }
 
     fun discoverModels(openWhenReady: Boolean = true) {
+        val supportsPublicDiscovery = provider == ProviderKind.LLM_ROUTER ||
+            provider == ProviderKind.OPENCODE_ZEN ||
+            provider == ProviderKind.OMNIROUTE
+        if (!hasKey && !supportsPublicDiscovery) {
+            statusOk = false
+            status = "Please enter an API key first to discover models."
+            return
+        }
         scope.launch {
             isDiscovering = true
             status = null
@@ -2894,7 +2904,7 @@ private fun ProviderCredentialsStep(
                 onClick = {
                     if (models.isEmpty()) discoverModels() else showModels = true
                 },
-                enabled = baseUrl.isNotBlank() && hasKey && !isDiscovering && !isValidating,
+                enabled = baseUrl.isNotBlank() && (hasKey || provider == ProviderKind.OMNIROUTE || provider == ProviderKind.CUSTOM) && !isDiscovering && !isValidating,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
                 if (isDiscovering) {
@@ -2947,7 +2957,7 @@ private fun ProviderCredentialsStep(
                             isValidating = false
                         }
                     },
-                    enabled = baseUrl.isNotBlank() && model.isNotBlank() && hasKey && !isDiscovering && !isValidating,
+                    enabled = baseUrl.isNotBlank() && model.isNotBlank() && (hasKey || provider == ProviderKind.OMNIROUTE || provider == ProviderKind.CUSTOM) && !isDiscovering && !isValidating,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
                     if (isValidating) {

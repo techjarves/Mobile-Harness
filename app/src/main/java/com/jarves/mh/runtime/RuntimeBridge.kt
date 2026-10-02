@@ -92,6 +92,9 @@ object RuntimeLaunchConfigBuilder {
                 } else {
                     environment["ANTHROPIC_API_KEY"] = authToken
                 }
+            } else if (profile.kind == com.jarves.mh.model.ProviderKind.OMNIROUTE || profile.kind == com.jarves.mh.model.ProviderKind.CUSTOM) {
+                environment["ANTHROPIC_AUTH_TOKEN"] = "omniroute-local"
+                environment["ANTHROPIC_API_KEY"] = "omniroute-local"
             }
         }
         return RuntimeLaunchConfig(

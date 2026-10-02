@@ -77,8 +77,8 @@ class ProviderApiClient {
         openRouterProviderOrder: String = "",
         openRouterAllowFallbacks: Boolean = true,
     ): ConnectionValidation = withContext(Dispatchers.IO) {
-        if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
-            return@withContext ConnectionValidation.Failure("Base URL, model, and API key are required.")
+        if (baseUrl.isBlank() || model.isBlank()) {
+            return@withContext ConnectionValidation.Failure("Base URL and model are required.")
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
         val body = validationBody(model, protocol, openRouterProviderOrder, openRouterAllowFallbacks)
@@ -178,10 +178,23 @@ class ProviderApiClient {
     private fun modelEndpoints(baseUrl: String, protocol: ProviderProtocol): List<String> {
         val base = baseUrl.trim().trimEnd('/')
         val withoutAnthropic = base.removeSuffix("/anthropic")
+        val withoutV1 = base.removeSuffix("/v1")
         val candidates = when (protocol) {
-            ProviderProtocol.OPENROUTER -> listOf("$base/v1/models")
-            ProviderProtocol.OPENAI_CHAT, ProviderProtocol.OPENAI_RESPONSES -> listOf("$base/models")
-            else -> listOf("$base/v1/models", "$base/models", "$withoutAnthropic/models", "$withoutAnthropic/v1/models")
+            ProviderProtocol.OPENROUTER -> listOf("$base/v1/models", "$base/models")
+            ProviderProtocol.OPENAI_CHAT, ProviderProtocol.OPENAI_RESPONSES -> listOf(
+                "$base/models",
+                "$base/v1/models",
+                "$withoutV1/v1/models",
+                "$withoutV1/models",
+            )
+            else -> listOf(
+                "$base/v1/models",
+                "$base/models",
+                "$withoutAnthropic/models",
+                "$withoutAnthropic/v1/models",
+                "$withoutV1/v1/models",
+                "$withoutV1/models",
+            )
         }
         return candidates.distinct()
     }
@@ -189,10 +202,22 @@ class ProviderApiClient {
     private fun messagesEndpoint(baseUrl: String, protocol: ProviderProtocol): String {
         val base = baseUrl.trim().trimEnd('/')
         return when (protocol) {
-            ProviderProtocol.OPENROUTER -> "$base/v1/messages"
-            ProviderProtocol.OPENAI_CHAT -> "$base/chat/completions"
-            ProviderProtocol.OPENAI_RESPONSES -> "$base/responses"
-            else -> if (base.endsWith("/v1")) "$base/messages" else "$base/v1/messages"
+            ProviderProtocol.OPENROUTER -> if (base.endsWith("/v1")) "$base/messages" else "$base/v1/messages"
+            ProviderProtocol.OPENAI_CHAT -> when {
+                base.endsWith("/chat/completions") -> base
+                base.endsWith("/v1") -> "$base/chat/completions"
+                else -> "$base/v1/chat/completions"
+            }
+            ProviderProtocol.OPENAI_RESPONSES -> when {
+                base.endsWith("/responses") -> base
+                base.endsWith("/v1") -> "$base/responses"
+                else -> "$base/v1/responses"
+            }
+            else -> when {
+                base.endsWith("/messages") -> base
+                base.endsWith("/v1") -> "$base/messages"
+                else -> "$base/v1/messages"
+            }
         }
     }
 

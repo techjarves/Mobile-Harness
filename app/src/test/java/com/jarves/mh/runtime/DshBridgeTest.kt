@@ -244,6 +244,15 @@ class DshRouteMapperTest {
         assertEquals("https://integrate.api.nvidia.com/v1", route.custom?.baseUrl)
     }
 
+    @Test
+    fun omniRouteUsesConfiguredRoute() {
+        val profile = ProviderProfile(ProviderKind.OMNIROUTE, baseUrl = "http://100.64.0.1:20128/v1", model = "auto")
+        val route = DshRouteMapper.forProfile(profile)
+        assertEquals("mh-omniroute", route.name)
+        assertEquals("openai-completions", route.custom?.api)
+        assertEquals("http://100.64.0.1:20128/v1", route.custom?.baseUrl)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun claudeSubscriptionIsRejected() {
         DshRouteMapper.forProfile(ProviderProfile(ProviderKind.CLAUDE))
@@ -254,6 +263,8 @@ class AgentProviderPresetTest {
     @Test
     fun customGatewayUrlSuggestsProtocolWithoutRemovingManualChoice() {
         assertEquals("openai-completions", inferredDshApiForUrl("https://api.example.com/v1/"))
+        assertEquals("openai-completions", inferredDshApiForUrl("http://100.64.1.2:20128/v1"))
+        assertEquals("openai-completions", inferredDshApiForUrl("http://omniroute.local:20128"))
         assertEquals("anthropic-messages", inferredDshApiForUrl("https://api.example.com/anthropic"))
         assertEquals("openai-responses", inferredDshApiForUrl("https://api.example.com/v1/responses"))
     }
@@ -298,13 +309,20 @@ class AgentProviderPresetTest {
         assertTrue(ProviderKind.OPENCODE_ZEN in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.NVIDIA_NIM in DEEPSEEK_HARNESS_PROVIDERS)
-        assertEquals(7, DEEPSEEK_HARNESS_PROVIDERS.size)
+        assertTrue(ProviderKind.OMNIROUTE in DEEPSEEK_HARNESS_PROVIDERS)
+        assertEquals(8, DEEPSEEK_HARNESS_PROVIDERS.size)
     }
 
     @Test
     fun openCodeZenIsOnlyShownForDeepSeekHarness() {
         assertTrue(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
         assertFalse(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.CLAUDE_CODE))
+    }
+
+    @Test
+    fun omniRouteIsAvailableForClaudeAndDeepSeek() {
+        assertTrue(ProviderKind.OMNIROUTE in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        assertTrue(ProviderKind.OMNIROUTE in providersForAgent(AgentKind.CLAUDE_CODE))
     }
 
     @Test

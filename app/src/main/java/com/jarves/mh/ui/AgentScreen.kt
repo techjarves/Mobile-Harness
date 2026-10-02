@@ -253,7 +253,8 @@ fun AgentScreen(
     fun discoverModels() {
         val effectiveKey = apiKey.trim().ifBlank { newApiKey.trim() }
         val supportsPublicDiscovery = selectedKind == ProviderKind.LLM_ROUTER ||
-            selectedKind == ProviderKind.OPENCODE_ZEN
+            selectedKind == ProviderKind.OPENCODE_ZEN ||
+            selectedKind == ProviderKind.OMNIROUTE
         if (effectiveKey.isBlank() && !supportsPublicDiscovery) {
             status = "Please enter or save an API key first to discover models."
             statusOk = false
@@ -1005,7 +1006,7 @@ fun AgentScreen(
                         },
                         onBaseUrl = {
                             baseUrl = it
-                            if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind == ProviderKind.CUSTOM) {
+                            if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && (selectedKind == ProviderKind.CUSTOM || selectedKind == ProviderKind.OMNIROUTE)) {
                                 dshApi = inferredDshApiForUrl(it)
                             }
                             models = emptyList()
@@ -1556,7 +1557,7 @@ private fun AgentProviderCard(
                                         .clickable {
                                             onProvider(kind)
                                             connectionExpanded = false
-                                            endpointExpanded = kind == ProviderKind.CUSTOM
+                                            endpointExpanded = kind == ProviderKind.CUSTOM || kind == ProviderKind.OMNIROUTE
                                         }
                                         .padding(horizontal = 13.dp, vertical = 11.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1582,7 +1583,7 @@ private fun AgentProviderCard(
 
                 PremiumSummaryRow(
                     icon = Icons.Default.Info,
-                    title = if (selectedKind == ProviderKind.CUSTOM) "Custom API settings" else "Endpoint & protocol",
+                    title = if (selectedKind == ProviderKind.CUSTOM || selectedKind == ProviderKind.OMNIROUTE) "${selectedKind.title} settings" else "Endpoint & protocol",
                     subtitle = buildString {
                         append(baseUrl.ifBlank { "Base URL required" })
                         if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
@@ -1599,9 +1600,13 @@ private fun AgentProviderCard(
                         modifier = Modifier.padding(top = 8.dp, bottom = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (selectedKind == ProviderKind.CUSTOM) {
+                        if (selectedKind == ProviderKind.CUSTOM || selectedKind == ProviderKind.OMNIROUTE) {
                             Text(
-                                "Enter the provider endpoint, then add its API key under Credentials.",
+                                if (selectedKind == ProviderKind.OMNIROUTE) {
+                                    "Enter your OmniRoute endpoint (e.g. http://100.x.y.z:20128/v1 via Tailscale), then add your API key under Credentials if configured."
+                                } else {
+                                    "Enter the provider endpoint, then add its API key under Credentials."
+                                },
                                 fontSize = 11.sp,
                                 lineHeight = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1849,8 +1854,8 @@ private fun AgentProviderCard(
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
                 onClick = onValidate,
-                enabled = apiKey.isNotBlank() && !isDiscovering && !isValidating &&
-                    (selectedKind == ProviderKind.CLAUDE || (baseUrl.isNotBlank() && model.isNotBlank())),
+                enabled = !isDiscovering && !isValidating &&
+                    (selectedKind == ProviderKind.CLAUDE || (baseUrl.isNotBlank() && model.isNotBlank() && (apiKey.isNotBlank() || selectedKind == ProviderKind.OMNIROUTE || selectedKind == ProviderKind.CUSTOM))),
                 modifier = Modifier.fillMaxWidth().height(46.dp),
                 shape = RoundedCornerShape(13.dp),
                 border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.7f)),
@@ -2071,6 +2076,12 @@ private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> 
         DiscoveredModel("kimi-k2.6", "Kimi K2.6"),
         DiscoveredModel("moonshot-v1-8k", "Moonshot v1 8K"),
         DiscoveredModel("moonshot-v1-32k", "Moonshot v1 32K"),
+    )
+    ProviderKind.OMNIROUTE -> listOf(
+        DiscoveredModel("auto", "Auto (Smart Routing)"),
+        DiscoveredModel("cc/claude-sonnet-4-6", "Claude Sonnet (OmniRoute)"),
+        DiscoveredModel("deepseek/deepseek-chat", "DeepSeek Chat (OmniRoute)"),
+        DiscoveredModel("openai/gpt-4o", "GPT-4o (OmniRoute)"),
     )
     else -> if (kind.defaultModel.isNotBlank()) listOf(
         DiscoveredModel(kind.defaultModel, "${kind.title} Default (${kind.defaultModel})")

@@ -70,7 +70,7 @@ class DshRuntimeBridge(
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
         pushForegroundProgress("Starting DeepSeek Harness…")
         val secret = secretFor(provider).orEmpty()
-        if (secret.isBlank()) {
+        if (secret.isBlank() && provider.kind != ProviderKind.OMNIROUTE && provider.kind != ProviderKind.CUSTOM) {
             eventBus.emit(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
             return@withContext sessionId
         }
@@ -121,7 +121,7 @@ class DshRuntimeBridge(
                 // PocketDev already confines the whole Linux guest with PRoot. Let dsh
                 // use every tool inside that boundary without an unavailable approval UI.
                 "DSH_PERMISSION_MODE" to "danger-full-access",
-                route.keyEnv to secret,
+                route.keyEnv to secret.ifBlank { "omniroute-local" },
             )
             if (route.keyEnv != FALLBACK_KEY_ENV) environment.remove(FALLBACK_KEY_ENV)
 
@@ -717,6 +717,12 @@ internal object DshRouteMapper {
                 keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
                 defaultModel = model,
                 custom = DshCustomRoute("openai-completions", profile.resolvedBaseUrl),
+            )
+            ProviderKind.OMNIROUTE -> DshRoute(
+                name = "mh-omniroute",
+                keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
+                defaultModel = model,
+                custom = DshCustomRoute(profile.dshApi.ifBlank { "openai-completions" }, profile.resolvedBaseUrl),
             )
             ProviderKind.CUSTOM -> DshRoute(
                 name = "mh-custom",

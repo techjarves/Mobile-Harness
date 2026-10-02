@@ -98,4 +98,18 @@ class RuntimeLaunchConfigBuilderTest {
         assertEquals("http://127.0.0.1:12345", config.environment["ANTHROPIC_BASE_URL"])
         assertEquals("claude-sonnet-4-6", config.environment["ANTHROPIC_MODEL"])
     }
+
+    @Test
+    fun omniRouteUsesOpenAiCompatibilityGateway() {
+        val profile = ProviderProfile(ProviderKind.OMNIROUTE, baseUrl = "http://100.64.0.1:20128/v1", model = "auto")
+        val config = RuntimeLaunchConfigBuilder.build(
+            profile,
+            authToken = "omniroute-key",
+            localGatewayUrl = "http://127.0.0.1:20128",
+        )
+
+        assertEquals("http://127.0.0.1:20128", config.environment["ANTHROPIC_BASE_URL"])
+        assertEquals("claude-sonnet-4-6", config.environment["ANTHROPIC_MODEL"])
+        assertEquals("omniroute-key", config.environment["ANTHROPIC_AUTH_TOKEN"])
+    }
 }
