@@ -3751,7 +3751,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val retained = current.workspaceFiles.filterNot { entry ->
                     entry.path.startsWith(prefix) && entry.path.removePrefix(prefix).let { !it.contains('/') }
                 }
-                current.copy(workspaceFiles = (retained + children).distinctBy { it.path }.sortedBy { it.path.lowercase() })
+                current.copy(workspaceFiles = sortWorkspaceEntries((retained + children).distinctBy { it.path }))
             }
         }
     }
@@ -3904,14 +3904,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!directory.isDirectory || Files.isSymbolicLink(directory.toPath()) ||
             !runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
         ) return emptyList()
+        fun isVisibleSafeEntry(file: File): Boolean {
+            val relative = file.relativeTo(root).invariantSeparatorsPath
+            return !isClaudeRuntimeMetadata(relative) &&
+                !Files.isSymbolicLink(file.toPath()) &&
+                runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+        }
         return directory.listFiles().orEmpty()
             .asSequence()
-            .filter { file ->
-                val relative = file.relativeTo(root).invariantSeparatorsPath
-                !isClaudeRuntimeMetadata(relative) &&
-                    !Files.isSymbolicLink(file.toPath()) &&
-                    runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-            }
+            .filter(::isVisibleSafeEntry)
             .map { file ->
                 val relative = file.relativeTo(root).invariantSeparatorsPath
                 WorkspaceEntry(
@@ -3920,10 +3921,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isDirectory = file.isDirectory,
                     depth = relative.count { it == '/' },
                     sizeBytes = if (file.isFile) file.length() else 0,
+                    childCount = if (file.isDirectory) file.listFiles().orEmpty().count(::isVisibleSafeEntry) else 0,
                 )
             }
             .sortedWith(compareByDescending<WorkspaceEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
             .toList()
+    }
+
+    private fun sortWorkspaceEntries(entries: List<WorkspaceEntry>): List<WorkspaceEntry> {
+        val childrenByParent = entries.groupBy { entry -> entry.path.substringBeforeLast('/', "") }
+        val siblingOrder = compareByDescending<WorkspaceEntry> { it.isDirectory }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+            .thenBy { it.name }
+        return buildList(entries.size) {
+            fun appendChildren(parentPath: String) {
+                childrenByParent[parentPath].orEmpty().sortedWith(siblingOrder).forEach { entry ->
+                    add(entry)
+                    appendChildren(entry.path)
+                }
+            }
+            appendChildren("")
+        }
     }
 
     private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {

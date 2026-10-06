@@ -5731,9 +5731,6 @@ private fun FilesTab(
             segments.take(depth).joinToString("/") in expandedSet
         }
     }
-    val directChildCounts = files.filter { candidate ->
-        candidate.path.contains('/')
-    }.groupingBy { candidate -> candidate.path.substringBeforeLast('/') }.eachCount()
     fun selectionState(entry: WorkspaceEntry): ToggleableState {
         if (!entry.isDirectory) return if (exportSelection.includes(entry.path)) ToggleableState.On else ToggleableState.Off
         val descendants = files.filter { it.path == entry.path || it.path.startsWith("${entry.path}/") }
@@ -5868,7 +5865,7 @@ private fun FilesTab(
                 )
                 Spacer(Modifier.width(11.dp))
                 Text(
-                    if (entry.isDirectory) "${entry.name} (${directChildCounts[entry.path] ?: 0})" else entry.name,
+                    if (entry.isDirectory) "${entry.name} (${entry.childCount})" else entry.name,
                     Modifier.weight(1f),
                     color = if (!entry.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 )

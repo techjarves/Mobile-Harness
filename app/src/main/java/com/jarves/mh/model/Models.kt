@@ -239,6 +239,7 @@ data class WorkspaceEntry(
     val isDirectory: Boolean,
     val depth: Int,
     val sizeBytes: Long = 0,
+    val childCount: Int = 0,
 )
 
 enum class RiskLevel { SAFE, REVIEW, HIGH }
