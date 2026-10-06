@@ -161,6 +161,27 @@ class AntigravityBridgeTest {
     }
 
     @Test
+    fun `network timeout during silent auth is not reported as signed out`() {
+        val message = antigravityFriendlyError(
+            "You are not logged into Antigravity",
+            "userinfo request failed: dial tcp: lookup www.googleapis.com: i/o timeout",
+        )
+
+        assertEquals(
+            "Antigravity could not reach Google. Check your internet or DNS connection, then try again.",
+            message,
+        )
+    }
+
+    @Test
+    fun `genuine missing authentication still asks for Google sign in`() {
+        assertEquals(
+            "Antigravity needs Google sign-in. Open Settings → Coding agent.",
+            antigravityFriendlyError("You are not logged into Antigravity"),
+        )
+    }
+
+    @Test
     fun `new headless conversation creates an official project`() {
         val command = antigravityCommand("", "high", null)
         assertTrue("--new-project" in command)

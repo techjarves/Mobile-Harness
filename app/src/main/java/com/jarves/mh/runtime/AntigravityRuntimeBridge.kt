@@ -201,6 +201,7 @@ class AntigravityRuntimeBridge(
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
             throw IllegalStateException("Antigravity CLI is not installed.")
         }
+        val startedAtMillis = System.currentTimeMillis()
         try {
             withTimeout(timeoutMillis) {
                 val installed = installer.installedRuntime()
@@ -290,7 +291,17 @@ class AntigravityRuntimeBridge(
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            throw AntigravitySessionException("Antigravity did not answer. Try again.")
+            val diagnostic = recentAntigravityDiagnostic(startedAtMillis)
+            val message = if (diagnostic.isBlank()) {
+                "Antigravity did not answer. Try again."
+            } else {
+                antigravityFriendlyError(e.message.orEmpty(), diagnostic)
+            }
+            throw AntigravitySessionException(message)
+        } catch (e: Throwable) {
+            throw AntigravitySessionException(
+                antigravityFriendlyError(e.message.orEmpty(), recentAntigravityDiagnostic(startedAtMillis)),
+            )
         }
     }
 
@@ -303,6 +314,7 @@ class AntigravityRuntimeBridge(
         provider: ProviderProfile,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
+        val sessionStartedAtMillis = System.currentTimeMillis()
         activeSessionId = sessionId
         userStopRequested = false
         foregroundResultPosted = false
@@ -436,7 +448,12 @@ class AntigravityRuntimeBridge(
             emitCompleted(sessionId)
             finishForegroundRuntime(true, projectSlug, "Antigravity finished the task in $projectSlug.")
         }.onFailure {
-            val message = if (userStopRequested) "Stopped by user" else friendlyError(it.message.orEmpty())
+            val diagnostic = recentAntigravityDiagnostic(sessionStartedAtMillis)
+            val message = if (userStopRequested) {
+                "Stopped by user"
+            } else {
+                antigravityFriendlyError(it.message.orEmpty(), diagnostic)
+            }
             emitFailure(sessionId, message)
             if (userStopRequested) cancelForegroundRuntime()
             else finishForegroundRuntime(false, projectSlug, message)
@@ -555,24 +572,52 @@ class AntigravityRuntimeBridge(
         }.onFailure { context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java)) }
     }
 
-    private fun friendlyError(raw: String): String {
-        val value = raw.replace(Regex("\\s+"), " ").trim()
-        return when {
-            value.contains("authentication required", true) ||
-                value.contains("authentication failed", true) ||
-                value.contains("not signed in", true) ->
-                "Antigravity needs Google sign-in. Open Settings → Coding agent."
-            value.contains("out of credits", true) || value.contains("quota", true) ->
-                "Your Antigravity account is out of credits. Check the account plan or wait for credits to reset."
-            value.contains("timed out", true) || value.contains("timeout", true) ->
-                "Antigravity reached the 60-minute task limit. Your files were kept."
-            value.contains("model", true) && (value.contains("invalid", true) || value.contains("unknown", true)) ->
-                "The selected Antigravity model is unavailable. Refresh models in Settings."
-            value.isBlank() -> "Antigravity could not complete the task."
-            else -> value.take(500)
-        }
+    private fun friendlyError(raw: String): String = antigravityFriendlyError(raw)
+
+    private fun recentAntigravityDiagnostic(sinceMillis: Long): String = runCatching {
+        val logDir = File(
+            installer.installedRuntime().rootfs,
+            "root/.gemini/antigravity-cli/log",
+        )
+        val latest = logDir.listFiles()
+            ?.filter { it.isFile && it.name.startsWith("cli-") && it.lastModified() >= sinceMillis - 2_000L }
+            ?.maxByOrNull(File::lastModified)
+            ?: return@runCatching ""
+        latest.readText().takeLast(12_000)
+    }.getOrDefault("")
+}
+
+internal fun antigravityFriendlyError(raw: String, diagnostic: String = ""): String {
+    val value = "$raw $diagnostic".replace(Regex("\\s+"), " ").trim()
+    return when {
+        ANTIGRAVITY_NETWORK_ERRORS.any { value.contains(it, ignoreCase = true) } ->
+            "Antigravity could not reach Google. Check your internet or DNS connection, then try again."
+        value.contains("authentication required", true) ||
+            value.contains("authentication failed", true) ||
+            value.contains("not signed in", true) ||
+            value.contains("not logged in", true) ->
+            "Antigravity needs Google sign-in. Open Settings → Coding agent."
+        value.contains("out of credits", true) || value.contains("quota", true) ->
+            "Your Antigravity account is out of credits. Check the account plan or wait for credits to reset."
+        value.contains("timed out", true) || value.contains("timeout", true) ->
+            "Antigravity reached the 60-minute task limit. Your files were kept."
+        value.contains("model", true) && (value.contains("invalid", true) || value.contains("unknown", true)) ->
+            "The selected Antigravity model is unavailable. Refresh models in Settings."
+        value.isBlank() -> "Antigravity could not complete the task."
+        else -> raw.replace(Regex("\\s+"), " ").trim().take(500)
     }
 }
+
+private val ANTIGRAVITY_NETWORK_ERRORS = listOf(
+    "dial tcp",
+    "i/o timeout",
+    "network is unreachable",
+    "no address associated with hostname",
+    "temporary failure in name resolution",
+    "unknownhost",
+    "failed to fetch user info",
+    "userinfo request failed",
+)
 
 private class AntigravitySessionException(message: String) : IllegalStateException(message)
 
