@@ -110,6 +110,42 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun boundsLargeCumulativeReasoningToItsLatestContent() {
+        val hugePrefix = "old reasoning ".repeat(1_000)
+        parser.parseLine(
+            sessionEvent(
+                "assistant/chunk",
+                JSONObject().put("turn", 4).put("step", 1).put(
+                    "chunk",
+                    JSONObject().put("type", "reasoning-delta").put("index", 0).put("text", hugePrefix),
+                ),
+            ),
+        )
+        val latest = parser.parseLine(
+            sessionEvent(
+                "assistant/chunk",
+                JSONObject().put("turn", 4).put("step", 1).put(
+                    "chunk",
+                    JSONObject().put("type", "reasoning-delta").put("index", 0).put("text", "LATEST_MARKER"),
+                ),
+            ),
+        )
+
+        assertTrue(latest is DshSdkProtocolEvent.Reasoning)
+        latest as DshSdkProtocolEvent.Reasoning
+        assertTrue(latest.text.length <= 8_000)
+        assertTrue(latest.text.endsWith("LATEST_MARKER"))
+    }
+
+    @Test
+    fun compactsOnlyABoundedWindowOfLargeOutput() {
+        val compact = compactDshText("ignored".repeat(10_000) + "\n  useful   tail ", 100, 80)
+
+        assertTrue(compact.length <= 80)
+        assertTrue(compact.endsWith("useful tail"))
+    }
+
+    @Test
     fun parsesToolCallResultAndAssistantText() {
         val call = parser.parseLine(sessionEvent("tool/call", JSONObject()
             .put("callId", "call-1").put("name", "bash")

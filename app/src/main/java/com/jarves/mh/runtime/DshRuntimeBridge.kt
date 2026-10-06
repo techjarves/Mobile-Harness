@@ -472,22 +472,23 @@ class DshRuntimeBridge(
         isFinal: Boolean,
         force: Boolean = false,
     ) {
-        val summary = text.replace(Regex("\\s+"), " ").trim().take(2_000)
-        if (summary.isBlank()) return
         val now = android.os.SystemClock.elapsedRealtime()
-        if (force || now - lastThinkingUpdateAt >= 400) {
-            lastThinkingUpdateAt = now
-            eventBus.emit(
-                RuntimeEvent.ReasoningSummary(
-                    sessionId = sessionId,
-                    summary = summary,
-                    blockId = blockId,
-                    startsNewBlock = startsNewBlock,
-                    isFinal = isFinal,
-                ),
-            )
-            pushForegroundProgress("Thinking…")
-        }
+        // Reasoning arrives as a cumulative value. Skip throttled frames before doing
+        // any text work so a long-running agent cannot repeatedly scan a multi-MB string.
+        if (!force && now - lastThinkingUpdateAt < 400) return
+        val summary = compactDshText(text, MAX_DSH_REASONING_BUFFER, MAX_DSH_REASONING_SUMMARY)
+        if (summary.isBlank()) return
+        lastThinkingUpdateAt = now
+        eventBus.emit(
+            RuntimeEvent.ReasoningSummary(
+                sessionId = sessionId,
+                summary = summary,
+                blockId = blockId,
+                startsNewBlock = startsNewBlock,
+                isFinal = isFinal,
+            ),
+        )
+        pushForegroundProgress("Thinking…")
     }
 
     private suspend fun emitCompletedOnce(sessionId: String) {
@@ -789,7 +790,7 @@ private fun String.isMeaningfulDshText(): Boolean =
 internal class DshSdkProtocolParser(private val expectedSessionId: String) {
     private val reasoningByBlock = mutableMapOf<Long, StringBuilder>()
     private val textByBlock = mutableMapOf<Long, StringBuilder>()
-    private val streamedTextSinceMessage = StringBuilder()
+    private var streamedTextSinceMessage = false
     private val toolNames = mutableMapOf<String, String>()
 
     fun parseLine(line: String): DshSdkProtocolEvent {
@@ -841,10 +842,10 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
                 val text = contentText(content)
                 if (text.isBlank()) {
                     DshSdkProtocolEvent.Ignored
-                } else if (streamedTextSinceMessage.isNotEmpty()) {
+                } else if (streamedTextSinceMessage) {
                     // `assistant/message` repeats the completed content after the SDK has
                     // already delivered its text deltas. The UI has appended those deltas.
-                    streamedTextSinceMessage.clear()
+                    streamedTextSinceMessage = false
                     DshSdkProtocolEvent.Ignored
                 } else {
                     DshSdkProtocolEvent.AssistantText(text)
@@ -867,9 +868,7 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
                 val text = contentText(resultBlock?.optJSONArray("content"))
                 val summary = error?.optString("message").orEmpty()
                     .meaningfulDshText(text)
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                    .take(180)
+                    .let { compactDshText(it, MAX_DSH_TOOL_RAW_TEXT, 180) }
                     .ifBlank { "$name completed" }
                 DshSdkProtocolEvent.ToolCompleted(callId, name, summary)
             }
@@ -899,14 +898,15 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
             "text-delta" -> {
                 val delta = chunk.optString("text")
                 if (delta.isEmpty()) return DshSdkProtocolEvent.Ignored
-                textByBlock.getOrPut(blockId) { StringBuilder() }.append(delta)
-                streamedTextSinceMessage.append(delta)
+                textByBlock.getOrPut(blockId) { StringBuilder() }
+                    .appendBounded(delta, MAX_DSH_TEXT_BLOCK_BUFFER)
+                streamedTextSinceMessage = true
                 DshSdkProtocolEvent.AssistantText(delta)
             }
             "reasoning-delta" -> {
                 val buffer = reasoningByBlock.getOrPut(blockId) { StringBuilder() }
                 val starts = buffer.isEmpty()
-                buffer.append(chunk.optString("text"))
+                buffer.appendBounded(chunk.optString("text"), MAX_DSH_REASONING_BUFFER)
                 DshSdkProtocolEvent.Reasoning(blockId, buffer.toString(), starts, isFinal = false)
             }
             "block-end" -> {
@@ -914,13 +914,17 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
                 if (block?.optString("type") == "text") {
                     val streamed = textByBlock.remove(blockId)?.toString().orEmpty()
                     val complete = block.optString("text")
-                    val missingSuffix = complete.takeIf { it.startsWith(streamed) }?.removePrefix(streamed).orEmpty()
+                    // Text deltas are already delivered directly. The completed block normally
+                    // repeats them, so avoid retaining or comparing the full response.
+                    val missingSuffix = if (streamed.isEmpty()) complete.takeLast(MAX_DSH_TEXT_BLOCK_BUFFER) else ""
                     if (missingSuffix.isBlank()) return DshSdkProtocolEvent.Ignored
-                    streamedTextSinceMessage.append(missingSuffix)
+                    streamedTextSinceMessage = true
                     return DshSdkProtocolEvent.AssistantText(missingSuffix)
                 }
                 if (block?.optString("type") != "reasoning") return DshSdkProtocolEvent.Ignored
-                val text = block.optString("text").ifBlank { reasoningByBlock[blockId]?.toString().orEmpty() }
+                val text = block.optString("text")
+                    .ifBlank { reasoningByBlock[blockId]?.toString().orEmpty() }
+                    .takeLast(MAX_DSH_REASONING_BUFFER)
                 val starts = blockId !in reasoningByBlock
                 reasoningByBlock.remove(blockId)
                 if (text.isBlank()) DshSdkProtocolEvent.Ignored
@@ -953,20 +957,60 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
             listOf("path", "file_path", "command", "pattern", "query")
                 .firstNotNullOfOrNull { key -> json.optString(key).takeIf(String::isNotBlank) }
         }.orEmpty()
-        return detail.ifBlank { arguments }.replace(Regex("\\s+"), " ").trim().take(240)
+        return compactDshText(detail.ifBlank { arguments }, MAX_DSH_TOOL_RAW_TEXT, 240)
             .ifBlank { "Working in the project" }
     }
 
     private fun contentText(content: JSONArray?): String {
         if (content == null) return ""
-        return buildList {
-            for (index in 0 until content.length()) {
-                val block = content.optJSONObject(index) ?: continue
-                when (block.optString("type")) {
-                    "text" -> block.optString("text").takeIf(String::isNotBlank)?.let(::add)
-                    "tool-result" -> contentText(block.optJSONArray("content")).takeIf(String::isNotBlank)?.let(::add)
-                }
+        val result = StringBuilder()
+        for (index in 0 until content.length()) {
+            val block = content.optJSONObject(index) ?: continue
+            val text = when (block.optString("type")) {
+                "text" -> block.optString("text")
+                "tool-result" -> contentText(block.optJSONArray("content"))
+                else -> ""
             }
-        }.joinToString("\n")
+            if (text.isBlank()) continue
+            if (result.isNotEmpty()) result.append('\n')
+            result.appendBounded(text, MAX_DSH_CONTENT_TEXT)
+        }
+        return result.toString()
     }
+}
+
+private const val MAX_DSH_REASONING_BUFFER = 8_000
+private const val MAX_DSH_REASONING_SUMMARY = 2_000
+private const val MAX_DSH_TOOL_RAW_TEXT = 4_000
+private const val MAX_DSH_TEXT_BLOCK_BUFFER = 8_000
+private const val MAX_DSH_CONTENT_TEXT = 16_000
+
+private fun StringBuilder.appendBounded(value: String, maxChars: Int) {
+    if (value.length >= maxChars) {
+        clear()
+        append(value.takeLast(maxChars))
+        return
+    }
+    append(value)
+    val overflow = length - maxChars
+    if (overflow > 0) delete(0, overflow)
+}
+
+/** Collapses whitespace while inspecting only a bounded tail of untrusted agent output. */
+internal fun compactDshText(value: String, rawLimit: Int, outputLimit: Int): String {
+    if (value.isEmpty() || rawLimit <= 0 || outputLimit <= 0) return ""
+    val start = (value.length - rawLimit).coerceAtLeast(0)
+    val result = StringBuilder(value.length - start)
+    var pendingSpace = false
+    for (index in start until value.length) {
+        val char = value[index]
+        if (char.isWhitespace()) {
+            pendingSpace = result.isNotEmpty()
+        } else {
+            if (pendingSpace) result.append(' ')
+            pendingSpace = false
+            result.append(char)
+        }
+    }
+    return result.toString().takeLast(outputLimit)
 }

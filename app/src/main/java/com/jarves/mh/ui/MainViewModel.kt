@@ -402,6 +402,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pendingFollowUps = java.util.ArrayDeque<QueuedFollowUp>()
     @Volatile private var steeringToFollowUp: Boolean = false
     private val failedApiKeyIds = mutableSetOf<String>()
+    // Writes are drained into a per-chat batch below so rapid activity frames do not
+    // serialize hundreds of obsolete snapshots.
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
     private val initialPrimaryAgentKind = preferences.primaryAgentKind
@@ -496,8 +498,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { refreshGitHubConnection() }
         RuntimeSetupController.restore(application)
         viewModelScope.launch(Dispatchers.IO) {
-            for (write in transcriptWrites) {
-                preferences.saveMessages(write.projectId, write.chatId, write.messages)
+            for (pending in transcriptWrites) {
+                delay(TRANSCRIPT_WRITE_DEBOUNCE_MS)
+                val latestByChat = linkedMapOf((pending.projectId to pending.chatId) to pending)
+                while (true) {
+                    val next = transcriptWrites.tryReceive().getOrNull() ?: break
+                    latestByChat[next.projectId to next.chatId] = next
+                }
+                latestByChat.values.forEach { latest ->
+                    preferences.saveMessages(latest.projectId, latest.chatId, latest.messages)
+                }
             }
         }
         viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
@@ -4302,7 +4312,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isNoisyRuntimeItem(item: ActivityItem): Boolean {
-        val combined = "${item.title} ${item.detail}"
+        // Never allocate or scan an entire command/result just to classify the row.
+        val combined = "${item.title} ${item.detail.take(NOISY_ITEM_SCAN_CHARS)}"
         return combined.contains("Starting Claude Code", true) ||
             combined.contains("Agent process started", true) ||
             combined.contains("Claude Code connected", true) ||
@@ -4353,6 +4364,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun finishWorkSegment(current: AppUiState, finishedAt: Long = System.currentTimeMillis()): AppUiState {
         val meaningfulItems = current.liveProcess.filterNot(::isNoisyRuntimeItem)
+            .map(::boundedActivityItem)
             .map { if (it.isComplete) it else it.copy(isComplete = true) }
             .takeLast(MAX_VISIBLE_WORK_ITEMS)
         if (!current.liveThinking && meaningfulItems.isEmpty()) {
@@ -4389,10 +4401,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun appendWorkItem(current: AppUiState, item: ActivityItem): AppUiState {
-        if (isNoisyRuntimeItem(item)) return current
+        val boundedItem = boundedActivityItem(item)
+        if (isNoisyRuntimeItem(boundedItem)) return current
         return current.copy(
             liveProcess = (current.liveProcess
-                .map { if (!it.isComplete) it.copy(isComplete = true) else it } + item)
+                .map { if (!it.isComplete) it.copy(isComplete = true) else it } + boundedItem)
                 .takeLast(MAX_VISIBLE_WORK_ITEMS),
             liveThinking = false,
             workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
@@ -4509,7 +4522,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (runningIndex < 0) current else current.copy(
                         liveProcess = current.liveProcess.toMutableList().also { items ->
-                            items[runningIndex] = items[runningIndex].copy(detail = event.detail)
+                            items[runningIndex] = boundedActivityItem(
+                                items[runningIndex].copy(detail = event.detail),
+                            )
                         },
                     )
                 }
@@ -4539,14 +4554,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 "${event.toolName} completed",
                                 runningItem.detail.ifBlank { event.summary },
                                 isCommand = event.toolName == "Bash",
-                            )
+                            ).let(::boundedActivityItem)
                         }
                     } else {
-                        current.liveProcess + ActivityItem(
+                        current.liveProcess + boundedActivityItem(ActivityItem(
                             "${event.toolName} completed",
                             event.summary,
                             isCommand = event.toolName == "Bash",
-                        )
+                        ))
                     }
                     current.copy(
                         activity = (listOf(ActivityItem(event.summary, event.toolName)) + current.activity)
@@ -4686,7 +4701,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val project = current.activeProject ?: return
         val chatId = current.activeChatId ?: return
-        val liveItems = if (includeLiveProcess) current.liveProcess.filterNot(::isNoisyRuntimeItem) else emptyList()
+        val liveItems = if (includeLiveProcess) {
+            current.liveProcess.takeLast(MAX_VISIBLE_WORK_ITEMS)
+                .map(::boundedActivityItem)
+                .filterNot(::isNoisyRuntimeItem)
+        } else {
+            emptyList()
+        }
         val messages = if (liveItems.isEmpty() && !current.liveThinking) {
             current.messages
         } else {
@@ -4703,6 +4724,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         transcriptWrites.trySend(TranscriptWrite(project.id, chatId, messages))
+    }
+
+    private fun boundedActivityItem(item: ActivityItem): ActivityItem {
+        if (item.detail.length <= MAX_ACTIVITY_DETAIL_CHARS) return item
+        return item.copy(
+            detail = "… Earlier output omitted …\n" + item.detail.takeLast(MAX_ACTIVITY_DETAIL_CHARS),
+        )
     }
 
     private fun updateActiveChatTitle(prompt: String) {
@@ -4735,6 +4763,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         /** A long-running agent can poll a managed command hundreds of times. Keep the chat
          * responsive by retaining the latest useful steps instead of composing an unbounded list. */
         private const val MAX_VISIBLE_WORK_ITEMS = 32
+        private const val MAX_ACTIVITY_DETAIL_CHARS = 8_000
+        private const val NOISY_ITEM_SCAN_CHARS = 320
+        private const val TRANSCRIPT_WRITE_DEBOUNCE_MS = 500L
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
