@@ -921,6 +921,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Drops only rebuildable or already-persisted data when Android reports memory pressure. */
+    fun releaseMemoryCaches() {
+        folderMetadataCache.clear()
+        cachedRecentExitSummary = null
+        _state.update { current ->
+            current.copy(
+                projectTerminalLines = current.projectTerminalLines.takeLast(MEMORY_PRESSURE_TERMINAL_LINES),
+                projectTerminalLiveOutput = current.projectTerminalLiveOutput.takeLast(MEMORY_PRESSURE_TEXT_CHARS),
+                androidBuildLog = current.androidBuildLog.takeLast(MEMORY_PRESSURE_TEXT_CHARS),
+                androidLogcat = current.androidLogcat.copy(
+                    lines = current.androidLogcat.lines.takeLast(MEMORY_PRESSURE_LOGCAT_LINES),
+                ),
+            )
+        }
+    }
+
     private fun collectDeveloperDiagnostics(): DeveloperDiagnostics {
         val current = _state.value
         val memory = Debug.MemoryInfo().also(Debug::getMemoryInfo)
@@ -3383,7 +3399,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             outputFile = output,
                         )
                         val exit = process.waitFor()
-                        val details = output.readText().trim()
+                        val details = output.readTailText(MAX_PROCESS_OUTPUT_BYTES).trim()
                         check(exit == 0) { details.takeLast(600).ifBlank { "Git clone failed with exit code $exit" } }
                         val metadata = detectImportedProjectMetadata(workspace)
                         Project(
@@ -5034,6 +5050,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
         private const val MAX_ANDROID_BUILD_LOG = 300_000
         private const val MAX_LOGCAT_LINES = 5_000
+        private const val MEMORY_PRESSURE_TERMINAL_LINES = 20
+        private const val MEMORY_PRESSURE_LOGCAT_LINES = 500
+        private const val MEMORY_PRESSURE_TEXT_CHARS = 64 * 1024
         const val LOGCAT_GRANT_COMMAND = "adb shell pm grant com.jarves.mh android.permission.READ_LOGS"
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_PROCESS_OUTPUT_BYTES = 512 * 1024

@@ -188,6 +188,17 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun recognizesRepeatedAssistantMessageBeforeParsingItsLargePayload() {
+        parser.parseLine(sessionEvent("assistant/chunk", JSONObject()
+            .put("turn", 1).put("step", 1).put("chunk", JSONObject()
+                .put("type", "text-delta").put("index", 0).put("text", "Done"))))
+        val repeated = """{"jsonrpc":"2.0","method":"session.event","params":{"event":{"type":"assistant/message","data":{"message":{"content":[]}}}}}"""
+
+        assertTrue(parser.consumeDuplicateAssistantMessage(repeated))
+        assertFalse(parser.consumeDuplicateAssistantMessage(repeated))
+    }
+
+    @Test
     fun normalTurnEndCountsAsCompletedActivity() {
         val completed = parser.parseLine(
             sessionEvent(

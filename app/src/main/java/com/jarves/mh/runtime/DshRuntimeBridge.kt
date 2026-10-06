@@ -219,6 +219,7 @@ class DshRuntimeBridge(
         var shutdownSentAt = 0L
         var forcedShutdown = false
         var inputClosed = false
+        var discardingOversizedLine = false
         var failure = ""
 
         fun send(method: String, id: Int, params: JSONObject? = null) {
@@ -346,17 +347,34 @@ class DshRuntimeBridge(
             }
             if (count <= 0) continue
             outputOffset += count
-            pendingOutput.append(bytes.decodeToString(0, count))
+            var decoded = bytes.decodeToString(0, count)
+            if (discardingOversizedLine) {
+                val end = decoded.indexOf('\n')
+                if (end < 0) continue
+                decoded = decoded.substring(end + 1)
+                discardingOversizedLine = false
+            }
+            pendingOutput.append(decoded)
             var newline = pendingOutput.indexOf("\n")
             while (newline >= 0) {
                 val line = pendingOutput.substring(0, newline).trimEnd('\r')
                 pendingOutput.delete(0, newline + 1)
-                if (line.isNotBlank()) handle(parser.parseLine(line))
+                if (line.isNotBlank() && !parser.consumeDuplicateAssistantMessage(line)) {
+                    handle(parser.parseLine(line))
+                }
                 newline = pendingOutput.indexOf("\n")
+            }
+            if (pendingOutput.length > MAX_DSH_PROTOCOL_LINE_CHARS) {
+                val duplicate = parser.consumeDuplicateAssistantMessage(pendingOutput)
+                pendingOutput.clear()
+                discardingOversizedLine = true
+                if (!duplicate) {
+                    handle(DshSdkProtocolEvent.Failed("DeepSeek Harness sent an oversized response"))
+                }
             }
         }
         pendingOutput.toString().trim().takeIf(String::isNotBlank)?.let {
-            handle(parser.parseLine(it))
+            if (!parser.consumeDuplicateAssistantMessage(it)) handle(parser.parseLine(it))
         }
         closeInput()
         return DshSdkRunResult(completed = completed, failure = failure)
@@ -800,6 +818,16 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
     private var streamedTextSinceMessage = false
     private val toolNames = mutableMapOf<String, String>()
 
+    /** The SDK repeats the entire final assistant message after streaming its deltas.
+     * Recognize that frame before JSONObject allocates another full object graph. */
+    fun consumeDuplicateAssistantMessage(line: CharSequence): Boolean {
+        if (!streamedTextSinceMessage) return false
+        if (!line.contains("\"method\":\"session.event\"") ||
+            !line.contains("\"type\":\"assistant/message\"")) return false
+        streamedTextSinceMessage = false
+        return true
+    }
+
     fun parseLine(line: String): DshSdkProtocolEvent {
         val frame = runCatching { JSONObject(line) }.getOrNull()
             ?: return if (line.startsWith("dsh:", ignoreCase = true)) {
@@ -991,6 +1019,7 @@ private const val MAX_DSH_REASONING_SUMMARY = 2_000
 private const val MAX_DSH_TOOL_RAW_TEXT = 4_000
 private const val MAX_DSH_TEXT_BLOCK_BUFFER = 8_000
 private const val MAX_DSH_CONTENT_TEXT = 16_000
+private const val MAX_DSH_PROTOCOL_LINE_CHARS = 256 * 1024
 
 private fun StringBuilder.appendBounded(value: String, maxChars: Int) {
     if (value.length >= maxChars) {

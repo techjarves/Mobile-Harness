@@ -583,7 +583,7 @@ class AntigravityRuntimeBridge(
             ?.filter { it.isFile && it.name.startsWith("cli-") && it.lastModified() >= sinceMillis - 2_000L }
             ?.maxByOrNull(File::lastModified)
             ?: return@runCatching ""
-        latest.readText().takeLast(12_000)
+        latest.readTailText(12_000)
     }.getOrDefault("")
 }
 
