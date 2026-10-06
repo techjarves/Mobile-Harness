@@ -3,6 +3,7 @@ package com.jarves.mh.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
@@ -67,6 +69,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -141,12 +144,29 @@ fun SettingsScreen(
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
+    onRefreshDiagnostics: () -> Unit = {},
+    onStopInactiveProcesses: () -> Unit = {},
+    onClearRuntimeCache: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
     var terminalCleared by remember { mutableStateOf(false) }
     var showReliabilityHelp by rememberSaveable { mutableStateOf(false) }
     var stackPendingRemoval by remember { mutableStateOf<DevStack?>(null) }
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+
+    if (showDiagnostics) {
+        BackHandler { showDiagnostics = false }
+        LaunchedEffect(Unit) { onRefreshDiagnostics() }
+        DeveloperDiagnosticsScreen(
+            state = state,
+            onBack = { showDiagnostics = false },
+            onRefresh = onRefreshDiagnostics,
+            onStopInactiveProcesses = onStopInactiveProcesses,
+            onClearRuntimeCache = onClearRuntimeCache,
+        )
+        return
+    }
 
     stackPendingRemoval?.let { stack ->
         AlertDialog(
@@ -231,6 +251,32 @@ fun SettingsScreen(
                         ModernThemeChoice(stringResource(R.string.theme_dark), Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_light), Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    }
+                }
+            }
+
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { showDiagnostics = true },
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.Memory, null, tint = PocketOrange)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.diagnostics_title), fontWeight = FontWeight.SemiBold)
+                            Text(
+                                stringResource(R.string.diagnostics_subtitle),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
                     }
                 }
             }
@@ -501,6 +547,143 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeveloperDiagnosticsScreen(
+    state: AppUiState,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onStopInactiveProcesses: () -> Unit,
+    onClearRuntimeCache: () -> Unit,
+) {
+    val diagnostics = state.diagnostics
+    val busy = state.isRunning || state.projectTerminalRunning || state.androidBuildRunning
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(stringResource(R.string.diagnostics_title), fontWeight = FontWeight.Bold)
+                        Text(
+                            stringResource(R.string.diagnostics_subtitle),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onRefresh, enabled = !diagnostics.loading) {
+                        if (diagnostics.loading) {
+                            CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Refresh, stringResource(R.string.diagnostics_refresh))
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                DiagnosticsCard(stringResource(R.string.diagnostics_memory)) {
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_app_memory), formatDiagnosticBytes(diagnostics.appPssBytes))
+                    RuntimeInfoRow(
+                        stringResource(R.string.diagnostics_java_heap),
+                        "${formatDiagnosticBytes(diagnostics.javaHeapBytes)} / ${formatDiagnosticBytes(diagnostics.javaHeapMaxBytes)}",
+                    )
+                }
+            }
+            item {
+                DiagnosticsCard(stringResource(R.string.diagnostics_processes)) {
+                    Text(
+                        if (diagnostics.activeProcesses.isEmpty()) stringResource(R.string.diagnostics_no_processes)
+                        else diagnostics.activeProcesses.joinToString(" · "),
+                        fontSize = 13.sp,
+                        color = if (diagnostics.activeProcesses.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(onClick = onStopInactiveProcesses, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.diagnostics_stop_inactive))
+                    }
+                }
+            }
+            item {
+                DiagnosticsCard(stringResource(R.string.diagnostics_buffers)) {
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_messages), diagnostics.messageCount.toString())
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_live_activity), diagnostics.liveActivityCount.toString())
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_terminal_buffer), formatDiagnosticBytes(diagnostics.terminalBufferBytes))
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_build_log), formatDiagnosticBytes(diagnostics.buildLogBytes))
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_logcat_lines), diagnostics.logcatLines.toString())
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_file_entries), diagnostics.fileEntries.toString())
+                }
+            }
+            item {
+                DiagnosticsCard(stringResource(R.string.diagnostics_runtime_cache)) {
+                    RuntimeInfoRow(stringResource(R.string.diagnostics_cached_output), formatDiagnosticBytes(diagnostics.runtimeCacheBytes))
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onClearRuntimeCache,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(stringResource(R.string.diagnostics_clear_cache))
+                    }
+                    if (busy) {
+                        Text(
+                            stringResource(R.string.diagnostics_cache_disabled),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            item {
+                DiagnosticsCard(stringResource(R.string.diagnostics_recent_exit)) {
+                    Text(
+                        diagnostics.recentExit ?: stringResource(R.string.diagnostics_no_recent_exit),
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsCard(title: String, content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            content()
+        }
+    }
+}
+
+private fun formatDiagnosticBytes(bytes: Long): String = when {
+    bytes >= 1_048_576L -> "%.1f MB".format(bytes / 1_048_576.0)
+    bytes >= 1_024L -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "$bytes B"
 }
 
 private fun formatTransferMb(bytes: Long): String = "%.1f MB".format(bytes.coerceAtLeast(0L) / 1_048_576.0)

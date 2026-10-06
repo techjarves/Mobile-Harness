@@ -1,6 +1,7 @@
 package com.jarves.mh.ui
 
 import android.app.Application
+import android.app.ActivityManager
 import android.Manifest
 import android.content.Intent
 import android.content.Context
@@ -13,6 +14,7 @@ import android.provider.Settings
 import android.os.SystemClock
 import android.os.Build
 import android.os.StatFs
+import android.os.Debug
 import android.system.Os
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -154,6 +156,23 @@ data class ExportSelection(
     }
 }
 
+data class DeveloperDiagnostics(
+    val loading: Boolean = false,
+    val appPssBytes: Long = 0L,
+    val javaHeapBytes: Long = 0L,
+    val javaHeapMaxBytes: Long = 0L,
+    val activeProcesses: List<String> = emptyList(),
+    val messageCount: Int = 0,
+    val liveActivityCount: Int = 0,
+    val terminalBufferBytes: Long = 0L,
+    val buildLogBytes: Long = 0L,
+    val logcatLines: Int = 0,
+    val fileEntries: Int = 0,
+    val runtimeCacheBytes: Long = 0L,
+    val recentExit: String? = null,
+    val refreshedAtMillis: Long? = null,
+)
+
 enum class FileReadOnlyReason { TOO_LARGE, BINARY, INVALID_UTF8, UNSAFE, READ_ERROR }
 
 data class OpenedFileState(
@@ -275,6 +294,7 @@ data class AppUiState(
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
+    val diagnostics: DeveloperDiagnostics = DeveloperDiagnostics(),
     val openedFile: OpenedFileState? = null,
     val projectExportRunning: Boolean = false,
     val projectExportSucceededAtMillis: Long? = null,
@@ -360,6 +380,8 @@ data class AppUiState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private data class FolderMetadata(val modifiedAtMillis: Long, val childCount: Int)
+
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
     private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
@@ -402,6 +424,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pendingFollowUps = java.util.ArrayDeque<QueuedFollowUp>()
     @Volatile private var steeringToFollowUp: Boolean = false
     private val failedApiKeyIds = mutableSetOf<String>()
+    private val folderMetadataCache = java.util.concurrent.ConcurrentHashMap<String, FolderMetadata>()
+    private val folderCountsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     // Writes are drained into a per-chat batch below so rapid activity frames do not
     // serialize hundreds of obsolete snapshots.
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
@@ -813,6 +837,109 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.projectTerminalRunning) return
         _state.update { it.copy(projectTerminalLines = emptyList(), projectTerminalLiveOutput = "") }
         saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
+    }
+
+    fun refreshDeveloperDiagnostics() {
+        _state.update { it.copy(diagnostics = it.diagnostics.copy(loading = true)) }
+        viewModelScope.launch {
+            val snapshot = withContext(Dispatchers.IO) { collectDeveloperDiagnostics() }
+            _state.update { it.copy(diagnostics = snapshot) }
+        }
+    }
+
+    fun stopInactiveDeveloperProcesses() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = _state.value
+            if (!current.isRunning) {
+                runCatching { claudeRuntime.stopActiveSession() }
+                runCatching { dshRuntime.stopActiveSession() }
+                runCatching { antigravityRuntime.stopActiveSession() }
+            }
+            if (!current.projectTerminalRunning) {
+                projectTerminalProcess?.takeIf(Process::isAlive)?.destroyForcibly()
+                projectTerminalProcess = null
+            }
+            if (!current.androidBuildRunning) {
+                androidBuildProcess?.takeIf(Process::isAlive)?.destroyForcibly()
+                androidBuildProcess = null
+            }
+            withContext(Dispatchers.Main) {
+                _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.diagnostics_inactive_stopped)) }
+                refreshDeveloperDiagnostics()
+            }
+        }
+    }
+
+    fun clearDeveloperRuntimeCache() {
+        val current = _state.value
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
+            _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.diagnostics_cache_busy)) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            getApplication<Application>().cacheDir.listFiles().orEmpty()
+                .filter { it.isFile && it.name.startsWith("runtime-output-") }
+                .forEach { runCatching { it.delete() } }
+            withContext(Dispatchers.Main) {
+                _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.diagnostics_cache_cleared)) }
+                refreshDeveloperDiagnostics()
+            }
+        }
+    }
+
+    private fun collectDeveloperDiagnostics(): DeveloperDiagnostics {
+        val current = _state.value
+        val memory = Debug.MemoryInfo().also(Debug::getMemoryInfo)
+        val runtime = Runtime.getRuntime()
+        val active = buildList {
+            if (current.isRunning) add(current.agentKind.title)
+            if (current.projectTerminalRunning || projectTerminalProcess?.isAlive == true) add("Project terminal")
+            if (terminalProcess?.isAlive == true) add("Quick terminal")
+            if (current.androidBuildRunning || androidBuildProcess?.isAlive == true) add("Android build")
+            if (current.androidLogcat.running || androidLogcatProcess?.isAlive == true) add("Logcat")
+        }
+        val runtimeCache = getApplication<Application>().cacheDir.listFiles().orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.name.startsWith("runtime-output-") }
+            .sumOf(File::length)
+        return DeveloperDiagnostics(
+            appPssBytes = memory.totalPss.toLong() * 1_024L,
+            javaHeapBytes = runtime.totalMemory() - runtime.freeMemory(),
+            javaHeapMaxBytes = runtime.maxMemory(),
+            activeProcesses = active,
+            messageCount = current.messages.size,
+            liveActivityCount = current.liveProcess.size,
+            terminalBufferBytes = current.projectTerminalLiveOutput.toByteArray().size.toLong() +
+                current.projectTerminalLines.sumOf { it.output.toByteArray().size.toLong() },
+            buildLogBytes = current.androidBuildLog.toByteArray().size.toLong(),
+            logcatLines = current.androidLogcat.lines.size,
+            fileEntries = current.workspaceFiles.size,
+            runtimeCacheBytes = runtimeCache,
+            recentExit = recentAppExitSummary(),
+            refreshedAtMillis = System.currentTimeMillis(),
+        )
+    }
+
+    private fun recentAppExitSummary(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val manager = getApplication<Application>().getSystemService(ActivityManager::class.java)
+        val exit = manager.getHistoricalProcessExitReasons(getApplication<Application>().packageName, 0, 8)
+            .firstOrNull { info ->
+                info.reason == android.app.ApplicationExitInfo.REASON_ANR ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_CRASH ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_LOW_MEMORY
+            } ?: return null
+        val reason = when (exit.reason) {
+            android.app.ApplicationExitInfo.REASON_ANR -> "ANR"
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "Low memory"
+            android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "Excessive resource use"
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "Native crash"
+            else -> "Crash"
+        }
+        val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(exit.timestamp))
+        return "$reason · $time" + exit.description?.takeIf(String::isNotBlank)?.let { " · ${it.take(160)}" }.orEmpty()
     }
 
     private fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
@@ -3570,6 +3697,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
+        folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
         viewModelScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
             File(filesDir, "workspaces/${project.id}").deleteRecursively()
@@ -3747,22 +3875,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         androidProjectDetected = androidProjectDetected,
                     )
                 }
+                loadMissingFolderCounts(project, entries)
             }
         }
     }
 
     fun loadProjectDirectory(relativePath: String) {
         val project = _state.value.activeProject ?: return
+        val existingEntries = _state.value.workspaceFiles
         viewModelScope.launch {
-            val children = withContext(Dispatchers.IO) { readWorkspaceDirectory(project, relativePath) }
-            if (_state.value.activeProject?.id != project.id) return@launch
-            _state.update { current ->
+            val (children, updatedEntries) = withContext(Dispatchers.IO) {
+                val loadedChildren = readWorkspaceDirectory(project, relativePath)
                 val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
-                val retained = current.workspaceFiles.filterNot { entry ->
+                val retained = existingEntries.filterNot { entry ->
                     entry.path.startsWith(prefix) && entry.path.removePrefix(prefix).let { !it.contains('/') }
                 }
-                current.copy(workspaceFiles = sortWorkspaceEntries((retained + children).distinctBy { it.path }))
+                val sorted = sortWorkspaceEntries((retained + loadedChildren).distinctBy { it.path }).map { entry ->
+                    if (entry.path == relativePath) entry.copy(childCount = loadedChildren.size) else entry
+                }
+                loadedChildren to sorted
             }
+            if (_state.value.activeProject?.id != project.id) return@launch
+            _state.update { current -> current.copy(workspaceFiles = updatedEntries) }
+            updateFolderMetadata(project, relativePath, children.size)
+            loadMissingFolderCounts(project, children)
         }
     }
 
@@ -3892,6 +4028,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 result.isSuccess -> {
                     _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.file_saved)) }
+                    invalidateFolderMetadata(project.id, listOf(opened.path))
                     refreshProjectFiles()
                     loadOpenedFile(project, opened.path)
                 }
@@ -3931,11 +4068,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isDirectory = file.isDirectory,
                     depth = relative.count { it == '/' },
                     sizeBytes = if (file.isFile) file.length() else 0,
-                    childCount = if (file.isDirectory) file.listFiles().orEmpty().count(::isVisibleSafeEntry) else 0,
+                    childCount = if (file.isDirectory) {
+                        folderMetadataCache[folderMetadataKey(project.id, relative)]
+                            ?.takeIf { it.modifiedAtMillis == file.lastModified() }
+                            ?.childCount
+                    } else {
+                        null
+                    },
                 )
             }
             .sortedWith(compareByDescending<WorkspaceEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
             .toList()
+    }
+
+    private fun loadMissingFolderCounts(project: Project, entries: List<WorkspaceEntry>) {
+        entries.asSequence()
+            .filter { it.isDirectory && it.childCount == null && !isDeferredMetadataPath(it.path) }
+            .forEach { entry ->
+                val key = folderMetadataKey(project.id, entry.path)
+                if (!folderCountsInFlight.add(key)) return@forEach
+                viewModelScope.launch {
+                    val metadata = withContext(Dispatchers.IO) {
+                        val directory = safeWorkspaceDirectory(project, entry.path)
+                        directory?.let {
+                            FolderMetadata(
+                                modifiedAtMillis = it.lastModified(),
+                                childCount = countVisibleChildren(project, it),
+                            )
+                        }
+                    }
+                    folderCountsInFlight.remove(key)
+                    if (metadata == null || _state.value.activeProject?.id != project.id) return@launch
+                    folderMetadataCache[key] = metadata
+                    _state.update { current ->
+                        current.copy(
+                            workspaceFiles = current.workspaceFiles.map { item ->
+                                if (item.path == entry.path) item.copy(childCount = metadata.childCount) else item
+                            },
+                        )
+                    }
+                }
+            }
+    }
+
+    private fun updateFolderMetadata(project: Project, relativePath: String, count: Int) {
+        val directory = safeWorkspaceDirectory(project, relativePath) ?: return
+        folderMetadataCache[folderMetadataKey(project.id, relativePath)] = FolderMetadata(
+            modifiedAtMillis = directory.lastModified(),
+            childCount = count,
+        )
+    }
+
+    private fun countVisibleChildren(project: Project, directory: File): Int {
+        val root = projectWorkspaceRoot(project).canonicalFile.toPath()
+        return directory.listFiles().orEmpty().count { file ->
+            val relative = runCatching { file.relativeTo(projectWorkspaceRoot(project)).invariantSeparatorsPath }
+                .getOrNull() ?: return@count false
+            !isClaudeRuntimeMetadata(relative) &&
+                !Files.isSymbolicLink(file.toPath()) &&
+                runCatching { file.canonicalFile.toPath().startsWith(root) }.getOrDefault(false)
+        }
+    }
+
+    private fun safeWorkspaceDirectory(project: Project, relativePath: String): File? {
+        val root = projectWorkspaceRoot(project).canonicalFile
+        if (relativePath.isBlank()) return root.takeIf(File::isDirectory)
+        val directory = safeWorkspaceFile(project, relativePath) ?: return null
+        return directory.takeIf(File::isDirectory)
+    }
+
+    private fun folderMetadataKey(projectId: String, path: String): String = "$projectId:${path.trim('/')}"
+
+    private fun invalidateFolderMetadata(projectId: String, paths: List<String>) {
+        paths.forEach { changedPath ->
+            val normalized = changedPath.trim('/')
+            val parent = normalized.substringBeforeLast('/', "")
+            folderMetadataCache.remove(folderMetadataKey(projectId, parent))
+            folderMetadataCache.remove(folderMetadataKey(projectId, normalized))
+        }
+    }
+
+    private fun isDeferredMetadataPath(path: String): Boolean {
+        val segments = path.split('/')
+        return segments.any { it in DEFERRED_FOLDER_METADATA_NAMES }
     }
 
     private fun sortWorkspaceEntries(entries: List<WorkspaceEntry>): List<WorkspaceEntry> {
@@ -4636,7 +4851,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         if (event is RuntimeEvent.FilesChanged || event is RuntimeEvent.SessionCompleted) {
-            _state.value.activeProject?.id?.let { touchProject(it) }
+            _state.value.activeProject?.id?.let { projectId ->
+                if (event is RuntimeEvent.FilesChanged) invalidateFolderMetadata(projectId, event.paths)
+                touchProject(projectId)
+            }
             refreshProjectFiles()
         }
         // Save every visible reasoning/tool transition, not only assistant text and
@@ -4763,6 +4981,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         /** A long-running agent can poll a managed command hundreds of times. Keep the chat
          * responsive by retaining the latest useful steps instead of composing an unbounded list. */
         private const val MAX_VISIBLE_WORK_ITEMS = 32
+        private val DEFERRED_FOLDER_METADATA_NAMES = setOf(".git", ".gradle", "build", "node_modules")
         private const val MAX_ACTIVITY_DETAIL_CHARS = 8_000
         private const val NOISY_ITEM_SCAN_CHARS = 320
         private const val TRANSCRIPT_WRITE_DEBOUNCE_MS = 500L

@@ -239,7 +239,8 @@ data class WorkspaceEntry(
     val isDirectory: Boolean,
     val depth: Int,
     val sizeBytes: Long = 0,
-    val childCount: Int = 0,
+    /** Null until the directory's direct children have been counted off the UI thread. */
+    val childCount: Int? = null,
 )
 
 enum class RiskLevel { SAFE, REVIEW, HIGH }

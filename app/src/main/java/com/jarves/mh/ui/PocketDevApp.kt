@@ -2551,6 +2551,9 @@ private fun RootScreenHost(
                     initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
+                    onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
+                    onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
+                    onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
                 )
             }
         }
@@ -5865,7 +5868,7 @@ private fun FilesTab(
                 )
                 Spacer(Modifier.width(11.dp))
                 Text(
-                    if (entry.isDirectory) "${entry.name} (${entry.childCount})" else entry.name,
+                    if (entry.isDirectory) "${entry.name} (${entry.childCount?.toString() ?: "…"})" else entry.name,
                     Modifier.weight(1f),
                     color = if (!entry.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 )
