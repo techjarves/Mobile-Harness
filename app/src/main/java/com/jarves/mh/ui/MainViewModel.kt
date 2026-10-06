@@ -173,6 +173,26 @@ data class DeveloperDiagnostics(
     val refreshedAtMillis: Long? = null,
 )
 
+/** Counts UTF-8 storage without allocating a second byte array for large logs. */
+internal fun utf8SizeInBytes(value: String): Long {
+    var bytes = 0L
+    var index = 0
+    while (index < value.length) {
+        val char = value[index]
+        when {
+            char.code < 0x80 -> bytes += 1
+            char.code < 0x800 -> bytes += 2
+            char.isHighSurrogate() && index + 1 < value.length && value[index + 1].isLowSurrogate() -> {
+                bytes += 4
+                index += 1
+            }
+            else -> bytes += 3
+        }
+        index += 1
+    }
+    return bytes
+}
+
 enum class FileReadOnlyReason { TOO_LARGE, BINARY, INVALID_UTF8, UNSAFE, READ_ERROR }
 
 data class OpenedFileState(
@@ -413,6 +433,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var androidBuildStopRequested: Boolean = false
     @Volatile private var androidLogcatProcess: Process? = null
     private var androidLogcatJob: kotlinx.coroutines.Job? = null
+    private var diagnosticsJob: kotlinx.coroutines.Job? = null
+    private var lastDiagnosticsRefreshAtElapsedMillis = 0L
+    private var cachedRecentExitSummary: String? = null
+    private var recentExitLoadedAtElapsedMillis = 0L
     private var pendingAndroidInstallId: String? = null
     private var pendingAndroidInstallLaunch = false
     private var androidLaunchAtMillis: Long? = null
@@ -840,10 +864,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshDeveloperDiagnostics() {
+        if (diagnosticsJob?.isActive == true) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDiagnosticsRefreshAtElapsedMillis < DIAGNOSTICS_REFRESH_COOLDOWN_MS) return
         _state.update { it.copy(diagnostics = it.diagnostics.copy(loading = true)) }
-        viewModelScope.launch {
-            val snapshot = withContext(Dispatchers.IO) { collectDeveloperDiagnostics() }
-            _state.update { it.copy(diagnostics = snapshot) }
+        diagnosticsJob = viewModelScope.launch {
+            try {
+                val snapshot = withContext(Dispatchers.IO) { collectDeveloperDiagnostics() }
+                lastDiagnosticsRefreshAtElapsedMillis = SystemClock.elapsedRealtime()
+                _state.update { it.copy(diagnostics = snapshot) }
+            } finally {
+                diagnosticsJob = null
+            }
         }
     }
 
@@ -865,6 +897,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             withContext(Dispatchers.Main) {
                 _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.diagnostics_inactive_stopped)) }
+                lastDiagnosticsRefreshAtElapsedMillis = 0L
                 refreshDeveloperDiagnostics()
             }
         }
@@ -882,6 +915,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .forEach { runCatching { it.delete() } }
             withContext(Dispatchers.Main) {
                 _state.update { it.copy(toastMessage = getApplication<Application>().getString(R.string.diagnostics_cache_cleared)) }
+                lastDiagnosticsRefreshAtElapsedMillis = 0L
                 refreshDeveloperDiagnostics()
             }
         }
@@ -909,9 +943,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeProcesses = active,
             messageCount = current.messages.size,
             liveActivityCount = current.liveProcess.size,
-            terminalBufferBytes = current.projectTerminalLiveOutput.toByteArray().size.toLong() +
-                current.projectTerminalLines.sumOf { it.output.toByteArray().size.toLong() },
-            buildLogBytes = current.androidBuildLog.toByteArray().size.toLong(),
+            terminalBufferBytes = utf8SizeInBytes(current.projectTerminalLiveOutput) +
+                current.projectTerminalLines.sumOf { utf8SizeInBytes(it.output) },
+            buildLogBytes = utf8SizeInBytes(current.androidBuildLog),
             logcatLines = current.androidLogcat.lines.size,
             fileEntries = current.workspaceFiles.size,
             runtimeCacheBytes = runtimeCache,
@@ -921,6 +955,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun recentAppExitSummary(): String? {
+        val now = SystemClock.elapsedRealtime()
+        if (now - recentExitLoadedAtElapsedMillis < RECENT_EXIT_CACHE_MS) return cachedRecentExitSummary
+        recentExitLoadedAtElapsedMillis = now
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val manager = getApplication<Application>().getSystemService(ActivityManager::class.java)
         val exit = manager.getHistoricalProcessExitReasons(getApplication<Application>().packageName, 0, 8)
@@ -930,7 +967,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     info.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ||
                     info.reason == android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE ||
                     info.reason == android.app.ApplicationExitInfo.REASON_LOW_MEMORY
-            } ?: return null
+            } ?: run {
+                cachedRecentExitSummary = null
+                return null
+            }
         val reason = when (exit.reason) {
             android.app.ApplicationExitInfo.REASON_ANR -> "ANR"
             android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "Low memory"
@@ -939,7 +979,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> "Crash"
         }
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(exit.timestamp))
-        return "$reason · $time" + exit.description?.takeIf(String::isNotBlank)?.let { " · ${it.take(160)}" }.orEmpty()
+        return ("$reason · $time" + exit.description?.takeIf(String::isNotBlank)?.let { " · ${it.take(160)}" }.orEmpty())
+            .also { cachedRecentExitSummary = it }
     }
 
     private fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
@@ -4985,6 +5026,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_ACTIVITY_DETAIL_CHARS = 8_000
         private const val NOISY_ITEM_SCAN_CHARS = 320
         private const val TRANSCRIPT_WRITE_DEBOUNCE_MS = 500L
+        private const val DIAGNOSTICS_REFRESH_COOLDOWN_MS = 1_000L
+        private const val RECENT_EXIT_CACHE_MS = 60_000L
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
