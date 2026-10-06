@@ -70,6 +70,17 @@ class AntigravityBridgeTest {
     }
 
     @Test
+    fun `shows tool errors as completed activity`() {
+        val parsed = AntigravityEventParser.parse(
+            """{"event":"step_update","step_update":{"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"gradle assembleDebug"},"error":{"type":"TOOL_ERROR","message":"context canceled"}}}}""",
+        )
+        assertEquals(
+            AntigravityParsedEvent.ToolCompleted("Bash", "context canceled"),
+            parsed,
+        )
+    }
+
+    @Test
     fun `ignores unknown and malformed events`() {
         assertNull(AntigravityEventParser.parse("not json"))
         assertNull(AntigravityEventParser.parse("""{"event":"future_event","payload":{}}"""))
@@ -129,9 +140,21 @@ class AntigravityBridgeTest {
 
         assertTrue("never use plain `gradle build`" in prompt)
         assertTrue("--no-daemon" in prompt)
+        assertTrue("--offline" in prompt)
+        assertTrue("timeout 5m" in prompt)
         assertTrue("assembleDebug" in prompt)
-        assertTrue("nohup sh -c" in prompt)
+        assertTrue("use `manage_task`" in prompt)
+        assertTrue("do not use `nohup`" in prompt)
         assertTrue("Never wait silently" in prompt)
+    }
+
+    @Test
+    fun `Gradle heartbeat reports elapsed time before command output arrives`() {
+        val detail = antigravityGradleProgress("gradle assembleDebug", 42_900L)
+
+        assertTrue(detail.startsWith("Gradle is running · 42s"))
+        assertTrue("gradle assembleDebug" in detail)
+        assertTrue("Full output will appear" in detail)
     }
 
     @Test

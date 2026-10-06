@@ -4499,6 +4499,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
                     )
                 }
+                is RuntimeEvent.ToolProgress -> {
+                    val runningIndex = current.liveProcess.indexOfLast {
+                        !it.isComplete && it.title == "Running ${event.toolName}"
+                    }
+                    if (runningIndex < 0) current else current.copy(
+                        liveProcess = current.liveProcess.toMutableList().also { items ->
+                            items[runningIndex] = items[runningIndex].copy(detail = event.detail)
+                        },
+                    )
+                }
                 is RuntimeEvent.RuntimeLog -> appendWorkItem(
                     current.copy(activity = listOf(ActivityItem(event.title, event.detail)) + current.activity),
                     ActivityItem(event.title, event.detail),

@@ -62,12 +62,17 @@ internal object AntigravityEventParser {
                     }.ifBlank { type.ifBlank { "Tool" } }
                     val name = antigravityToolDisplayName(rawName)
                     val detail = antigravityToolDetail(step, rawName).ifBlank { name }
-                    if (step.optString("state") == "DONE") {
+                    if (step.optString("state") in setOf("DONE", "ERROR")) {
                         val output = step.optJSONObject("tool_info")
                             ?.optString("output")
                             ?.takeIf(String::isNotBlank)
                             ?.let(::antigravityToolOutput)
-                        AntigravityParsedEvent.ToolCompleted(name, output ?: detail)
+                        val error = step.optJSONObject("tool_info")
+                            ?.optJSONObject("error")
+                            ?.optString("message")
+                            ?.takeIf(String::isNotBlank)
+                            ?.let(::redactToolDetail)
+                        AntigravityParsedEvent.ToolCompleted(name, output ?: error ?: detail)
                     } else {
                         AntigravityParsedEvent.ToolStarted(name, detail)
                     }
@@ -343,6 +348,10 @@ class AntigravityRuntimeBridge(
             val pending = StringBuilder()
             var resultSeen = false
             var assistantTextSeen = false
+            var activeToolName: String? = null
+            var activeToolDetail = ""
+            var activeToolStartedAtMillis = 0L
+            var lastToolProgressAtMillis = 0L
             suspend fun handleLine(line: String) {
                 when (val event = AntigravityEventParser.parse(line)) {
                     is AntigravityParsedEvent.Initialized -> saveConversationId(projectId, event.conversationId)
@@ -350,8 +359,17 @@ class AntigravityRuntimeBridge(
                         assistantTextSeen = true
                         eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.value))
                     }
-                    is AntigravityParsedEvent.ToolStarted -> eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.name, event.detail))
-                    is AntigravityParsedEvent.ToolCompleted -> eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
+                    is AntigravityParsedEvent.ToolStarted -> {
+                        activeToolName = event.name
+                        activeToolDetail = event.detail
+                        activeToolStartedAtMillis = System.currentTimeMillis()
+                        lastToolProgressAtMillis = activeToolStartedAtMillis
+                        eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.name, event.detail))
+                    }
+                    is AntigravityParsedEvent.ToolCompleted -> {
+                        if (activeToolName == event.name) activeToolName = null
+                        eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
+                    }
                     is AntigravityParsedEvent.Result -> {
                         event.conversationId?.let { saveConversationId(projectId, it) }
                         if (event.status.equals("SUCCESS", ignoreCase = true)) {
@@ -368,6 +386,19 @@ class AntigravityRuntimeBridge(
             outputLoop@ while (process.isAlive || native.outputFile.length() > offset) {
                 val available = native.outputFile.length() - offset
                 if (available <= 0) {
+                    val now = System.currentTimeMillis()
+                    if (activeToolName == "Bash" && activeToolDetail.contains("gradle", ignoreCase = true) &&
+                        now - activeToolStartedAtMillis >= 10_000L && now - lastToolProgressAtMillis >= 10_000L
+                    ) {
+                        lastToolProgressAtMillis = now
+                        eventBus.emit(
+                            RuntimeEvent.ToolProgress(
+                                sessionId,
+                                "Bash",
+                                antigravityGradleProgress(activeToolDetail, now - activeToolStartedAtMillis),
+                            ),
+                        )
+                    }
                     delay(50)
                     continue
                 }
@@ -579,9 +610,15 @@ internal fun antigravityWorkspacePrompt(projectSlug: String, prompt: String): St
     The active project workspace is /workspace/$projectSlug. Create, edit, read, run, and build project files only inside this directory. Do not create project output under ~/.gemini/antigravity-cli/scratch or any other scratch directory.
 
     For Android projects, never use plain `gradle build` or start a Gradle daemon. Build only the debug APK with:
-    `gradle -Dorg.gradle.jvmargs= --no-daemon --max-workers=2 --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug --console=plain --stacktrace`
-    Antigravity does not stream output from a foreground shell command until that command exits. For an Android build or another command likely to exceed 30 seconds, start it with `nohup sh -c`, redirect stdout and stderr to a uniquely named file under /tmp, write its exit code to a companion status file, and return immediately. Poll the log and status file about every 10 seconds with short commands, report useful new output, and stop polling when the status file appears. Treat a nonzero status as failure. Remove the temporary log and status files after reading the final result. Never wait silently on a long foreground command.
+    `timeout 5m gradle -Dorg.gradle.jvmargs= --no-daemon --max-workers=2 --offline --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug --console=plain --stacktrace`
+    PocketDev bundles the standard Android dependencies locally, so always try this offline command first. If and only if Gradle finishes with a clear missing-cached-dependency error, retry once without `--offline`, retaining the five-minute timeout and all other flags. Do not retry a timed-out or resource-failed build unchanged.
+    Antigravity does not stream output from a foreground shell command until that command exits. Start the optimized Android build with `run_command` normally; do not use `nohup`, shell backgrounding, or a detached process because those processes do not survive PocketDev's proot command boundary. If Antigravity moves the command into a managed task, immediately use `manage_task` to check its status and obtain its log path. Poll that managed task and tail its log with short commands about every 10 seconds so the user receives progress, then read the final output and exit status. Never wait silently on a long foreground command.
     </pocketdev_workspace>
 
     $prompt
 """.trimIndent()
+
+internal fun antigravityGradleProgress(command: String, elapsedMillis: Long): String {
+    val elapsedSeconds = (elapsedMillis.coerceAtLeast(0L) / 1_000L)
+    return "Gradle is running · ${elapsedSeconds}s\n$command\nFull output will appear when the command completes."
+}

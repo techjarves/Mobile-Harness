@@ -309,6 +309,11 @@ sealed interface RuntimeEvent {
         val toolName: String,
         val detail: String,
     ) : RuntimeEvent
+    data class ToolProgress(
+        override val sessionId: String,
+        val toolName: String,
+        val detail: String,
+    ) : RuntimeEvent
     data class RuntimeLog(
         override val sessionId: String,
         val title: String,
