@@ -4354,6 +4354,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun finishWorkSegment(current: AppUiState, finishedAt: Long = System.currentTimeMillis()): AppUiState {
         val meaningfulItems = current.liveProcess.filterNot(::isNoisyRuntimeItem)
             .map { if (it.isComplete) it else it.copy(isComplete = true) }
+            .takeLast(MAX_VISIBLE_WORK_ITEMS)
         if (!current.liveThinking && meaningfulItems.isEmpty()) {
             return current.copy(liveProcess = emptyList(), workSegmentStartedAtMillis = null)
         }
@@ -4390,7 +4391,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun appendWorkItem(current: AppUiState, item: ActivityItem): AppUiState {
         if (isNoisyRuntimeItem(item)) return current
         return current.copy(
-            liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } + item,
+            liveProcess = (current.liveProcess
+                .map { if (!it.isComplete) it.copy(isComplete = true) else it } + item)
+                .takeLast(MAX_VISIBLE_WORK_ITEMS),
             liveThinking = false,
             workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
         )
@@ -4490,9 +4493,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         },
                         liveThinking = false,
                         activeThinkingBlockId = null,
-                        activity = listOf(
+                        activity = (listOf(
                             ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
-                        ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
+                        ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it })
+                            .take(MAX_VISIBLE_WORK_ITEMS),
                     )
                     appendWorkItem(
                         planned,
@@ -4545,8 +4549,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     current.copy(
-                        activity = listOf(ActivityItem(event.summary, event.toolName)) + current.activity,
-                        liveProcess = process,
+                        activity = (listOf(ActivityItem(event.summary, event.toolName)) + current.activity)
+                            .take(MAX_VISIBLE_WORK_ITEMS),
+                        liveProcess = process.takeLast(MAX_VISIBLE_WORK_ITEMS),
                         liveThinking = false,
                         workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                     )
@@ -4727,6 +4732,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        /** A long-running agent can poll a managed command hundreds of times. Keep the chat
+         * responsive by retaining the latest useful steps instead of composing an unbounded list. */
+        private const val MAX_VISIBLE_WORK_ITEMS = 32
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100

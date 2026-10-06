@@ -6286,8 +6286,11 @@ private fun ClaudeActivityDisclosure(
     isRunning: Boolean = false,
 ) {
     var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    // Older saved chats may contain hundreds of polling steps. Rendering all of them inside
+    // one lazy-list item can monopolize the UI thread, so show the latest useful window.
+    val visibleItems = items.takeLast(32)
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)) {
-        if (items.isEmpty()) {
+        if (visibleItems.isEmpty()) {
             ActivitySummaryRow(
                 item = null,
                 text = headline,
@@ -6299,7 +6302,7 @@ private fun ClaudeActivityDisclosure(
             )
             if (0 in expandedItems) ActivityExpandedDetail(null, "Reviewing the request and planning the next action.")
         } else {
-            items.forEachIndexed { index, item ->
+            visibleItems.forEachIndexed { index, item ->
                 ActivitySummaryRow(
                     item = item,
                     text = compactActivityText(item),
@@ -6522,7 +6525,8 @@ private fun ActivityExpandedDetail(item: ActivityItem?, detail: String) {
     }
 }
 
-private fun compactActivityText(item: ActivityItem): String = "${activityName(item)} · ${activityDetail(item).replace(Regex("\\s+"), " ").take(105)}"
+private fun compactActivityText(item: ActivityItem): String =
+    "${activityName(item)} · ${activityDetail(item).take(180).replace(Regex("\\s+"), " ").take(105)}"
 
 private fun activityDetail(item: ActivityItem): String {
     if (item.title == "Think" && item.detail.contains("reasoning tokens processed", true)) {
@@ -6535,7 +6539,7 @@ private fun activityHeadline(items: List<ActivityItem>, seconds: Long, thinking:
     val latest = items.lastOrNull()
     if (latest == null) return "Think · Analyzing the request · ${formatDuration(seconds)}"
     if (thinking && latest.title == "Think") return "Think · ${latest.detail} · ${formatDuration(seconds)}"
-    val detail = latest.detail.replace(Regex("\\s+"), " ").trim().ifBlank { latest.title }
+    val detail = latest.detail.take(180).replace(Regex("\\s+"), " ").trim().ifBlank { latest.title }
     return "${activityName(latest)} · ${detail.take(100)} · ${formatDuration(seconds)}"
 }
 
