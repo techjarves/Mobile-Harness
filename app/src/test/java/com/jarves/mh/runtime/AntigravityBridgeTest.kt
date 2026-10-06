@@ -59,6 +59,17 @@ class AntigravityBridgeTest {
     }
 
     @Test
+    fun `shows completed command output instead of repeating command`() {
+        val parsed = AntigravityEventParser.parse(
+            """{"event":"step_update","step_update":{"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"gradle assembleDebug"},"output":"Preparing\r\nBUILD SUCCESSFUL\r\n"}}}""",
+        )
+        assertEquals(
+            AntigravityParsedEvent.ToolCompleted("Bash", "Preparing\nBUILD SUCCESSFUL"),
+            parsed,
+        )
+    }
+
+    @Test
     fun `ignores unknown and malformed events`() {
         assertNull(AntigravityEventParser.parse("not json"))
         assertNull(AntigravityEventParser.parse("""{"event":"future_event","payload":{}}"""))
@@ -110,6 +121,17 @@ class AntigravityBridgeTest {
         )))
         assertTrue("--effort" !in command)
         assertTrue("--new-project" !in command)
+    }
+
+    @Test
+    fun `workspace prompt prevents silent foreground Android builds`() {
+        val prompt = antigravityWorkspacePrompt("demo", "Build the app")
+
+        assertTrue("never use plain `gradle build`" in prompt)
+        assertTrue("--no-daemon" in prompt)
+        assertTrue("assembleDebug" in prompt)
+        assertTrue("nohup sh -c" in prompt)
+        assertTrue("Never wait silently" in prompt)
     }
 
     @Test

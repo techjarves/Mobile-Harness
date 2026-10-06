@@ -63,7 +63,11 @@ internal object AntigravityEventParser {
                     val name = antigravityToolDisplayName(rawName)
                     val detail = antigravityToolDetail(step, rawName).ifBlank { name }
                     if (step.optString("state") == "DONE") {
-                        AntigravityParsedEvent.ToolCompleted(name, detail)
+                        val output = step.optJSONObject("tool_info")
+                            ?.optString("output")
+                            ?.takeIf(String::isNotBlank)
+                            ?.let(::antigravityToolOutput)
+                        AntigravityParsedEvent.ToolCompleted(name, output ?: detail)
                     } else {
                         AntigravityParsedEvent.ToolStarted(name, detail)
                     }
@@ -131,6 +135,16 @@ private fun redactToolDetail(value: String): String = value
     .replace(Regex("\\s+"), " ")
     .trim()
     .take(500)
+
+private fun antigravityToolOutput(value: String): String {
+    val redacted = value
+        .replace(Regex("(?i)(api[_-]?key|token|secret|password)(\\s*[=:]\\s*)([^\\s'\"]+)"), "$1$2••••")
+        .replace(Regex("(?i)(authorization:\\s*bearer\\s+)[^\\s'\"]+"), "$1••••")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .trim()
+    return if (redacted.length <= 6_000) redacted else "…\n" + redacted.takeLast(6_000)
+}
 
 /** Official Antigravity CLI bridge. OAuth and credentials remain owned by agy. */
 private const val HELLO_TIMEOUT_MILLIS = 90_000L
@@ -563,6 +577,10 @@ private fun MutableList<String>.addAntigravitySelection(model: String, effort: S
 internal fun antigravityWorkspacePrompt(projectSlug: String, prompt: String): String = """
     <pocketdev_workspace>
     The active project workspace is /workspace/$projectSlug. Create, edit, read, run, and build project files only inside this directory. Do not create project output under ~/.gemini/antigravity-cli/scratch or any other scratch directory.
+
+    For Android projects, never use plain `gradle build` or start a Gradle daemon. Build only the debug APK with:
+    `gradle -Dorg.gradle.jvmargs= --no-daemon --max-workers=2 --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug --console=plain --stacktrace`
+    Antigravity does not stream output from a foreground shell command until that command exits. For an Android build or another command likely to exceed 30 seconds, start it with `nohup sh -c`, redirect stdout and stderr to a uniquely named file under /tmp, write its exit code to a companion status file, and return immediately. Poll the log and status file about every 10 seconds with short commands, report useful new output, and stop polling when the status file appears. Treat a nonzero status as failure. Remove the temporary log and status files after reading the final result. Never wait silently on a long foreground command.
     </pocketdev_workspace>
 
     $prompt
