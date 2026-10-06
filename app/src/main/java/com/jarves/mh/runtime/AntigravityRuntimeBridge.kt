@@ -609,9 +609,12 @@ internal fun antigravityWorkspacePrompt(projectSlug: String, prompt: String): St
     <pocketdev_workspace>
     The active project workspace is /workspace/$projectSlug. Create, edit, read, run, and build project files only inside this directory. Do not create project output under ~/.gemini/antigravity-cli/scratch or any other scratch directory.
 
-    For Android projects, never use plain `gradle build` or start a Gradle daemon. Build only the debug APK with:
-    `timeout 5m gradle -Dorg.gradle.jvmargs= --no-daemon --max-workers=2 --offline --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug --console=plain --stacktrace`
-    PocketDev bundles the standard Android dependencies locally, so always try this offline command first. If and only if Gradle finishes with a clear missing-cached-dependency error, retry once without `--offline`, retaining the five-minute timeout and all other flags. Do not retry a timed-out or resource-failed build unchanged.
+    For Android projects, never use plain `gradle build` or start a Gradle daemon. Build only the debug APK. First check whether `app/build/outputs/apk/debug/` already contains an APK.
+    - For a first build with no existing debug APK, allow dependency resolution and use:
+      `timeout 15m gradle -Dorg.gradle.jvmargs= --no-daemon --max-workers=2 --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug --console=plain --stacktrace`
+    - For a later build with an existing debug APK, prefer the cached fast path:
+      `timeout 5m gradle -Dorg.gradle.jvmargs= --no-daemon --max-workers=2 --offline --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug --console=plain --stacktrace`
+    PocketDev bundles the standard Android dependencies locally. If and only if the cached build finishes with a clear missing-cached-dependency error, retry once online with `timeout 15m`, removing only `--offline` and retaining all other flags. Do not retry a timed-out or resource-failed build unchanged.
     Antigravity does not stream output from a foreground shell command until that command exits. Start the optimized Android build with `run_command` normally; do not use `nohup`, shell backgrounding, or a detached process because those processes do not survive PocketDev's proot command boundary. If Antigravity moves the command into a managed task, immediately use `manage_task` to check its status and obtain its log path. Poll that managed task and tail its log with short commands about every 10 seconds so the user receives progress, then read the final output and exit status. Never wait silently on a long foreground command.
     </pocketdev_workspace>
 
