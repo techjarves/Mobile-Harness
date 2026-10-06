@@ -200,6 +200,40 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun parsesTheRealCompletionSequenceEvenWhenFinishChunkIsPresent() {
+        val finishChunk = parser.parseLine(
+            sessionEvent(
+                "assistant/chunk",
+                JSONObject().put("turn", 1).put("step", 8).put(
+                    "chunk",
+                    JSONObject().put("type", "finish").put(
+                        "reason",
+                        JSONObject().put("kind", "stop"),
+                    ),
+                ),
+            ),
+        )
+        val turnEnd = parser.parseLine(
+            sessionEvent(
+                "turn/end",
+                JSONObject().put("turn", 1).put("reason", JSONObject().put("kind", "completed")),
+            ),
+        )
+        val idle = parser.parseLine(
+            notification(
+                "session.status",
+                JSONObject().put("sessionId", "session-1").put("status", "idle"),
+            ),
+        )
+        val shutdown = parser.parseLine("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}")
+
+        assertEquals(DshSdkProtocolEvent.Ignored, finishChunk)
+        assertEquals(DshSdkProtocolEvent.TurnCompleted, turnEnd)
+        assertEquals(DshSdkProtocolEvent.Status(false), idle)
+        assertEquals(DshSdkProtocolEvent.ShutdownAcknowledged, shutdown)
+    }
+
+    @Test
     fun nullJsonRpcErrorUsesUsefulFallback() {
         val failed = parser.parseLine(
             JSONObject()
