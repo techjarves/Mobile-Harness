@@ -644,7 +644,10 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         val runtime = installedRuntime()
-        if (isStackInstalled(stack)) return
+        // Android's installer also repairs executable bits, Gradle configuration,
+        // and compatibility links. Let it run when the bundle is already present;
+        // installAndroidToolchain avoids downloading complete artifacts again.
+        if (isStackInstalled(stack) && stack != DevStack.ANDROID) return
         applyStack(runtime.proot, stack, 0.05f, 0.95f, onProgress)
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_stack_ready, stack.localizedLabel(context)), 1f))
     }
@@ -734,8 +737,7 @@ class RuntimeInstaller(private val context: Context) {
     private fun removeAndroidGradleProperty() {
         val properties = File(rootfs, "root/.gradle/gradle.properties")
         if (!properties.isFile) return
-        val propertyPattern = Regex("^\\s*${Regex.escape(ANDROID_AAPT2_PROPERTY)}\\s*[:=].*$")
-        val remaining = properties.readLines().filterNot { propertyPattern.matches(it) }
+        val remaining = properties.readLines().filterNot(::isManagedAndroidGradleProperty)
         if (remaining.isEmpty()) {
             properties.delete()
         } else {
@@ -1074,16 +1076,26 @@ class RuntimeInstaller(private val context: Context) {
         writeAndroidGradleInitScript(runtimeRootfs)
         val gradleDir = File(runtimeRootfs, "root/.gradle").apply { mkdirs() }
         val properties = File(gradleDir, "gradle.properties")
-        val propertyPattern = Regex("^\\s*${Regex.escape(ANDROID_AAPT2_PROPERTY)}\\s*[:=].*$")
         val existingLines = properties.readTextOrNull()?.lineSequence()?.toList().orEmpty()
-        val expectedLine = "$ANDROID_AAPT2_PROPERTY=$ANDROID_AAPT2_GUEST_PATH"
-        val updatedLines = existingLines.filterNot { propertyPattern.matches(it) } + expectedLine
+        val managedLines = listOf(
+            "$ANDROID_AAPT2_PROPERTY=$ANDROID_AAPT2_GUEST_PATH",
+            "$GRADLE_JVMARGS_PROPERTY=-Xmx512m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8",
+            "$GRADLE_WORKERS_PROPERTY=2",
+            "$GRADLE_PARALLEL_PROPERTY=false",
+            "$KOTLIN_EXECUTION_PROPERTY=in-process",
+        )
+        val updatedLines = existingLines.filterNot(::isManagedAndroidGradleProperty) + managedLines
         if (existingLines == updatedLines) return
 
         val temporary = File(gradleDir, "gradle.properties.pocketdev.tmp")
         temporary.writeText(updatedLines.joinToString("\n").trimEnd() + "\n")
         Os.rename(temporary.absolutePath, properties.absolutePath)
     }
+
+    private fun isManagedAndroidGradleProperty(line: String): Boolean =
+        MANAGED_ANDROID_GRADLE_PROPERTIES.any { key ->
+            Regex("^\\s*${Regex.escape(key)}\\s*[:=].*$").matches(line)
+        }
 
     /**
      * One-time upgrade path from the old single-bundle layout: devices that already
@@ -1857,6 +1869,17 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val ANDROID_MAVEN_URL = "$ANDROID_ASSET_BASE/localMvnRepository.zip"
         private const val ANDROID_MAVEN_SHA256 = "3ba89892b43377d60743568d1b9004f172c2eab75dac059064f82dec497819f9"
         private const val ANDROID_AAPT2_PROPERTY = "android.aapt2FromMavenOverride"
+        private const val GRADLE_JVMARGS_PROPERTY = "org.gradle.jvmargs"
+        private const val GRADLE_WORKERS_PROPERTY = "org.gradle.workers.max"
+        private const val GRADLE_PARALLEL_PROPERTY = "org.gradle.parallel"
+        private const val KOTLIN_EXECUTION_PROPERTY = "kotlin.compiler.execution.strategy"
+        private val MANAGED_ANDROID_GRADLE_PROPERTIES = setOf(
+            ANDROID_AAPT2_PROPERTY,
+            GRADLE_JVMARGS_PROPERTY,
+            GRADLE_WORKERS_PROPERTY,
+            GRADLE_PARALLEL_PROPERTY,
+            KOTLIN_EXECUTION_PROPERTY,
+        )
         private const val ANDROID_AAPT2_GUEST_PATH = "/root/android-sdk/build-tools/35.0.0/aapt2"
         private const val ANDROID_AAPT2_HOST_PATH = "root/android-sdk/build-tools/35.0.0/aapt2"
         private val CLAUDE_VERSION_PATTERN = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")

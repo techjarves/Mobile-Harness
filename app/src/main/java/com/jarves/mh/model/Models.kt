@@ -163,6 +163,13 @@ data class ProviderProfile(
 
 enum class ProjectKind { PROJECT, QUICK_PROJECT }
 
+enum class ProjectType { GENERAL, ANDROID }
+
+enum class AndroidTemplate(val label: String) {
+    COMPOSE("Jetpack Compose"),
+    XML("Kotlin + XML"),
+}
+
 data class Project(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
@@ -172,6 +179,8 @@ data class Project(
     val rootPath: String = "",
     val updatedAtMillis: Long = System.currentTimeMillis(),
     val kind: ProjectKind = ProjectKind.PROJECT,
+    val type: ProjectType = ProjectType.GENERAL,
+    val androidTemplate: AndroidTemplate? = null,
 ) {
     val formattedUpdatedAt: String
         get() {
@@ -230,6 +239,8 @@ data class WorkspaceEntry(
     val isDirectory: Boolean,
     val depth: Int,
     val sizeBytes: Long = 0,
+    /** Null until the directory's direct children have been counted off the UI thread. */
+    val childCount: Int? = null,
 )
 
 enum class RiskLevel { SAFE, REVIEW, HIGH }
@@ -295,6 +306,11 @@ sealed interface RuntimeEvent {
         val isFinal: Boolean = false,
     ) : RuntimeEvent
     data class ToolStarted(
+        override val sessionId: String,
+        val toolName: String,
+        val detail: String,
+    ) : RuntimeEvent
+    data class ToolProgress(
         override val sessionId: String,
         val toolName: String,
         val detail: String,

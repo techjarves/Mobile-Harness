@@ -110,6 +110,42 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun boundsLargeCumulativeReasoningToItsLatestContent() {
+        val hugePrefix = "old reasoning ".repeat(1_000)
+        parser.parseLine(
+            sessionEvent(
+                "assistant/chunk",
+                JSONObject().put("turn", 4).put("step", 1).put(
+                    "chunk",
+                    JSONObject().put("type", "reasoning-delta").put("index", 0).put("text", hugePrefix),
+                ),
+            ),
+        )
+        val latest = parser.parseLine(
+            sessionEvent(
+                "assistant/chunk",
+                JSONObject().put("turn", 4).put("step", 1).put(
+                    "chunk",
+                    JSONObject().put("type", "reasoning-delta").put("index", 0).put("text", "LATEST_MARKER"),
+                ),
+            ),
+        )
+
+        assertTrue(latest is DshSdkProtocolEvent.Reasoning)
+        latest as DshSdkProtocolEvent.Reasoning
+        assertTrue(latest.text.length <= 8_000)
+        assertTrue(latest.text.endsWith("LATEST_MARKER"))
+    }
+
+    @Test
+    fun compactsOnlyABoundedWindowOfLargeOutput() {
+        val compact = compactDshText("ignored".repeat(10_000) + "\n  useful   tail ", 100, 80)
+
+        assertTrue(compact.length <= 80)
+        assertTrue(compact.endsWith("useful tail"))
+    }
+
+    @Test
     fun parsesToolCallResultAndAssistantText() {
         val call = parser.parseLine(sessionEvent("tool/call", JSONObject()
             .put("callId", "call-1").put("name", "bash")
@@ -152,6 +188,17 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun recognizesRepeatedAssistantMessageBeforeParsingItsLargePayload() {
+        parser.parseLine(sessionEvent("assistant/chunk", JSONObject()
+            .put("turn", 1).put("step", 1).put("chunk", JSONObject()
+                .put("type", "text-delta").put("index", 0).put("text", "Done"))))
+        val repeated = """{"jsonrpc":"2.0","method":"session.event","params":{"event":{"type":"assistant/message","data":{"message":{"content":[]}}}}}"""
+
+        assertTrue(parser.consumeDuplicateAssistantMessage(repeated))
+        assertFalse(parser.consumeDuplicateAssistantMessage(repeated))
+    }
+
+    @Test
     fun normalTurnEndCountsAsCompletedActivity() {
         val completed = parser.parseLine(
             sessionEvent(
@@ -161,6 +208,40 @@ class DshSdkProtocolParserTest {
         )
 
         assertEquals(DshSdkProtocolEvent.TurnCompleted, completed)
+    }
+
+    @Test
+    fun parsesTheRealCompletionSequenceEvenWhenFinishChunkIsPresent() {
+        val finishChunk = parser.parseLine(
+            sessionEvent(
+                "assistant/chunk",
+                JSONObject().put("turn", 1).put("step", 8).put(
+                    "chunk",
+                    JSONObject().put("type", "finish").put(
+                        "reason",
+                        JSONObject().put("kind", "stop"),
+                    ),
+                ),
+            ),
+        )
+        val turnEnd = parser.parseLine(
+            sessionEvent(
+                "turn/end",
+                JSONObject().put("turn", 1).put("reason", JSONObject().put("kind", "completed")),
+            ),
+        )
+        val idle = parser.parseLine(
+            notification(
+                "session.status",
+                JSONObject().put("sessionId", "session-1").put("status", "idle"),
+            ),
+        )
+        val shutdown = parser.parseLine("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}")
+
+        assertEquals(DshSdkProtocolEvent.Ignored, finishChunk)
+        assertEquals(DshSdkProtocolEvent.TurnCompleted, turnEnd)
+        assertEquals(DshSdkProtocolEvent.Status(false), idle)
+        assertEquals(DshSdkProtocolEvent.ShutdownAcknowledged, shutdown)
     }
 
     @Test

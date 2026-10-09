@@ -77,9 +77,11 @@ class RuntimeExecutionService : Service() {
             }
             else -> {
                 taskRunning = true
+                val detail = intent?.getStringExtra(EXTRA_DETAIL)?.takeIf(String::isNotBlank)
+                    ?: AppStrings.get(this, R.string.rt_exec_working_in, projectName)
                 startForeground(
                     RUNNING_NOTIFICATION_ID,
-                    runningNotification(AppStrings.get(this, R.string.rt_exec_working_in, projectName), includeStop = canStop),
+                    runningNotification(detail, includeStop = canStop),
                 )
                 acquireWakeLock()
             }

@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -110,7 +109,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -142,6 +141,9 @@ fun SettingsScreen(
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
+    onRefreshDiagnostics: () -> Unit = {},
+    onStopInactiveProcesses: () -> Unit = {},
+    onClearRuntimeCache: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -233,6 +235,27 @@ fun SettingsScreen(
                         ModernThemeChoice(stringResource(R.string.theme_light), Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
                     }
+                }
+            }
+
+            item {
+                SettingsAccordion(
+                    title = stringResource(R.string.diagnostics_title),
+                    subtitle = stringResource(R.string.diagnostics_subtitle),
+                    icon = Icons.Default.Memory,
+                    expanded = expanded == SettingsSection.DIAGNOSTICS,
+                    onClick = {
+                        val opening = expanded != SettingsSection.DIAGNOSTICS
+                        toggle(SettingsSection.DIAGNOSTICS)
+                        if (opening) onRefreshDiagnostics()
+                    },
+                ) {
+                    DeveloperDiagnosticsContent(
+                        state = state,
+                        onRefresh = onRefreshDiagnostics,
+                        onStopInactiveProcesses = onStopInactiveProcesses,
+                        onClearRuntimeCache = onClearRuntimeCache,
+                    )
                 }
             }
 
@@ -502,6 +525,104 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun DeveloperDiagnosticsContent(
+    state: AppUiState,
+    onRefresh: () -> Unit,
+    onStopInactiveProcesses: () -> Unit,
+    onClearRuntimeCache: () -> Unit,
+) {
+    val diagnostics = state.diagnostics
+    val busy = state.isRunning || state.projectTerminalRunning || state.androidBuildRunning
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        TextButton(onClick = onRefresh, enabled = !diagnostics.loading) {
+            if (diagnostics.loading) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Default.Refresh, null, Modifier.size(17.dp))
+            }
+            Spacer(Modifier.width(6.dp))
+            Text(stringResource(R.string.diagnostics_refresh))
+        }
+    }
+    DiagnosticsCard(stringResource(R.string.diagnostics_memory)) {
+        RuntimeInfoRow(stringResource(R.string.diagnostics_app_memory), formatDiagnosticBytes(diagnostics.appPssBytes))
+        RuntimeInfoRow(
+            stringResource(R.string.diagnostics_java_heap),
+            "${formatDiagnosticBytes(diagnostics.javaHeapBytes)} / ${formatDiagnosticBytes(diagnostics.javaHeapMaxBytes)}",
+        )
+    }
+    DiagnosticsCard(stringResource(R.string.diagnostics_processes)) {
+        Text(
+            if (diagnostics.activeProcesses.isEmpty()) stringResource(R.string.diagnostics_no_processes)
+            else diagnostics.activeProcesses.joinToString(" · "),
+            fontSize = 13.sp,
+            color = if (diagnostics.activeProcesses.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(onClick = onStopInactiveProcesses, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.diagnostics_stop_inactive))
+        }
+    }
+    DiagnosticsCard(stringResource(R.string.diagnostics_buffers)) {
+        RuntimeInfoRow(stringResource(R.string.diagnostics_messages), diagnostics.messageCount.toString())
+        RuntimeInfoRow(stringResource(R.string.diagnostics_live_activity), diagnostics.liveActivityCount.toString())
+        RuntimeInfoRow(stringResource(R.string.diagnostics_terminal_buffer), formatDiagnosticBytes(diagnostics.terminalBufferBytes))
+        RuntimeInfoRow(stringResource(R.string.diagnostics_build_log), formatDiagnosticBytes(diagnostics.buildLogBytes))
+        RuntimeInfoRow(stringResource(R.string.diagnostics_logcat_lines), diagnostics.logcatLines.toString())
+        RuntimeInfoRow(stringResource(R.string.diagnostics_file_entries), diagnostics.fileEntries.toString())
+    }
+    DiagnosticsCard(stringResource(R.string.diagnostics_runtime_cache)) {
+        RuntimeInfoRow(stringResource(R.string.diagnostics_cached_output), formatDiagnosticBytes(diagnostics.runtimeCacheBytes))
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(
+            onClick = onClearRuntimeCache,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(stringResource(R.string.diagnostics_clear_cache))
+        }
+        if (busy) {
+            Text(
+                stringResource(R.string.diagnostics_cache_disabled),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    DiagnosticsCard(stringResource(R.string.diagnostics_recent_exit)) {
+        Text(
+            diagnostics.recentExit ?: stringResource(R.string.diagnostics_no_recent_exit),
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun DiagnosticsCard(title: String, content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            content()
+        }
+    }
+}
+
+private fun formatDiagnosticBytes(bytes: Long): String = when {
+    bytes >= 1_048_576L -> "%.1f MB".format(bytes / 1_048_576.0)
+    bytes >= 1_024L -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "$bytes B"
 }
 
 private fun formatTransferMb(bytes: Long): String = "%.1f MB".format(bytes.coerceAtLeast(0L) / 1_048_576.0)

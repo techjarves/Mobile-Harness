@@ -2,10 +2,12 @@ package com.jarves.mh
 
 import android.content.Context
 import android.os.Bundle
+import android.content.ComponentCallbacks2
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -17,7 +19,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.LayoutDirection.Ltr
 import androidx.compose.ui.unit.LayoutDirection.Rtl
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.ui.LocaleHelper
 import com.jarves.mh.ui.MainViewModel
@@ -33,12 +34,13 @@ class MainActivity : ComponentActivity() {
         appliedLanguageCode = AppStrings.languageCode(newBase)
         super.attachBaseContext(AppStrings.context(newBase))
     }
+    private val mainViewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val vm: MainViewModel = viewModel()
+            val vm = mainViewModel
             val state by vm.state.collectAsStateWithLifecycle()
             LaunchedEffect(state.languageCode) {
                 if (state.languageCode != appliedLanguageCode) recreate()
@@ -60,6 +62,14 @@ class MainActivity : ComponentActivity() {
                     PocketDevApp(vm)
                 }
             }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            mainViewModel.releaseMemoryCaches()
         }
     }
 }

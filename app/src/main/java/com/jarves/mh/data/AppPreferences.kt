@@ -6,6 +6,8 @@ import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
+import com.jarves.mh.model.ProjectType
+import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
@@ -252,6 +254,8 @@ class AppPreferences(private val context: Context) {
                 put("rootPath", p.rootPath)
                 put("updatedAtMillis", p.updatedAtMillis)
                 put("kind", p.kind.name)
+                put("type", p.type.name)
+                p.androidTemplate?.let { put("androidTemplate", it.name) }
             })
         }
         preferences.edit().putString("projects_json", arr.toString()).apply()
@@ -301,6 +305,12 @@ class AppPreferences(private val context: Context) {
                         "QUICK_CHAT" -> ProjectKind.QUICK_PROJECT
                         else -> runCatching { ProjectKind.valueOf(storedKind) }
                             .getOrDefault(ProjectKind.PROJECT)
+                    },
+                    type = runCatching {
+                        ProjectType.valueOf(obj.optString("type", ProjectType.GENERAL.name))
+                    }.getOrDefault(ProjectType.GENERAL),
+                    androidTemplate = obj.optString("androidTemplate").takeIf(String::isNotBlank)?.let {
+                        runCatching { AndroidTemplate.valueOf(it) }.getOrNull()
                     },
                 )
             }

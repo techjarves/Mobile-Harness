@@ -41,5 +41,16 @@ class ProviderApiClientTest {
             (0 until array.length()).map(array::getString)
         })
         assertFalse(routing.getBoolean("allow_fallbacks"))
+        assertEquals(8, body.getInt("max_tokens"))
+    }
+
+    @Test
+    fun chatAndAnthropicCompatibleProbesUseProviderSafeTokenLimit() {
+        val client = ProviderApiClient()
+        val chat = JSONObject(client.validationBody("chat-model", ProviderProtocol.OPENAI_CHAT))
+        val anthropic = JSONObject(client.validationBody("claude-model", ProviderProtocol.ANTHROPIC))
+
+        assertEquals(8, chat.getInt("max_tokens"))
+        assertEquals(8, anthropic.getInt("max_tokens"))
     }
 }

@@ -64,6 +64,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -75,6 +76,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -84,6 +87,15 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.HealthAndSafety
+import androidx.compose.material.icons.filled.InstallMobile
+import androidx.compose.material.icons.filled.Launch
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
@@ -112,12 +124,15 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -127,6 +142,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
@@ -134,6 +150,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -146,6 +163,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -164,6 +184,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -195,6 +218,8 @@ import com.jarves.mh.model.DiffLine
 import com.jarves.mh.model.DiffLineType
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
+import com.jarves.mh.model.ProjectType
+import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
@@ -207,6 +232,14 @@ import com.jarves.mh.runtime.RuntimeExecutionService
 import com.jarves.mh.runtime.RuntimeSetupService
 import com.jarves.mh.runtime.supportsArm64Runtime
 import com.jarves.mh.runtime.AntigravityAuthStatus
+import com.jarves.mh.runtime.AndroidAction
+import com.jarves.mh.runtime.AndroidBuildIssue
+import com.jarves.mh.runtime.AndroidBuildStage
+import com.jarves.mh.runtime.AndroidHealthCheck
+import com.jarves.mh.runtime.AndroidHealthFix
+import com.jarves.mh.runtime.AndroidHealthStatus
+import com.jarves.mh.runtime.AndroidLogLevel
+import com.jarves.mh.runtime.AndroidLogLine
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -357,10 +390,19 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
             onStop = viewModel::stopTask,
+            onSteerFollowUp = viewModel::steerQueuedFollowUp,
+            onRemoveFollowUp = viewModel::removeQueuedFollowUp,
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
+            onLoadProjectDirectory = viewModel::loadProjectDirectory,
             onOpenFile = viewModel::openFile,
             onCloseFile = viewModel::closeFile,
+            onBeginFileEdit = viewModel::beginFileEdit,
+            onUpdateFileDraft = viewModel::updateFileDraft,
+            onCancelFileEdit = viewModel::cancelFileEdit,
+            onSaveFile = viewModel::saveOpenedFile,
+            onReloadFile = viewModel::reloadOpenedFile,
+            onDismissFileConflict = viewModel::dismissFileConflict,
             onUndoChanges = viewModel::undoLastChanges,
             onKeepChanges = viewModel::keepLastChanges,
             onUndoFileChange = viewModel::undoFileChange,
@@ -383,6 +425,25 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRemoveAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = viewModel::openChatAttachment,
             onBuildAndRunAndroid = viewModel::buildAndRunAndroidApp,
+            onAndroidAction = viewModel::performAndroidAction,
+            onRefreshAndroidDashboard = viewModel::refreshAndroidDashboard,
+            onShareAndroidApk = viewModel::shareAndroidApk,
+            onSaveAndroidApk = viewModel::saveAndroidApk,
+            onOpenAndroidAppDetails = viewModel::openInstalledAndroidAppDetails,
+            onUninstallAndroidApp = viewModel::uninstallAndroidApp,
+            onOpenAndroidIssue = viewModel::openAndroidIssue,
+            onAndroidHealthFix = viewModel::performAndroidHealthFix,
+            onRefreshAndroidHealth = viewModel::refreshAndroidHealth,
+            onStartAndroidLogcat = viewModel::startAndroidLogcat,
+            onStopAndroidLogcat = viewModel::stopAndroidLogcat,
+            onToggleAndroidLogcatPause = viewModel::toggleAndroidLogcatPause,
+            onClearAndroidLogcat = viewModel::clearAndroidLogcat,
+            onAndroidLogcatQuery = viewModel::setAndroidLogcatQuery,
+            onAndroidLogcatLevel = viewModel::setAndroidLogcatLevel,
+            onOpenAndroidLogLine = viewModel::openAndroidLogLine,
+            onCancelAndroidBuild = viewModel::cancelAndroidBuild,
+            onCleanAndroid = viewModel::cleanAndroidProject,
+            onInstallAndroidTools = { viewModel.installDevStack(DevStack.ANDROID) },
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -2419,6 +2480,7 @@ private fun RootScreenHost(
                     listState = projectsListState,
                     onOpen = viewModel::openProject,
                     onCreate = viewModel::createProject,
+                    onCreateAndroid = viewModel::createAndroidProject,
                     onCreateQuickProject = viewModel::createQuickProject,
                     onImportZip = viewModel::importZipProject,
                     onCloneGit = viewModel::clonePublicGitRepository,
@@ -2488,6 +2550,9 @@ private fun RootScreenHost(
                     initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
+                    onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
+                    onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
+                    onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
                 )
             }
         }
@@ -3442,6 +3507,7 @@ private fun ProjectsScreen(
     listState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
     onOpen: (Project) -> Unit,
     onCreate: (String) -> Unit,
+    onCreateAndroid: (String, AndroidTemplate) -> Unit,
     onCreateQuickProject: () -> Unit,
     onImportZip: (Uri) -> Unit,
     onCloneGit: (String) -> Unit,
@@ -3465,6 +3531,7 @@ private fun ProjectsScreen(
     var gitUrl by rememberSaveable { mutableStateOf("") }
     var repositorySearch by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
+    var androidTemplate by rememberSaveable { mutableStateOf<AndroidTemplate?>(null) }
     val projects = state.projects
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -3708,6 +3775,7 @@ private fun ProjectsScreen(
                         project = project,
                         taskRunning = state.isRunning && state.activeProject?.id == project.id,
                         terminalRunning = state.projectTerminalRunning && state.activeProject?.id == project.id,
+                        buildRunning = state.androidBuildRunning && state.activeProject?.id == project.id,
                         onOpen = { onOpen(project) },
                         onRename = { onRenameProject(project.id, it) },
                         onDelete = { onDeleteProject(project.id) },
@@ -3718,10 +3786,46 @@ private fun ProjectsScreen(
     }
     if (showCreate) AlertDialog(
         onDismissRequest = { showCreate = false },
-        title = { Text(stringResource(R.string.ws_create_starter_project)) },
+        title = { Text("Create a project") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.ws_project_name)) }, singleLine = true)
+                Text(stringResource(R.string.project_type), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AssistChip(
+                        onClick = { androidTemplate = null },
+                        label = { Text(stringResource(R.string.project_type_general)) },
+                        leadingIcon = { if (androidTemplate == null) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
+                    )
+                    AssistChip(
+                        onClick = { androidTemplate = AndroidTemplate.COMPOSE },
+                        label = { Text(stringResource(R.string.project_type_compose)) },
+                        leadingIcon = { if (androidTemplate == AndroidTemplate.COMPOSE) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
+                    )
+                    AssistChip(
+                        onClick = { androidTemplate = AndroidTemplate.XML },
+                        label = { Text(stringResource(R.string.project_type_xml)) },
+                        leadingIcon = { if (androidTemplate == AndroidTemplate.XML) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
+                    )
+                }
+                Text(
+                    stringResource(
+                        when (androidTemplate) {
+                            AndroidTemplate.COMPOSE -> R.string.project_type_compose_desc
+                            AndroidTemplate.XML -> R.string.project_type_xml_desc
+                            null -> R.string.project_type_general_desc
+                        },
+                    ),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (androidTemplate != null) {
+                    Text(
+                        "Kotlin · min SDK 28 · target SDK 36",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (name.isNotBlank()) {
                     Text(
                         stringResource(R.string.ws_terminal_folder, "/workspace/${projectSlug(name)}"),
@@ -3732,7 +3836,17 @@ private fun ProjectsScreen(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onCreate(name); showCreate = false; name = "" }, enabled = name.isNotBlank()) { Text(stringResource(R.string.ws_create)) } },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    androidTemplate?.let { onCreateAndroid(name, it) } ?: onCreate(name)
+                    showCreate = false
+                    name = ""
+                    androidTemplate = null
+                },
+                enabled = name.isNotBlank(),
+            ) { Text(stringResource(R.string.ws_create)) }
+        },
         dismissButton = { TextButton(onClick = { showCreate = false }) { Text(stringResource(R.string.action_cancel)) } },
     )
     if (showGitDialog) AlertDialog(
@@ -4013,13 +4127,12 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
     }
 }
 
-
-
 @Composable
 private fun ProjectCard(
     project: Project,
     taskRunning: Boolean,
     terminalRunning: Boolean,
+    buildRunning: Boolean,
     onOpen: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
@@ -4031,7 +4144,12 @@ private fun ProjectCard(
     Card(Modifier.fillMaxWidth().clickable(onClick = onOpen), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Icon(Icons.Default.Folder, null, Modifier.padding(13.dp), tint = PocketOrange)
+                Icon(
+                    if (project.type == ProjectType.ANDROID) Icons.Default.Android else Icons.Default.Folder,
+                    null,
+                    Modifier.padding(13.dp),
+                    tint = if (project.type == ProjectType.ANDROID) PocketGreen else PocketOrange,
+                )
             }
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
@@ -4043,12 +4161,16 @@ private fun ProjectCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (taskRunning || terminalRunning) {
+                    if (taskRunning || terminalRunning || buildRunning) {
                         Spacer(Modifier.width(8.dp))
                         CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(5.dp))
                         Text(
-                            if (taskRunning) stringResource(R.string.ws_task_running) else stringResource(R.string.ws_terminal_running),
+                            when {
+                                taskRunning -> stringResource(R.string.ws_task_running)
+                                buildRunning -> "Android build"
+                                else -> stringResource(R.string.ws_terminal_running)
+                            },
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -4192,10 +4314,19 @@ private fun WorkspaceScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
+    onSteerFollowUp: (String) -> Unit,
+    onRemoveFollowUp: (String) -> Unit,
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
+    onLoadProjectDirectory: (String) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onCloseFile: () -> Unit,
+    onBeginFileEdit: () -> Unit,
+    onUpdateFileDraft: (String) -> Unit,
+    onCancelFileEdit: () -> Unit,
+    onSaveFile: () -> Unit,
+    onReloadFile: () -> Unit,
+    onDismissFileConflict: () -> Unit,
     onUndoChanges: () -> Unit,
     onKeepChanges: () -> Unit,
     onUndoFileChange: (String) -> Unit,
@@ -4213,19 +4344,41 @@ private fun WorkspaceScreen(
     onTerminalConfirm: () -> Unit,
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
-    onExportProject: (Uri) -> Unit,
+    onExportProject: (Uri, ExportSelection) -> Unit,
     onAddAttachments: (List<Uri>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onBuildAndRunAndroid: () -> Unit,
+    onAndroidAction: (AndroidAction) -> Unit,
+    onRefreshAndroidDashboard: () -> Unit,
+    onShareAndroidApk: () -> Unit,
+    onSaveAndroidApk: (Uri) -> Unit,
+    onOpenAndroidAppDetails: () -> Unit,
+    onUninstallAndroidApp: () -> Unit,
+    onOpenAndroidIssue: (AndroidBuildIssue) -> Unit,
+    onAndroidHealthFix: (AndroidHealthFix) -> Unit,
+    onRefreshAndroidHealth: () -> Unit,
+    onStartAndroidLogcat: () -> Unit,
+    onStopAndroidLogcat: () -> Unit,
+    onToggleAndroidLogcatPause: () -> Unit,
+    onClearAndroidLogcat: () -> Unit,
+    onAndroidLogcatQuery: (String) -> Unit,
+    onAndroidLogcatLevel: (AndroidLogLevel) -> Unit,
+    onOpenAndroidLogLine: (AndroidLogLine) -> Unit,
+    onCancelAndroidBuild: () -> Unit,
+    onCleanAndroid: () -> Unit,
+    onInstallAndroidTools: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var pendingAndroidAction by remember { mutableStateOf<AndroidAction?>(null) }
+    var exportSelection by remember(state.activeProject?.id) { mutableStateOf(ExportSelection()) }
+    var exportSelectionMode by remember(state.activeProject?.id) { mutableStateOf(false) }
     val exportProjectLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
-        onResult = { uri -> if (uri != null) onExportProject(uri) },
+        onResult = { uri -> if (uri != null) onExportProject(uri, exportSelection) },
     )
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
@@ -4244,11 +4397,16 @@ private fun WorkspaceScreen(
         contract = ActivityResultContracts.StartActivityForResult(),
         onResult = {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()) {
-                onBuildAndRunAndroid()
+                pendingAndroidAction?.let(onAndroidAction)
             } else {
                 Toast.makeText(context, context.getString(R.string.ws_allow_app_installs), Toast.LENGTH_LONG).show()
             }
+            pendingAndroidAction = null
         },
+    )
+    val saveApkLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.android.package-archive"),
+        onResult = { uri -> if (uri != null) onSaveAndroidApk(uri) },
     )
     val chatListState = rememberLazyListState()
     var userScrolledUp by rememberSaveable { mutableStateOf(false) }
@@ -4292,22 +4450,66 @@ private fun WorkspaceScreen(
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     var showChats by rememberSaveable { mutableStateOf(false) }
+    var showAndroidBuild by rememberSaveable { mutableStateOf(false) }
     val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
+    val requestAndroidAction: (AndroidAction) -> Unit = { action ->
+        val mayInstall = action in setOf(AndroidAction.INSTALL, AndroidAction.RUN, AndroidAction.BUILD_AND_RUN)
+        if (mayInstall && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+            pendingAndroidAction = action
+            unknownAppsLauncher.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
+        } else {
+            onAndroidAction(action)
+        }
+    }
+
+    LaunchedEffect(state.projectExportSucceededAtMillis) {
+        if (state.projectExportSucceededAtMillis != null) {
+            exportSelectionMode = false
+            exportSelection = ExportSelection()
+        }
+    }
+
+    if (showAndroidBuild) {
+        AndroidDashboardScreen(
+            state = state,
+            onClose = { onStopAndroidLogcat(); showAndroidBuild = false },
+            onAction = requestAndroidAction,
+            onCancelBuild = onCancelAndroidBuild,
+            onRefresh = onRefreshAndroidDashboard,
+            onInstallTools = onInstallAndroidTools,
+            onShareApk = onShareAndroidApk,
+            onSaveApk = { state.androidApkInfo?.let { saveApkLauncher.launch(it.fileName) } },
+            onOpenAppDetails = onOpenAndroidAppDetails,
+            onUninstallApp = onUninstallAndroidApp,
+            onOpenIssue = { issue -> showAndroidBuild = false; onOpenAndroidIssue(issue) },
+            onHealthFix = onAndroidHealthFix,
+            onRefreshHealth = onRefreshAndroidHealth,
+            onStartLogcat = onStartAndroidLogcat,
+            onStopLogcat = onStopAndroidLogcat,
+            onToggleLogcatPause = onToggleAndroidLogcatPause,
+            onClearLogcat = onClearAndroidLogcat,
+            onLogcatQuery = onAndroidLogcatQuery,
+            onLogcatLevel = onAndroidLogcatLevel,
+            onOpenLogLine = { line -> showAndroidBuild = false; onOpenAndroidLogLine(line) },
+        )
+        return
+    }
 
     // If a file is open, show the FileViewerScreen on top
-    if (state.openedFilePath != null) {
-        BackHandler(onBack = {
-            onCloseFile()
-            selectedTab = WorkspaceTab.FILES
-        })
+    if (state.openedFile != null) {
         FileViewerScreen(
-            filePath = state.openedFilePath,
-            content = state.openedFileContent,
-            loading = state.fileContentLoading,
+            file = state.openedFile,
+            editingAllowed = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
             onClose = {
                 onCloseFile()
                 selectedTab = WorkspaceTab.FILES
             },
+            onBeginEdit = onBeginFileEdit,
+            onDraftChange = onUpdateFileDraft,
+            onCancelEdit = onCancelFileEdit,
+            onSave = onSaveFile,
+            onReload = onReloadFile,
+            onDismissConflict = onDismissFileConflict,
         )
         return
     }
@@ -4381,20 +4583,8 @@ private fun WorkspaceScreen(
                 actions = {
                     if (isAndroidProject) {
                         IconButton(
-                            onClick = {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                                    !context.packageManager.canRequestPackageInstalls()) {
-                                    unknownAppsLauncher.launch(
-                                        Intent(
-                                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                            Uri.parse("package:${context.packageName}"),
-                                        ),
-                                    )
-                                } else {
-                                    onBuildAndRunAndroid()
-                                }
-                            },
-                            enabled = !state.androidBuildRunning && !state.isRunning && !state.projectTerminalRunning,
+                            onClick = { showAndroidBuild = true },
+                            enabled = !state.isRunning && !state.projectTerminalRunning,
                         ) {
                             if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android))
@@ -4464,15 +4654,33 @@ private fun WorkspaceScreen(
                         onTerminalOpened()
                         onTerminalPrepare(command)
                     },
+                    queuedFollowUps = state.queuedFollowUps,
+                    onSteerFollowUp = onSteerFollowUp,
+                    onRemoveFollowUp = onRemoveFollowUp,
                 )
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
                     loading = state.filesLoading,
                     suggestedProjectRoot = state.suggestedProjectRoot,
                     onRefresh = onRefreshFiles,
+                    onLoadDirectory = onLoadProjectDirectory,
                     onOpenFile = onOpenFile,
                     onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
-                    onExport = {
+                    selectionMode = exportSelectionMode,
+                    exportSelection = exportSelection,
+                    exportRunning = state.projectExportRunning,
+                    exportEnabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+                    onEnterSelection = {
+                        exportSelection = ExportSelection()
+                        exportSelectionMode = true
+                    },
+                    onCancelSelection = {
+                        exportSelectionMode = false
+                        exportSelection = ExportSelection()
+                    },
+                    onToggleSelection = { entry -> exportSelection = exportSelection.toggled(entry.path, entry.isDirectory) },
+                    onSelectAll = { exportSelection = ExportSelection() },
+                    onDownloadSelection = {
                         exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
                     },
                 )
@@ -4564,20 +4772,719 @@ private fun ChatSwitcherDialog(
     )
 }
 
+private enum class AndroidDashboardSection { OVERVIEW, BUILD, LOGCAT, HEALTH }
+
+@Composable
+private fun androidStageLabel(stage: AndroidBuildStage): String = stringResource(
+    when (stage) {
+        AndroidBuildStage.IDLE -> R.string.android_stage_idle
+        AndroidBuildStage.PREPARING -> R.string.android_stage_preparing
+        AndroidBuildStage.RESOLVING -> R.string.android_stage_resolving
+        AndroidBuildStage.COMPILING -> R.string.android_stage_compiling
+        AndroidBuildStage.RESOURCES -> R.string.android_stage_resources
+        AndroidBuildStage.PACKAGING -> R.string.android_stage_packaging
+        AndroidBuildStage.FINDING_APK -> R.string.android_stage_finding_apk
+        AndroidBuildStage.INSTALLING -> R.string.android_stage_installing
+        AndroidBuildStage.LAUNCHING -> R.string.android_stage_launching
+        AndroidBuildStage.COMPLETE -> R.string.android_stage_complete
+        AndroidBuildStage.FAILED -> R.string.android_stage_failed
+        AndroidBuildStage.CANCELLING -> R.string.android_stage_cancelling
+        AndroidBuildStage.CANCELLED -> R.string.android_stage_cancelled
+    },
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AndroidDashboardScreen(
+    state: AppUiState,
+    onClose: () -> Unit,
+    onAction: (AndroidAction) -> Unit,
+    onCancelBuild: () -> Unit,
+    onRefresh: () -> Unit,
+    onInstallTools: () -> Unit,
+    onShareApk: () -> Unit,
+    onSaveApk: () -> Unit,
+    onOpenAppDetails: () -> Unit,
+    onUninstallApp: () -> Unit,
+    onOpenIssue: (AndroidBuildIssue) -> Unit,
+    onHealthFix: (AndroidHealthFix) -> Unit,
+    onRefreshHealth: () -> Unit,
+    onStartLogcat: () -> Unit,
+    onStopLogcat: () -> Unit,
+    onToggleLogcatPause: () -> Unit,
+    onClearLogcat: () -> Unit,
+    onLogcatQuery: (String) -> Unit,
+    onLogcatLevel: (AndroidLogLevel) -> Unit,
+    onOpenLogLine: (AndroidLogLine) -> Unit,
+) {
+    BackHandler(onBack = onClose)
+    val clipboard = LocalClipboardManager.current
+    var section by rememberSaveable { mutableStateOf(AndroidDashboardSection.OVERVIEW) }
+    var showBuildMenu by remember { mutableStateOf(false) }
+    var showRawLog by rememberSaveable { mutableStateOf(false) }
+    val liveElapsedSeconds = state.androidBuildStartedAtMillis?.let { rememberLiveElapsedSeconds(it) }
+    LaunchedEffect(Unit) { onRefresh() }
+    LaunchedEffect(section) { onStopLogcat() }
+    DisposableEffect(Unit) { onDispose(onStopLogcat) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(stringResource(R.string.android_screen_title), fontWeight = FontWeight.Bold)
+                },
+                navigationIcon = {
+                    IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.close)) }
+                },
+                actions = {
+                    IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, stringResource(R.string.refresh)) }
+                    Box {
+                        IconButton(onClick = { showBuildMenu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.more_options)) }
+                        DropdownMenu(expanded = showBuildMenu, onDismissRequest = { showBuildMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.force_rebuild)) },
+                                leadingIcon = { Icon(Icons.Default.Build, null) },
+                                enabled = !state.androidBuildRunning,
+                                onClick = { showBuildMenu = false; onAction(AndroidAction.FORCE_BUILD) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.clean_project)) },
+                                leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                enabled = !state.androidBuildRunning,
+                                onClick = { showBuildMenu = false; onAction(AndroidAction.CLEAN) },
+                            )
+                            if (state.androidApkInfo != null) {
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.install)) },
+                                    leadingIcon = { Icon(Icons.Default.InstallMobile, null) },
+                                    enabled = !state.androidBuildRunning,
+                                    onClick = { showBuildMenu = false; onAction(AndroidAction.INSTALL) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.share)) },
+                                    leadingIcon = { Icon(Icons.Default.Share, null) },
+                                    onClick = { showBuildMenu = false; onShareApk() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.save_copy)) },
+                                    leadingIcon = { Icon(Icons.Default.Download, null) },
+                                    onClick = { showBuildMenu = false; onSaveApk() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.copy_path)) },
+                                    leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                                    onClick = {
+                                        state.androidApkInfo?.path?.let { clipboard.setText(AnnotatedString(it)) }
+                                        showBuildMenu = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.app_info)) },
+                                    leadingIcon = { Icon(Icons.Default.Info, null) },
+                                    enabled = state.androidApkInfo?.installed == true,
+                                    onClick = { showBuildMenu = false; onOpenAppDetails() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.uninstall)) },
+                                    leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                    enabled = state.androidApkInfo?.installed == true,
+                                    onClick = { showBuildMenu = false; onUninstallApp() },
+                                )
+                            }
+                        }
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            TabRow(selectedTabIndex = if (section == AndroidDashboardSection.HEALTH) 1 else 0) {
+                Tab(
+                    selected = section != AndroidDashboardSection.HEALTH,
+                    onClick = { section = AndroidDashboardSection.OVERVIEW },
+                    text = { Text(stringResource(R.string.android_build_tab)) },
+                )
+                Tab(
+                    selected = section == AndroidDashboardSection.HEALTH,
+                    onClick = { section = AndroidDashboardSection.HEALTH },
+                    text = { Text(stringResource(R.string.android_health_tab)) },
+                )
+            }
+
+            when (section) {
+                AndroidDashboardSection.OVERVIEW -> ProfessionalAndroidOverview(
+                    state = state,
+                    liveElapsedSeconds = liveElapsedSeconds,
+                    showRawLog = showRawLog,
+                    onToggleRawLog = { showRawLog = !showRawLog },
+                    onAction = onAction,
+                    onCancelBuild = onCancelBuild,
+                    onInstallTools = onInstallTools,
+                    onOpenIssue = onOpenIssue,
+                )
+                AndroidDashboardSection.BUILD -> {
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        item {
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Android, null, tint = PocketGreen)
+                                        Spacer(Modifier.width(8.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(stringResource(R.string.build_progress), fontWeight = FontWeight.SemiBold)
+                                            Text(androidStageLabel(state.androidBuildStage), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            liveElapsedSeconds?.let { live ->
+                                                val seconds = if (state.androidBuildRunning) live.toLong() else {
+                                                    ((state.androidBuildFinishedAtMillis ?: System.currentTimeMillis()) -
+                                                        (state.androidBuildStartedAtMillis ?: System.currentTimeMillis())) / 1_000L
+                                                }.coerceAtLeast(0L)
+                                                Text(formatDuration(seconds), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                                    }
+                                    if (state.androidBuildRunning) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        listOf(
+                                            AndroidBuildStage.PREPARING, AndroidBuildStage.RESOLVING, AndroidBuildStage.COMPILING,
+                                            AndroidBuildStage.RESOURCES, AndroidBuildStage.PACKAGING, AndroidBuildStage.INSTALLING,
+                                            AndroidBuildStage.LAUNCHING, AndroidBuildStage.COMPLETE,
+                                        ).forEach { stage ->
+                                            val active = stage == state.androidBuildStage
+                                            Surface(
+                                                color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                                shape = RoundedCornerShape(50),
+                                            ) { Text(androidStageLabel(stage), Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 10.sp) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (DevStack.ANDROID !in state.installedDevStacks) {
+                            item {
+                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(stringResource(R.string.android_tools_required), color = MaterialTheme.colorScheme.onErrorContainer)
+                                        Button(onClick = onInstallTools) { Text(stringResource(R.string.install_android_tools)) }
+                                    }
+                                }
+                            }
+                        }
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = { onAction(AndroidAction.BUILD) },
+                                        enabled = !state.androidBuildRunning && DevStack.ANDROID in state.installedDevStacks,
+                                        modifier = Modifier.weight(1f),
+                                    ) { Icon(Icons.Default.Build, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.build)) }
+                                    OutlinedButton(
+                                        onClick = { onAction(AndroidAction.INSTALL) }, enabled = !state.androidBuildRunning && state.androidApkInfo != null,
+                                        modifier = Modifier.weight(1f),
+                                    ) { Icon(Icons.Default.InstallMobile, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.install)) }
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = { onAction(AndroidAction.RUN) }, enabled = !state.androidBuildRunning && state.androidApkInfo != null,
+                                        modifier = Modifier.weight(1f),
+                                    ) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.run)) }
+                                    Button(
+                                        onClick = { onAction(AndroidAction.BUILD_AND_RUN) },
+                                        enabled = !state.androidBuildRunning && DevStack.ANDROID in state.installedDevStacks,
+                                        modifier = Modifier.weight(1f),
+                                    ) { Icon(Icons.Default.Launch, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.build_and_run)) }
+                                }
+                                if (state.androidBuildRunning) {
+                                    OutlinedButton(onClick = onCancelBuild, modifier = Modifier.fillMaxWidth()) {
+                                        Icon(Icons.Default.Stop, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.cancel_operation))
+                                    }
+                                }
+                            }
+                        }
+                        if (state.androidBuildIssues.isNotEmpty()) {
+                            item { Text(stringResource(R.string.build_issues), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                            items(state.androidBuildIssues) { issue ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().clickable(enabled = issue.filePath != null) { onOpenIssue(issue) },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                                ) {
+                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(issue.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                                        Text(issue.detail, fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                                        issue.suggestion?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)) }
+                                        if (issue.filePath != null) Text("${issue.filePath}${issue.line?.let { ":$it" }.orEmpty()}", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                        state.androidApkInfo?.let { apk ->
+                            item {
+                                Card {
+                                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Android, null, tint = PocketGreen)
+                                            Spacer(Modifier.width(8.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(apk.fileName, fontWeight = FontWeight.Bold)
+                                                Text("${formatFileSize(apk.sizeBytes)} · ${apk.packageName ?: stringResource(R.string.unknown_package)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Text(if (apk.installedMatches) stringResource(R.string.installed) else stringResource(R.string.not_installed), fontSize = 10.sp)
+                                        }
+                                        if (apk.stale) {
+                                            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp)) {
+                                                Text(stringResource(R.string.stale_apk_warning), Modifier.fillMaxWidth().padding(9.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                                            }
+                                        }
+                                        Text(
+                                            stringResource(R.string.apk_version_info, apk.versionName ?: "—", apk.versionCode?.toString() ?: "—", apk.minSdk?.toString() ?: "—", apk.targetSdk?.toString() ?: "—"),
+                                            fontSize = 11.sp,
+                                        )
+                                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            TextButton(onClick = onShareApk) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.share)) }
+                                            TextButton(onClick = onSaveApk) { Icon(Icons.Default.Download, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.save_copy)) }
+                                            TextButton(onClick = { clipboard.setText(AnnotatedString(apk.path)) }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.copy_path)) }
+                                            TextButton(onClick = onOpenAppDetails, enabled = apk.installed) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.app_info)) }
+                                            TextButton(onClick = onUninstallApp, enabled = apk.installed) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.uninstall)) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (state.androidBuildLog.isNotBlank()) {
+                            item {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = { showRawLog = !showRawLog }, modifier = Modifier.weight(1f)) {
+                                        Text(stringResource(if (showRawLog) R.string.hide_build_details else R.string.show_build_details))
+                                    }
+                                    TextButton(onClick = { clipboard.setText(AnnotatedString(state.androidBuildLog)) }) {
+                                        Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.copy_log))
+                                    }
+                                }
+                                if (showRawLog) Surface(color = Color(0xFF11141A), shape = RoundedCornerShape(12.dp)) {
+                                    SelectionContainer {
+                                        Text(
+                                            state.androidBuildLog,
+                                            Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                                            color = Color(0xFFD7DEE9), fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 14.sp,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                AndroidDashboardSection.LOGCAT -> {
+                    val logcat = state.androidLogcat
+                    val filtered = remember(logcat.lines, logcat.minimumLevel, logcat.query) {
+                        logcat.lines.filter { line ->
+                            line.level.ordinal >= logcat.minimumLevel.ordinal &&
+                                (logcat.query.isBlank() || line.text.contains(logcat.query, ignoreCase = true))
+                        }
+                    }
+                    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!logcat.available) {
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(stringResource(R.string.logcat_access_required), fontWeight = FontWeight.Bold)
+                                    Text(logcat.message ?: stringResource(R.string.logcat_access_description), fontSize = 12.sp)
+                                    val command = MainViewModel.LOGCAT_GRANT_COMMAND
+                                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+                                        Text(command, Modifier.fillMaxWidth().clickable { clipboard.setText(AnnotatedString(command)) }.padding(10.dp), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                                    }
+                                    Button(onClick = { clipboard.setText(AnnotatedString(command)) }) { Text(stringResource(R.string.copy_command)) }
+                                }
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = logcat.query, onValueChange = onLogcatQuery,
+                                    modifier = Modifier.weight(1f), singleLine = true,
+                                    label = { Text(stringResource(R.string.search_logs)) },
+                                )
+                                IconButton(onClick = onToggleLogcatPause) { Icon(if (logcat.paused) Icons.Default.PlayArrow else Icons.Default.Pause, stringResource(if (logcat.paused) R.string.resume else R.string.pause)) }
+                                IconButton(onClick = { clipboard.setText(AnnotatedString(filtered.joinToString("\n") { it.text })) }) {
+                                    Icon(Icons.Default.ContentCopy, stringResource(R.string.copy_log))
+                                }
+                                IconButton(onClick = onClearLogcat) { Icon(Icons.Default.ClearAll, stringResource(R.string.clear)) }
+                            }
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                AndroidLogLevel.entries.forEach { level ->
+                                    FilterChip(selected = logcat.minimumLevel == level, onClick = { onLogcatLevel(level) }, label = { Text(level.name.take(1)) })
+                                }
+                            }
+                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                items(filtered, key = { it.id }) { line ->
+                                    Text(
+                                        line.text,
+                                        modifier = Modifier.fillMaxWidth().clickable(enabled = line.filePath != null) { onOpenLogLine(line) }.padding(vertical = 2.dp),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = when (line.level) {
+                                            AndroidLogLevel.ERROR, AndroidLogLevel.FATAL -> MaterialTheme.colorScheme.error
+                                            AndroidLogLevel.WARNING -> PocketOrange
+                                            else -> MaterialTheme.colorScheme.onSurface
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                AndroidDashboardSection.HEALTH -> {
+                    LazyColumn(
+                        Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(stringResource(R.string.project_health), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                IconButton(onClick = onRefreshHealth, enabled = !state.androidHealthRunning) {
+                                    if (state.androidHealthRunning) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    else Icon(Icons.Default.Refresh, stringResource(R.string.refresh))
+                                }
+                            }
+                        }
+                        items(state.androidHealthChecks, key = { it.id }) { check ->
+                            AndroidHealthCheckCard(check, clipboard, onHealthFix)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfessionalAndroidOverview(
+    state: AppUiState,
+    liveElapsedSeconds: Int?,
+    showRawLog: Boolean,
+    onToggleRawLog: () -> Unit,
+    onAction: (AndroidAction) -> Unit,
+    onCancelBuild: () -> Unit,
+    onInstallTools: () -> Unit,
+    onOpenIssue: (AndroidBuildIssue) -> Unit,
+) {
+    val apk = state.androidApkInfo
+    val toolsInstalled = DevStack.ANDROID in state.installedDevStacks
+    val primaryAction = when {
+        apk == null -> AndroidAction.BUILD
+        apk.stale -> AndroidAction.BUILD_AND_RUN
+        apk.installedMatches -> AndroidAction.RUN
+        else -> AndroidAction.INSTALL
+    }
+    val primaryLabel = when (primaryAction) {
+        AndroidAction.BUILD -> R.string.build
+        AndroidAction.INSTALL -> R.string.install
+        AndroidAction.RUN -> R.string.run_app
+        else -> R.string.build_and_run
+    }
+    val statusTitle = when {
+        state.androidBuildRunning -> androidStageLabel(state.androidBuildStage)
+        state.androidBuildStage == AndroidBuildStage.FAILED -> stringResource(R.string.android_build_failed_title)
+        apk == null -> stringResource(R.string.android_ready_to_build)
+        apk.stale -> stringResource(R.string.android_ready_to_rebuild)
+        apk.installedMatches -> stringResource(R.string.android_ready_to_run)
+        else -> stringResource(R.string.android_ready_to_install)
+    }
+    val statusDescription = when {
+        state.androidBuildRunning -> state.androidBuildMessage ?: androidStageLabel(state.androidBuildStage)
+        apk == null -> stringResource(R.string.android_no_apk_description)
+        apk.stale -> stringResource(R.string.android_source_changed_short)
+        apk.installedMatches -> stringResource(R.string.android_build_current_installed)
+        else -> stringResource(R.string.android_build_current_not_installed)
+    }
+    val elapsedSeconds = state.androidBuildStartedAtMillis?.let { start ->
+        if (state.androidBuildRunning) liveElapsedSeconds?.toLong()
+        else ((state.androidBuildFinishedAtMillis ?: start) - start).coerceAtLeast(0L) / 1_000L
+    }
+    val expectedBuildSeconds = state.androidBuildRecentDurationsMillis
+        .sorted()
+        .takeIf { it.isNotEmpty() }
+        ?.let { durations -> durations[durations.size / 2] / 1_000L }
+        ?.coerceAtLeast(1L)
+    val estimateText = when {
+        state.androidBuildRunning && expectedBuildSeconds != null -> {
+            val remaining = (expectedBuildSeconds - (elapsedSeconds ?: 0L)).coerceAtLeast(0L)
+            if (remaining > 0L) stringResource(R.string.android_estimated_remaining, formatDuration(remaining))
+            else stringResource(R.string.android_finishing_build)
+        }
+        state.androidBuildRunning -> stringResource(R.string.android_estimating_build)
+        primaryAction in setOf(AndroidAction.BUILD, AndroidAction.BUILD_AND_RUN) && expectedBuildSeconds != null ->
+            stringResource(R.string.android_usually_takes, formatDuration(expectedBuildSeconds))
+        else -> null
+    }
+    val buildSummary = when {
+        state.androidBuildRunning -> stringResource(R.string.android_build_in_progress, formatDuration(elapsedSeconds ?: 0L))
+        state.androidBuildStage == AndroidBuildStage.FAILED -> state.androidBuildMessage ?: stringResource(R.string.android_build_failed_title)
+        state.androidBuildFinishedAtMillis != null -> stringResource(R.string.android_completed_in, formatDuration(elapsedSeconds ?: 0L))
+        else -> stringResource(R.string.android_no_build_yet)
+    }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)),
+                shape = RoundedCornerShape(22.dp),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            modifier = Modifier.size(54.dp),
+                            shape = CircleShape,
+                            color = when {
+                                state.androidBuildStage == AndroidBuildStage.FAILED -> MaterialTheme.colorScheme.errorContainer
+                                apk?.stale == true -> PocketOrange.copy(alpha = 0.18f)
+                                else -> PocketGreen.copy(alpha = 0.18f)
+                            },
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (state.androidBuildRunning) {
+                                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Icon(
+                                        if (state.androidBuildStage == AndroidBuildStage.FAILED || apk?.stale == true) Icons.Default.Warning else Icons.Default.Check,
+                                        null,
+                                        tint = if (state.androidBuildStage == AndroidBuildStage.FAILED) MaterialTheme.colorScheme.error else if (apk?.stale == true) PocketOrange else PocketGreen,
+                                        modifier = Modifier.size(28.dp),
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(statusTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Text(statusDescription, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                            apk?.let {
+                                Text(
+                                    "${it.fileName} · ${formatFileSize(it.sizeBytes)}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            estimateText?.let {
+                                Text(it, color = PocketOrange, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                    if (state.androidBuildRunning) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (!toolsInstalled) {
+                        Button(onClick = onInstallTools, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                            Text(stringResource(R.string.install_android_tools))
+                        }
+                    } else if (state.androidBuildRunning) {
+                        OutlinedButton(onClick = onCancelBuild, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                            Icon(Icons.Default.Stop, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.cancel_operation))
+                        }
+                    } else {
+                        Button(
+                            onClick = { onAction(primaryAction) },
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(primaryLabel), fontWeight = FontWeight.SemiBold)
+                        }
+                        if (apk != null) {
+                            TextButton(onClick = { onAction(AndroidAction.FORCE_BUILD) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                                Text(stringResource(R.string.android_build_again))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (state.androidBuildIssues.isNotEmpty()) {
+            item { Text(stringResource(R.string.build_issues), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            items(state.androidBuildIssues) { issue ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = issue.filePath != null) { onOpenIssue(issue) },
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(issue.title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(issue.detail, fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                        issue.suggestion?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)) }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(20.dp)) {
+                AndroidDashboardSummaryRow(
+                    icon = Icons.Default.Description,
+                    title = stringResource(R.string.android_build_output),
+                    subtitle = buildSummary,
+                    trailing = stringResource(R.string.android_view),
+                    tint = PocketOrange,
+                    onClick = onToggleRawLog,
+                )
+            }
+        }
+
+        if (showRawLog) {
+            item {
+                Surface(color = Color(0xFF11141A), shape = RoundedCornerShape(16.dp)) {
+                    SelectionContainer {
+                        Text(
+                            state.androidBuildLog.ifBlank { stringResource(R.string.android_no_build_output) },
+                            Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()).padding(14.dp),
+                            color = Color(0xFFD7DEE9),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AndroidDashboardSummaryRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    tint: Color,
+    trailing: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 17.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+        }
+        trailing?.let {
+            Text(it, color = PocketOrange, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.width(6.dp))
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AndroidHealthCheckCard(
+    check: AndroidHealthCheck,
+    clipboard: androidx.compose.ui.platform.ClipboardManager,
+    onFix: (AndroidHealthFix) -> Unit,
+) {
+    val tint = when (check.status) {
+        AndroidHealthStatus.PASSED -> PocketGreen
+        AndroidHealthStatus.WARNING -> PocketOrange
+        AndroidHealthStatus.FAILED -> MaterialTheme.colorScheme.error
+        AndroidHealthStatus.RUNNING -> MaterialTheme.colorScheme.primary
+    }
+    Card {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (check.status == AndroidHealthStatus.PASSED) Icons.Default.Check else Icons.Default.Warning, null, tint = tint)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(check.title, fontWeight = FontWeight.SemiBold)
+                Text(check.detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (check.fix != AndroidHealthFix.NONE) {
+                TextButton(onClick = {
+                    if (check.fix == AndroidHealthFix.COPY_LOGCAT_COMMAND) clipboard.setText(AnnotatedString(MainViewModel.LOGCAT_GRANT_COMMAND))
+                    else onFix(check.fix)
+                }) { Text(stringResource(if (check.fix == AndroidHealthFix.COPY_LOGCAT_COMMAND) R.string.copy_command else R.string.fix)) }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileViewerScreen(
-    filePath: String,
-    content: String?,
-    loading: Boolean,
+    file: OpenedFileState,
+    editingAllowed: Boolean,
     onClose: () -> Unit,
+    onBeginEdit: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    onCancelEdit: () -> Unit,
+    onSave: () -> Unit,
+    onReload: () -> Unit,
+    onDismissConflict: () -> Unit,
 ) {
-    val fileName = filePath.substringAfterLast('/')
+    val fileName = file.path.substringAfterLast('/')
     val ext = fileName.substringAfterLast('.', "")
     val isMarkdown = ext == "md"
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
+    var showUnsavedDialog by remember { mutableStateOf(false) }
+    var showFind by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+    var editorValue by remember(file.path, file.editing) { mutableStateOf(TextFieldValue(file.draft)) }
+    var undoHistory by remember(file.path, file.editing) { mutableStateOf(emptyList<TextFieldValue>()) }
+    var redoHistory by remember(file.path, file.editing) { mutableStateOf(emptyList<TextFieldValue>()) }
+    val matches = remember(editorValue.text, findQuery) {
+        if (findQuery.isBlank()) emptyList() else buildList {
+            var start = 0
+            while (start <= editorValue.text.length - findQuery.length) {
+                val index = editorValue.text.indexOf(findQuery, start, ignoreCase = true)
+                if (index < 0) break
+                add(index)
+                start = index + findQuery.length.coerceAtLeast(1)
+            }
+        }
+    }
+    val currentMatch = matches.indexOfFirst { it >= editorValue.selection.start }.let { if (it < 0 && matches.isNotEmpty()) 0 else it }
+
+    fun leaveEditor() {
+        if (file.dirty) showUnsavedDialog = true else onCancelEdit()
+    }
+
+    BackHandler {
+        if (file.editing) leaveEditor() else onClose()
+    }
+
+    if (showUnsavedDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnsavedDialog = false },
+            title = { Text(stringResource(R.string.unsaved_changes)) },
+            text = { Text(stringResource(R.string.unsaved_changes_description)) },
+            confirmButton = {
+                TextButton(onClick = { showUnsavedDialog = false; onSave() }) { Text(stringResource(R.string.save)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { showUnsavedDialog = false; onCancelEdit() }) { Text(stringResource(R.string.discard)) }
+                    TextButton(onClick = { showUnsavedDialog = false }) { Text(stringResource(R.string.keep_editing)) }
+                }
+            },
+        )
+    }
+
+    if (file.conflict) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.file_changed_title)) },
+            text = { Text(stringResource(R.string.file_changed_description)) },
+            confirmButton = { TextButton(onClick = onReload) { Text(stringResource(R.string.reload)) } },
+            dismissButton = { TextButton(onClick = onDismissConflict) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -4585,24 +5492,37 @@ private fun FileViewerScreen(
                 title = {
                     Column {
                         Text(fileName, fontWeight = FontWeight.SemiBold)
-                        Text(filePath, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(file.path, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.ws_close_file)) }
+                    IconButton(onClick = { if (file.editing) leaveEditor() else onClose() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.close_file))
+                    }
                 },
                 actions = {
-                    if (!content.isNullOrEmpty()) {
+                    if (file.editing) {
+                        TextButton(onClick = ::leaveEditor, enabled = !file.saving) { Text(stringResource(R.string.cancel)) }
+                        IconButton(onClick = onSave, enabled = file.dirty && !file.saving && editingAllowed) {
+                            if (file.saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.Save, stringResource(R.string.save_file))
+                        }
+                    } else if (!file.content.isNullOrEmpty()) {
                         IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(content))
+                            clipboard.setText(AnnotatedString(file.content))
                             copied = true
                             scope.launch { delay(2000); copied = false }
                         }) {
                             Icon(
                                 if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                                stringResource(R.string.ws_copy_file_contents),
+                                stringResource(R.string.copy_file_contents),
                                 tint = if (copied) PocketOrange else MaterialTheme.colorScheme.onSurface,
                             )
+                        }
+                        if (file.readOnlyReason == null) {
+                            IconButton(onClick = onBeginEdit, enabled = editingAllowed) {
+                                Icon(Icons.Default.Edit, stringResource(R.string.edit_file))
+                            }
                         }
                     }
                 },
@@ -4612,13 +5532,125 @@ private fun FileViewerScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                loading -> {
+                file.loading -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = PocketOrange)
                     }
                 }
-                content == null -> {
-                    EmptyState(Icons.Default.Description, stringResource(R.string.ws_no_content), stringResource(R.string.ws_file_unreadable))
+                file.content == null -> {
+                    val reason = when (file.readOnlyReason) {
+                        FileReadOnlyReason.BINARY -> R.string.file_binary_description
+                        FileReadOnlyReason.INVALID_UTF8 -> R.string.file_invalid_utf8_description
+                        FileReadOnlyReason.UNSAFE -> R.string.file_unsafe_description
+                        else -> R.string.file_could_not_read
+                    }
+                    EmptyState(Icons.Default.Description, stringResource(R.string.no_content), stringResource(reason))
+                }
+                file.editing -> {
+                    val vertical = rememberScrollState()
+                    val horizontal = rememberScrollState()
+                    Column(Modifier.fillMaxSize().background(Color(0xFF0D1117))) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val previous = undoHistory.lastOrNull() ?: return@IconButton
+                                    undoHistory = undoHistory.dropLast(1)
+                                    redoHistory = (redoHistory + editorValue).takeLast(50)
+                                    editorValue = previous
+                                    onDraftChange(previous.text)
+                                },
+                                enabled = undoHistory.isNotEmpty(),
+                            ) { Icon(Icons.Default.Undo, stringResource(R.string.undo)) }
+                            IconButton(
+                                onClick = {
+                                    val next = redoHistory.lastOrNull() ?: return@IconButton
+                                    redoHistory = redoHistory.dropLast(1)
+                                    undoHistory = (undoHistory + editorValue).takeLast(50)
+                                    editorValue = next
+                                    onDraftChange(next.text)
+                                },
+                                enabled = redoHistory.isNotEmpty(),
+                            ) { Icon(Icons.Default.Redo, stringResource(R.string.redo)) }
+                            IconButton(onClick = { showFind = !showFind }) {
+                                Icon(Icons.Default.Search, stringResource(R.string.find_in_file))
+                            }
+                            Text(
+                                if (file.dirty) stringResource(R.string.unsaved) else stringResource(R.string.saved),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        if (showFind) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                OutlinedTextField(
+                                    value = findQuery,
+                                    onValueChange = { findQuery = it },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    label = { Text(stringResource(R.string.find)) },
+                                )
+                                Text(
+                                    if (matches.isEmpty()) "0/0" else "${currentMatch + 1}/${matches.size}",
+                                    Modifier.padding(horizontal = 8.dp),
+                                    fontSize = 12.sp,
+                                )
+                                IconButton(onClick = {
+                                    if (matches.isNotEmpty()) {
+                                        val index = if (currentMatch <= 0) matches.lastIndex else currentMatch - 1
+                                        editorValue = editorValue.copy(selection = TextRange(matches[index], matches[index] + findQuery.length))
+                                    }
+                                }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.previous_match)) }
+                                IconButton(onClick = {
+                                    if (matches.isNotEmpty()) {
+                                        val index = if (currentMatch >= matches.lastIndex) 0 else currentMatch + 1
+                                        editorValue = editorValue.copy(selection = TextRange(matches[index], matches[index] + findQuery.length))
+                                    }
+                                }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.next_match)) }
+                            }
+                        }
+                        Row(
+                            Modifier.fillMaxSize().verticalScroll(vertical),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Text(
+                                (1..editorValue.text.count { it == '\n' } + 1).joinToString("\n"),
+                                modifier = Modifier.width(48.dp).padding(horizontal = 8.dp, vertical = 10.dp),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
+                                color = Color(0xFF4A5568),
+                                textAlign = TextAlign.End,
+                            )
+                            BasicTextField(
+                                value = editorValue,
+                                onValueChange = { next ->
+                                    if (next.text != editorValue.text) {
+                                        undoHistory = (undoHistory + editorValue).takeLast(50)
+                                        redoHistory = emptyList()
+                                    }
+                                    editorValue = next
+                                    onDraftChange(next.text)
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .horizontalScroll(horizontal)
+                                    .widthIn(min = 720.dp)
+                                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    fontSize = 13.sp,
+                                    lineHeight = 20.sp,
+                                    color = Color(0xFFE2E8F0),
+                                ),
+                            )
+                        }
+                    }
                 }
                 isMarkdown -> {
                     LazyColumn(
@@ -4626,22 +5658,30 @@ private fun FileViewerScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        item { MarkdownText(markdown = content, color = MaterialTheme.colorScheme.onSurface) }
+                        item { MarkdownText(markdown = file.content, color = MaterialTheme.colorScheme.onSurface) }
                     }
                 }
                 else -> {
                     // Code / plain-text viewer
+                    val codeListState = rememberLazyListState()
+                    val targetIndex = file.targetLine?.minus(1)?.coerceAtLeast(0)
+                    LaunchedEffect(file.path, targetIndex) {
+                        if (targetIndex != null) codeListState.scrollToItem(targetIndex)
+                    }
                     LazyColumn(
+                        state = codeListState,
                         contentPadding = PaddingValues(0.dp),
                         modifier = Modifier
                             .fillMaxSize()
                             .background(Color(0xFF0D1117)),
                     ) {
-                        val lines = content.lines()
+                        val lines = file.content.lines()
                         items(lines.size) { idx ->
+                            val isTargetLine = idx == targetIndex
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .background(if (isTargetLine) PocketOrange.copy(alpha = 0.18f) else Color.Transparent)
                                     .padding(vertical = 1.dp),
                                 verticalAlignment = Alignment.Top,
                             ) {
@@ -4670,6 +5710,15 @@ private fun FileViewerScreen(
                     }
                 }
             }
+            if (!file.editing && file.readOnlyReason == FileReadOnlyReason.TOO_LARGE) {
+                Surface(
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(stringResource(R.string.file_too_large_description), Modifier.padding(12.dp), fontSize = 12.sp)
+                }
+            }
         }
     }
 }
@@ -4680,9 +5729,18 @@ private fun FilesTab(
     loading: Boolean,
     suggestedProjectRoot: String?,
     onRefresh: () -> Unit,
+    onLoadDirectory: (String) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
-    onExport: () -> Unit,
+    selectionMode: Boolean,
+    exportSelection: ExportSelection,
+    exportRunning: Boolean,
+    exportEnabled: Boolean,
+    onEnterSelection: () -> Unit,
+    onCancelSelection: () -> Unit,
+    onToggleSelection: (WorkspaceEntry) -> Unit,
+    onSelectAll: () -> Unit,
+    onDownloadSelection: () -> Unit,
 ) {
     var expandedDirectories by rememberSaveable { mutableStateOf(emptyList<String>()) }
     LaunchedEffect(files.map { it.path }) {
@@ -4696,9 +5754,18 @@ private fun FilesTab(
             segments.take(depth).joinToString("/") in expandedSet
         }
     }
-    val directChildCounts = files.filter { candidate ->
-        candidate.path.contains('/')
-    }.groupingBy { candidate -> candidate.path.substringBeforeLast('/') }.eachCount()
+    fun selectionState(entry: WorkspaceEntry): ToggleableState {
+        if (!entry.isDirectory) return if (exportSelection.includes(entry.path)) ToggleableState.On else ToggleableState.Off
+        val descendants = files.filter { it.path == entry.path || it.path.startsWith("${entry.path}/") }
+        val selected = descendants.count { exportSelection.includes(it.path) }
+        return when {
+            selected == 0 -> ToggleableState.Off
+            selected == descendants.size -> ToggleableState.On
+            else -> ToggleableState.Indeterminate
+        }
+    }
+    val hasSelection = files.any { !it.isDirectory && exportSelection.includes(it.path) } ||
+        files.any { it.isDirectory && selectionState(it) != ToggleableState.Off }
 
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
@@ -4716,20 +5783,25 @@ private fun FilesTab(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        stringResource(R.string.workspace_files),
+                        stringResource(if (selectionMode) R.string.select_files else R.string.workspace_files),
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    if (expandedDirectories.isNotEmpty()) {
+                    if (selectionMode) {
+                        TextButton(onClick = onSelectAll) { Text(stringResource(R.string.select_all), fontSize = 11.sp) }
+                        TextButton(onClick = onCancelSelection, enabled = !exportRunning) { Text(stringResource(R.string.cancel), fontSize = 11.sp) }
+                    } else if (expandedDirectories.isNotEmpty()) {
                         TextButton(onClick = { expandedDirectories = emptyList() }) {
                             Icon(Icons.Default.KeyboardArrowUp, null, Modifier.size(17.dp))
                             Spacer(Modifier.width(3.dp))
-                            Text(stringResource(R.string.ws_collapse_all), fontSize = 11.sp)
+                            Text(stringResource(R.string.collapse_all), fontSize = 11.sp)
                         }
                     }
-                    if (!loading && files.any { !it.isDirectory }) {
-                        IconButton(onClick = onExport) { Icon(Icons.Default.Download, stringResource(R.string.ws_export_zip)) }
+                    if (!selectionMode && !loading && files.any { !it.isDirectory }) {
+                        IconButton(onClick = onEnterSelection, enabled = exportEnabled) {
+                            Icon(Icons.Default.Download, stringResource(R.string.export_project_zip))
+                        }
                     }
                     if (loading) {
                         CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
@@ -4764,7 +5836,10 @@ private fun FilesTab(
                 Modifier
                     .fillMaxWidth()
                     .clickable {
-                        if (entry.isDirectory) {
+                        if (selectionMode) {
+                            onToggleSelection(entry)
+                        } else if (entry.isDirectory) {
+                            if (entry.path !in expandedSet) onLoadDirectory(entry.path)
                             expandedDirectories = if (entry.path in expandedSet) {
                                 expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
                             } else {
@@ -4778,11 +5853,30 @@ private fun FilesTab(
                     .padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (selectionMode) {
+                    if (entry.isDirectory) {
+                        TriStateCheckbox(
+                            state = selectionState(entry),
+                            onClick = { onToggleSelection(entry) },
+                        )
+                    } else {
+                        Checkbox(
+                            checked = exportSelection.includes(entry.path),
+                            onCheckedChange = { onToggleSelection(entry) },
+                        )
+                    }
+                    Spacer(Modifier.width(2.dp))
+                }
                 if (entry.isDirectory) {
                     Icon(
                         if (entry.path in expandedSet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        if (entry.path in expandedSet) stringResource(R.string.ws_collapse_folder) else stringResource(R.string.ws_expand_folder),
-                        Modifier.size(18.dp),
+                        stringResource(if (entry.path in expandedSet) R.string.collapse_folder else R.string.expand_folder),
+                        Modifier.size(28.dp).clickable {
+                            if (entry.path !in expandedSet) onLoadDirectory(entry.path)
+                            expandedDirectories = if (entry.path in expandedSet) {
+                                expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
+                            } else expandedDirectories + entry.path
+                        }.padding(5.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.width(5.dp))
@@ -4794,7 +5888,7 @@ private fun FilesTab(
                 )
                 Spacer(Modifier.width(11.dp))
                 Text(
-                    if (entry.isDirectory) "${entry.name} (${directChildCounts[entry.path] ?: 0})" else entry.name,
+                    if (entry.isDirectory) "${entry.name} (${entry.childCount?.toString() ?: "…"})" else entry.name,
                     Modifier.weight(1f),
                     color = if (!entry.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 )
@@ -4812,6 +5906,24 @@ private fun FilesTab(
             }
             if (!entry.isDirectory) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f), modifier = Modifier.padding(start = (entry.depth * 20 + 42).dp))
+            }
+        }
+        if (selectionMode) {
+            item(key = "download-selection") {
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onDownloadSelection,
+                    enabled = hasSelection && !exportRunning && exportEnabled,
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                ) {
+                    if (exportRunning) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Download, null)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(if (exportRunning) R.string.creating_zip else R.string.download_zip))
+                }
             }
         }
     }
@@ -4847,6 +5959,9 @@ private fun ChatTab(
     onOpenAttachment: (ChatAttachment) -> Unit,
     onRunInTerminal: (String) -> Unit,
     onTakePhoto: () -> Unit = {},
+    queuedFollowUps: List<QueuedFollowUp> = emptyList(),
+    onSteerFollowUp: (String) -> Unit = {},
+    onRemoveFollowUp: (String) -> Unit = {},
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -4968,6 +6083,24 @@ private fun ChatTab(
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
+                if (queuedFollowUps.isNotEmpty()) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        queuedFollowUps.forEach { followUp ->
+                            QueuedFollowUpCard(
+                                followUp = followUp,
+                                onSteer = { onSteerFollowUp(followUp.id) },
+                                onRemove = { onRemoveFollowUp(followUp.id) },
+                            )
+                        }
+                    }
+                }
                 if (pendingAttachments.isNotEmpty()) {
                     Row(
                         Modifier
@@ -5007,7 +6140,7 @@ private fun ChatTab(
                         Box {
                             IconButton(
                                 onClick = { attachMenuOpen = true },
-                                enabled = !isRunning && pendingAttachments.size < 5,
+                                enabled = pendingAttachments.size < 5,
                                 modifier = Modifier.size(40.dp),
                             ) {
                                 Icon(
@@ -5079,7 +6212,9 @@ private fun ChatTab(
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
-                        } else {
+                            if (canSend) Spacer(Modifier.width(6.dp))
+                        }
+                        if (!isRunning || canSend) {
                             Box(
                                 modifier = Modifier
                                     .size(38.dp)
@@ -5108,6 +6243,51 @@ private fun ChatTab(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueuedFollowUpCard(
+    followUp: QueuedFollowUp,
+    onSteer: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    followUp.prompt,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (followUp.attachments.isNotEmpty()) {
+                    Text(
+                        "${followUp.attachments.size} attachment${if (followUp.attachments.size == 1) "" else "s"}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            TextButton(onClick = onSteer) { Text("Steer") }
+            IconButton(onClick = onRemove, modifier = Modifier.size(38.dp)) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Remove queued follow-up",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -5155,8 +6335,11 @@ private fun ClaudeActivityDisclosure(
     isRunning: Boolean = false,
 ) {
     var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    // Older saved chats may contain hundreds of polling steps. Rendering all of them inside
+    // one lazy-list item can monopolize the UI thread, so show the latest useful window.
+    val visibleItems = items.takeLast(32)
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)) {
-        if (items.isEmpty()) {
+        if (visibleItems.isEmpty()) {
             ActivitySummaryRow(
                 item = null,
                 text = headline,
@@ -5168,7 +6351,7 @@ private fun ClaudeActivityDisclosure(
             )
             if (0 in expandedItems) ActivityExpandedDetail(null, stringResource(R.string.ws_activity_reviewing_request))
         } else {
-            items.forEachIndexed { index, item ->
+            visibleItems.forEachIndexed { index, item ->
                 ActivitySummaryRow(
                     item = item,
                     text = compactActivityText(item),
@@ -5396,7 +6579,8 @@ private fun ActivityExpandedDetail(item: ActivityItem?, detail: String) {
 }
 
 @Composable
-private fun compactActivityText(item: ActivityItem): String = "${activityDisplayName(item)} · ${activityDetail(item).replace(Regex("\\s+"), " ").take(105)}"
+private fun compactActivityText(item: ActivityItem): String =
+    "${activityDisplayName(item)} · ${activityDetail(item).take(180).replace(Regex("\\s+"), " ").take(105)}"
 
 @Composable
 private fun activityDetail(item: ActivityItem): String {
@@ -5413,7 +6597,7 @@ private fun activityHeadline(items: List<ActivityItem>, seconds: Long, thinking:
     if (latest == null) return "$thinkLabel · ${stringResource(R.string.ws_activity_analyzing_request)} · ${formatDuration(seconds)}"
     if (thinking && latest.title == "Think") return "$thinkLabel · ${latest.detail} · ${formatDuration(seconds)}"
     val latestName = activityDisplayName(latest)
-    val detail = latest.detail.replace(Regex("\\s+"), " ").trim().ifBlank { latestName }
+    val detail = latest.detail.take(180).replace(Regex("\\s+"), " ").trim().ifBlank { latestName }
     return "$latestName · ${detail.take(100)} · ${formatDuration(seconds)}"
 }
 

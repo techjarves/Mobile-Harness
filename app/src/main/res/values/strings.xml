@@ -271,4 +271,115 @@
     <string name="agent_installing_binary">Installing agent binary…</string><string name="chat_welcome">Hi! Tell me what you want to build or change.</string><string name="chat_message_agent">Message %1$s…</string><string name="workspace_files">Files</string><string name="workspace_no_files">No files yet</string><string name="workspace_no_files_description">Ask your coding agent to create something in this project.</string><string name="workspace_project_terminal">Project Terminal</string><string name="workspace_terminal_ready">Mobile Harness Terminal ready.\nType a bash command below or tap a quick command chip above.</string><string name="workspace_preview_url">Preview URL</string><string name="workspace_preview_not_running">Preview not running</string><string name="workspace_preview_not_running_description">Enter a localhost URL above, or start a local web server in the project Terminal.</string>
     <string name="agent_connection_verified">%1$s connection verified.</string><string name="agent_status_verified">Verified</string>
     <string name="chat_attach_files">Attach files</string><string name="chat_take_photo">Take photo</string><string name="chat_choose_files">Choose files</string><string name="chat_camera_unavailable">No camera app is available</string>
+    <string name="export_busy">Stop the running task, terminal command, build, or file save before exporting.</string>
+    <string name="export_success">%1$s exported</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="unknown_error">Unknown error</string>
+    <string name="file_saved">File saved</string>
+    <string name="file_save_failed">The file could not be saved</string>
+    <string name="select_files">Select files</string>
+    <string name="select_all">Select all</string>
+    <string name="collapse_all">Collapse all</string>
+    <string name="export_project_zip">Export project as ZIP</string>
+    <string name="collapse_folder">Collapse folder</string>
+    <string name="expand_folder">Expand folder</string>
+    <string name="creating_zip">Creating ZIP…</string>
+    <string name="download_zip">Download ZIP</string>
+    <string name="unsaved_changes">Unsaved changes</string>
+    <string name="unsaved_changes_description">Save your changes before leaving this file?</string>
+    <string name="save">Save</string>
+    <string name="discard">Discard</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="file_changed_title">File changed</string>
+    <string name="file_changed_description">This file changed outside the editor. Reload it to avoid overwriting newer changes.</string>
+    <string name="reload">Reload</string>
+    <string name="cancel">Cancel</string>
+    <string name="close_file">Close file</string>
+    <string name="save_file">Save file</string>
+    <string name="copy_file_contents">Copy file contents</string>
+    <string name="edit_file">Edit file</string>
+    <string name="no_content">No content</string>
+    <string name="file_could_not_read">The file could not be read.</string>
+    <string name="file_binary_description">Binary files cannot be displayed or edited.</string>
+    <string name="file_invalid_utf8_description">Only valid UTF-8 text files can be edited.</string>
+    <string name="file_unsafe_description">This protected or unsafe path cannot be opened.</string>
+    <string name="file_too_large_description">Files larger than 512 KB are previewed and remain read-only.</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="find_in_file">Find in file</string>
+    <string name="find">Find</string>
+    <string name="previous_match">Previous match</string>
+    <string name="next_match">Next match</string>
+    <string name="unsaved">Unsaved</string>
+    <string name="saved">Saved</string>
+    <string name="android_dashboard">Android dashboard</string>
+    <string name="android_build_tab">Build</string><string name="android_logcat_tab">Logcat</string><string name="android_health_tab">Health</string>
+    <string name="android_ready">Ready for Android development</string><string name="close">Close</string><string name="refresh">Refresh</string><string name="more_options">More options</string>
+    <string name="force_rebuild">Force rebuild</string><string name="clean_project">Clean project</string><string name="build_progress">Build progress</string>
+    <string name="android_stage_idle">Ready</string><string name="android_stage_preparing">Preparing</string><string name="android_stage_resolving">Resolving</string><string name="android_stage_compiling">Compiling</string><string name="android_stage_resources">Resources</string><string name="android_stage_packaging">Packaging</string><string name="android_stage_finding_apk">Finding APK</string><string name="android_stage_installing">Installing</string><string name="android_stage_launching">Launching</string><string name="android_stage_complete">Complete</string><string name="android_stage_failed">Failed</string><string name="android_stage_cancelling">Cancelling</string><string name="android_stage_cancelled">Cancelled</string>
+    <string name="android_tools_required">Android development tools are required before building.</string><string name="install_android_tools">Install Android tools</string>
+    <string name="build">Build</string><string name="install">Install</string><string name="run">Run</string><string name="build_and_run">Build &amp; run</string><string name="cancel_operation">Cancel operation</string>
+    <string name="build_issues">Build issues</string><string name="unknown_package">Unknown package</string><string name="installed">Installed</string><string name="not_installed">Not installed</string><string name="stale_apk_warning">Source files changed after this APK was built. You can still use it, or build a current APK.</string>
+    <string name="apk_version_info">Version %1$s (%2$s) · min SDK %3$s · target SDK %4$s</string><string name="share">Share</string><string name="save_copy">Save copy</string><string name="copy_path">Copy path</string><string name="app_info">App info</string><string name="uninstall">Uninstall</string>
+    <string name="show_build_details">Show build details</string><string name="hide_build_details">Hide build details</string><string name="copy_log">Copy log</string>
+    <string name="logcat_access_required">Logcat access required</string><string name="logcat_access_description">Grant the development log permission once with ADB, then refresh this screen.</string><string name="copy_command">Copy command</string><string name="search_logs">Search logs</string><string name="pause">Pause</string><string name="resume">Resume</string><string name="clear">Clear</string>
+    <string name="project_health">Project health</string><string name="fix">Fix</string>
+    <string name="android_screen_title">Android</string>
+    <string name="android_ready_to_build">Ready to build</string>
+    <string name="android_ready_to_rebuild">Ready to rebuild</string>
+    <string name="android_ready_to_run">Ready to run</string>
+    <string name="android_ready_to_install">Ready to install</string>
+    <string name="android_build_failed_title">Build failed</string>
+    <string name="android_no_apk_description">Create a debug APK to run this project.</string>
+    <string name="android_source_changed_short">Source changed since the last build.</string>
+    <string name="android_build_current_installed">Build is up to date · Installed on this device</string>
+    <string name="android_build_current_not_installed">Build is up to date · Ready to install</string>
+    <string name="run_app">Run app</string>
+    <string name="android_build_again">Build again</string>
+    <string name="android_build_output">Build output</string>
+    <string name="android_view">View</string>
+    <string name="android_completed_in">Completed in %1$s</string>
+    <string name="android_build_in_progress">Running for %1$s</string>
+    <string name="android_no_build_yet">No build yet</string>
+    <string name="android_no_build_output">No build output yet.</string>
+    <string name="android_checking_health">Checking project…</string>
+    <string name="android_health_needs_attention">%1$d checks need attention</string>
+    <string name="android_health_not_checked">Tap to check the project</string>
+    <string name="android_health_checks_passed">%1$d checks passed</string>
+    <string name="project_type">Project type</string>
+    <string name="project_type_general">General</string>
+    <string name="project_type_general_desc">Any coding project</string>
+    <string name="project_type_compose">Compose</string>
+    <string name="project_type_compose_desc">Modern Android UI</string>
+    <string name="project_type_xml">XML</string>
+    <string name="project_type_xml_desc">Classic Android UI</string>
+    <string name="android_estimated_remaining">About %1$s remaining</string>
+    <string name="android_finishing_build">Finishing build…</string>
+    <string name="android_estimating_build">Learning build time…</string>
+    <string name="android_usually_takes">Usually about %1$s</string>
+    <string name="diagnostics_title">Developer diagnostics</string>
+    <string name="diagnostics_subtitle">Performance, processes, and runtime storage</string>
+    <string name="diagnostics_refresh">Refresh diagnostics</string>
+    <string name="diagnostics_memory">Memory</string>
+    <string name="diagnostics_app_memory">App memory</string>
+    <string name="diagnostics_java_heap">Java heap</string>
+    <string name="diagnostics_processes">Active processes</string>
+    <string name="diagnostics_no_processes">No development process is running</string>
+    <string name="diagnostics_stop_inactive">Stop inactive processes</string>
+    <string name="diagnostics_buffers">In-app buffers</string>
+    <string name="diagnostics_messages">Chat messages</string>
+    <string name="diagnostics_live_activity">Live activity rows</string>
+    <string name="diagnostics_terminal_buffer">Terminal text</string>
+    <string name="diagnostics_build_log">Build log</string>
+    <string name="diagnostics_logcat_lines">Log lines</string>
+    <string name="diagnostics_file_entries">Loaded file entries</string>
+    <string name="diagnostics_runtime_cache">Runtime output cache</string>
+    <string name="diagnostics_cached_output">Cached output</string>
+    <string name="diagnostics_clear_cache">Clear disposable output</string>
+    <string name="diagnostics_cache_disabled">Available after active work finishes.</string>
+    <string name="diagnostics_recent_exit">Recent app issue</string>
+    <string name="diagnostics_no_recent_exit">No recent crash or ANR recorded</string>
+    <string name="diagnostics_inactive_stopped">Inactive processes stopped</string>
+    <string name="diagnostics_cache_busy">Wait for active work to finish before clearing output</string>
+    <string name="diagnostics_cache_cleared">Disposable runtime output cleared</string>
 </resources>

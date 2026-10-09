@@ -1,11 +1,20 @@
 package com.jarves.mh.ui
 
 import android.app.Application
+import android.app.ActivityManager
+import android.Manifest
 import android.content.Intent
+import android.content.Context
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.os.SystemClock
 import android.os.Build
+import android.os.StatFs
+import android.os.Debug
 import android.system.Os
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
@@ -26,6 +35,8 @@ import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
+import com.jarves.mh.model.ProjectType
+import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
@@ -57,14 +68,45 @@ import com.jarves.mh.runtime.RuntimeSetupStatus
 import com.jarves.mh.runtime.readTailText
 import com.jarves.mh.runtime.supportsArm64Runtime
 import com.jarves.mh.runtime.AndroidAppInstaller
+import com.jarves.mh.runtime.AndroidBuildPhase
+import com.jarves.mh.runtime.AndroidBuildRecord
+import com.jarves.mh.runtime.AndroidAction
+import com.jarves.mh.runtime.AndroidApkInfo
+import com.jarves.mh.runtime.AndroidBuildIssue
+import com.jarves.mh.runtime.AndroidBuildStage
+import com.jarves.mh.runtime.AndroidHealthCheck
+import com.jarves.mh.runtime.AndroidHealthFix
+import com.jarves.mh.runtime.AndroidHealthStatus
+import com.jarves.mh.runtime.AndroidLogLevel
+import com.jarves.mh.runtime.AndroidLogLine
+import com.jarves.mh.runtime.AndroidLogcatState
+import com.jarves.mh.runtime.AndroidProjectTemplateGenerator
+import com.jarves.mh.runtime.RuntimeExecutionService
+import com.jarves.mh.runtime.RuntimeTaskController
+import com.jarves.mh.runtime.androidGradleCommand
+import com.jarves.mh.runtime.diagnoseAndroidBuildFailure
+import com.jarves.mh.runtime.findAndroidProjectRoot
+import com.jarves.mh.runtime.findDebugApk
+import com.jarves.mh.runtime.findReusableDebugApk
+import com.jarves.mh.runtime.inferAndroidBuildStage
+import com.jarves.mh.runtime.isDebugApkStale
+import com.jarves.mh.runtime.parseAndroidBuildIssues
 import com.jarves.mh.update.AppUpdateInfo
 import com.jarves.mh.update.AppUpdater
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.net.UnknownHostException
 import java.net.URI
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.UUID
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -85,6 +127,92 @@ enum class StartupStage { CHECKING, SETUP_REQUIRED, INSTALLING, MODEL_SETUP, INI
 enum class ApiPingStatus { IDLE, PINGING, OK, FAILED }
 enum class AppUpdateStatus { AVAILABLE, PERMISSION_REQUIRED, DOWNLOADING, INSTALLING, ERROR }
 enum class GitHubAuthStatus { DISCONNECTED, STARTING, AWAITING_USER, CONNECTED, ERROR }
+
+data class ExportSelection(
+    val defaultIncluded: Boolean = true,
+    val overrides: Map<String, Boolean> = emptyMap(),
+) {
+    fun includes(path: String): Boolean {
+        val normalized = path.trim('/')
+        return overrides.entries
+            .asSequence()
+            .filter { (rule, _) -> normalized == rule || normalized.startsWith("$rule/") }
+            .maxByOrNull { it.key.length }
+            ?.value ?: defaultIncluded
+    }
+
+    fun canContainIncluded(path: String): Boolean {
+        val normalized = path.trim('/')
+        return includes(normalized) || overrides.any { (rule, included) ->
+            included && rule.startsWith("$normalized/")
+        }
+    }
+
+    fun toggled(path: String, directory: Boolean): ExportSelection {
+        val normalized = path.trim('/')
+        val nextValue = !includes(normalized)
+        val next = overrides.toMutableMap()
+        if (directory) next.keys.filter { it.startsWith("$normalized/") }.forEach(next::remove)
+        next[normalized] = nextValue
+        return copy(overrides = next)
+    }
+}
+
+data class DeveloperDiagnostics(
+    val loading: Boolean = false,
+    val appPssBytes: Long = 0L,
+    val javaHeapBytes: Long = 0L,
+    val javaHeapMaxBytes: Long = 0L,
+    val activeProcesses: List<String> = emptyList(),
+    val messageCount: Int = 0,
+    val liveActivityCount: Int = 0,
+    val terminalBufferBytes: Long = 0L,
+    val buildLogBytes: Long = 0L,
+    val logcatLines: Int = 0,
+    val fileEntries: Int = 0,
+    val runtimeCacheBytes: Long = 0L,
+    val recentExit: String? = null,
+    val refreshedAtMillis: Long? = null,
+)
+
+/** Counts UTF-8 storage without allocating a second byte array for large logs. */
+internal fun utf8SizeInBytes(value: String): Long {
+    var bytes = 0L
+    var index = 0
+    while (index < value.length) {
+        val char = value[index]
+        when {
+            char.code < 0x80 -> bytes += 1
+            char.code < 0x800 -> bytes += 2
+            char.isHighSurrogate() && index + 1 < value.length && value[index + 1].isLowSurrogate() -> {
+                bytes += 4
+                index += 1
+            }
+            else -> bytes += 3
+        }
+        index += 1
+    }
+    return bytes
+}
+
+enum class FileReadOnlyReason { TOO_LARGE, BINARY, INVALID_UTF8, UNSAFE, READ_ERROR }
+
+data class OpenedFileState(
+    val path: String,
+    val content: String? = null,
+    val draft: String = "",
+    val loading: Boolean = true,
+    val editing: Boolean = false,
+    val saving: Boolean = false,
+    val dirty: Boolean = false,
+    val conflict: Boolean = false,
+    val readOnlyReason: FileReadOnlyReason? = null,
+    val originalFingerprint: String? = null,
+    val lineEnding: String = "\n",
+    val hadTrailingNewline: Boolean = false,
+    val targetLine: Int? = null,
+    val targetColumn: Int? = null,
+)
 
 data class TerminalOutputLine(
     val id: String = java.util.UUID.randomUUID().toString(),
@@ -126,6 +254,13 @@ private data class RuntimeRetryRequest(
     val prompt: String,
     val history: List<ChatMessage>,
     val provider: ProviderProfile,
+)
+
+data class QueuedFollowUp(
+    val id: String = UUID.randomUUID().toString(),
+    val projectId: String,
+    val prompt: String,
+    val attachments: List<ChatAttachment>,
 )
 
 private data class TranscriptWrite(
@@ -181,9 +316,10 @@ data class AppUiState(
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
-    val openedFilePath: String? = null,
-    val openedFileContent: String? = null,
-    val fileContentLoading: Boolean = false,
+    val diagnostics: DeveloperDiagnostics = DeveloperDiagnostics(),
+    val openedFile: OpenedFileState? = null,
+    val projectExportRunning: Boolean = false,
+    val projectExportSucceededAtMillis: Long? = null,
     val messages: List<ChatMessage> = listOf(
         ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change."),
     ),
@@ -201,6 +337,7 @@ data class AppUiState(
     val previewReady: Boolean = false,
     val previewUrl: String? = null,
     val isRunning: Boolean = false,
+    val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
     val projectTerminalLines: List<TerminalOutputLine> = emptyList(),
@@ -243,6 +380,20 @@ data class AppUiState(
     val antigravityModelsLoading: Boolean = false,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
+    val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
+    val androidBuildAction: AndroidAction = AndroidAction.NONE,
+    val androidBuildStage: AndroidBuildStage = AndroidBuildStage.IDLE,
+    val androidBuildIssues: List<AndroidBuildIssue> = emptyList(),
+    val androidBuildLog: String = "",
+    val androidBuildStartedAtMillis: Long? = null,
+    val androidBuildFinishedAtMillis: Long? = null,
+    val androidBuildApkPath: String? = null,
+    val androidBuildApkSizeBytes: Long? = null,
+    val androidBuildRecentDurationsMillis: List<Long> = emptyList(),
+    val androidApkInfo: AndroidApkInfo? = null,
+    val androidHealthChecks: List<AndroidHealthCheck> = emptyList(),
+    val androidHealthRunning: Boolean = false,
+    val androidLogcat: AndroidLogcatState = AndroidLogcatState(),
     val appUpdate: AppUpdateInfo? = null,
     val appUpdateStatus: AppUpdateStatus? = null,
     val appUpdateDownloadedBytes: Long = 0L,
@@ -256,6 +407,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun plural(@PluralsRes id: Int, count: Int, vararg args: Any): String =
         AppStrings.context(getApplication()).resources.getQuantityString(id, count, *args)
+    private data class FolderMetadata(val modifiedAtMillis: Long, val childCount: Int)
 
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
@@ -284,12 +436,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var terminalProcess: Process? = null
     @Volatile private var projectTerminalProjectId: String? = null
     @Volatile private var projectTerminalStopRequested: Boolean = false
+    @Volatile private var androidBuildProcess: Process? = null
+    @Volatile private var androidBuildStopRequested: Boolean = false
+    @Volatile private var androidLogcatProcess: Process? = null
+    private var androidLogcatJob: kotlinx.coroutines.Job? = null
+    private var diagnosticsJob: kotlinx.coroutines.Job? = null
+    private var lastDiagnosticsRefreshAtElapsedMillis = 0L
+    private var cachedRecentExitSummary: String? = null
+    private var recentExitLoadedAtElapsedMillis = 0L
+    private var pendingAndroidInstallId: String? = null
+    private var pendingAndroidInstallLaunch = false
+    private var androidLaunchAtMillis: Long? = null
     @Volatile private var setupCompletionHandled: Boolean = false
     @Volatile private var githubAuthProcess: Process? = null
     private var githubAuthJob: kotlinx.coroutines.Job? = null
     @Volatile private var lastOpenedAntigravityAuthUrl: String? = null
     private var activeRuntimeRequest: RuntimeRetryRequest? = null
+    private val pendingFollowUps = java.util.ArrayDeque<QueuedFollowUp>()
+    @Volatile private var steeringToFollowUp: Boolean = false
     private val failedApiKeyIds = mutableSetOf<String>()
+    private val folderMetadataCache = java.util.concurrent.ConcurrentHashMap<String, FolderMetadata>()
+    private val folderCountsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // Writes are drained into a per-chat batch below so rapid activity frames do not
+    // serialize hundreds of obsolete snapshots.
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
     private val initialPrimaryAgentKind = preferences.primaryAgentKind
@@ -336,14 +505,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        viewModelScope.launch {
+            AndroidAppInstaller.events.collect { event ->
+                if (event.operationId != pendingAndroidInstallId) return@collect
+                val project = _state.value.activeProject
+                val launchRequested = pendingAndroidInstallLaunch
+                pendingAndroidInstallId = null
+                pendingAndroidInstallLaunch = false
+                if (event.success) {
+                    if (event.launched) androidLaunchAtMillis = System.currentTimeMillis()
+                    val message = when {
+                        event.launched -> "App installed and launched"
+                        launchRequested -> "App installed, but no launchable activity was found"
+                        else -> "APK installed"
+                    }
+                    _state.update {
+                        it.copy(
+                            androidBuildRunning = false,
+                            androidBuildPhase = AndroidBuildPhase.SUCCEEDED,
+                            androidBuildStage = AndroidBuildStage.COMPLETE,
+                            androidBuildMessage = message,
+                            androidBuildFinishedAtMillis = System.currentTimeMillis(),
+                            toastMessage = message,
+                        )
+                    }
+                    project?.let { saveAndroidBuildRecord(it.id) }
+                    refreshAndroidApkInfo()
+                } else {
+                    val message = event.message ?: "APK installation failed"
+                    _state.update {
+                        it.copy(
+                            androidBuildRunning = false,
+                            androidBuildPhase = AndroidBuildPhase.FAILED,
+                            androidBuildStage = AndroidBuildStage.FAILED,
+                            androidBuildMessage = message,
+                            androidBuildIssues = listOf(AndroidBuildIssue(title = "Installation failed", detail = message)),
+                            androidBuildFinishedAtMillis = System.currentTimeMillis(),
+                            toastMessage = message,
+                        )
+                    }
+                    project?.let { saveAndroidBuildRecord(it.id) }
+                }
+            }
+        }
         // GitHub's official CLI owns its OAuth credential. Remove credentials from
         // the retired custom OAuth implementation and discover the real CLI status.
         vault.remove(LEGACY_GITHUB_TOKEN_KEY)
         viewModelScope.launch { refreshGitHubConnection() }
         RuntimeSetupController.restore(application)
         viewModelScope.launch(Dispatchers.IO) {
-            for (write in transcriptWrites) {
-                preferences.saveMessages(write.projectId, write.chatId, write.messages)
+            for (pending in transcriptWrites) {
+                delay(TRANSCRIPT_WRITE_DEBOUNCE_MS)
+                val latestByChat = linkedMapOf((pending.projectId to pending.chatId) to pending)
+                while (true) {
+                    val next = transcriptWrites.tryReceive().getOrNull() ?: break
+                    latestByChat[next.projectId to next.chatId] = next
+                }
+                latestByChat.values.forEach { latest ->
+                    preferences.saveMessages(latest.projectId, latest.chatId, latest.messages)
+                }
             }
         }
         viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
@@ -526,7 +746,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun requestProjectTerminalCommand(command: String) {
         val normalized = command.trim()
-        if (normalized.isBlank() || _state.value.projectTerminalRunning || projectTerminalProcess?.isAlive == true) return
+        if (normalized.isBlank() || _state.value.projectTerminalRunning || _state.value.androidBuildRunning || projectTerminalProcess?.isAlive == true) return
         if (requiresAndroidToolchain(normalized) && !installer.isStackInstalled(DevStack.ANDROID)) {
             _state.update {
                 it.copy(toastMessage = str(R.string.vm_android_tools_missing))
@@ -542,7 +762,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun prepareProjectTerminalCommand(command: String) {
         val project = _state.value.activeProject ?: return
-        if (command.isBlank() || _state.value.projectTerminalRunning) return
+        if (command.isBlank() || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update {
             it.copy(
                 projectTerminalCwd = projectGuestRoot(project),
@@ -557,7 +777,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openProjectTerminal() {
         val project = _state.value.activeProject ?: return
-        if (_state.value.projectTerminalRunning) return
+        if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { it.copy(projectTerminalCwd = projectGuestRoot(project)) }
     }
 
@@ -573,7 +793,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun runProjectTerminalCommand(command: String) {
         val project = _state.value.activeProject ?: return
-        if (_state.value.projectTerminalRunning) return
+        if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         val startingCwd = _state.value.projectTerminalCwd
         val existingLines = _state.value.projectTerminalLines
         projectTerminalStopRequested = false
@@ -649,6 +869,142 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.projectTerminalRunning) return
         _state.update { it.copy(projectTerminalLines = emptyList(), projectTerminalLiveOutput = "") }
         saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
+    }
+
+    fun refreshDeveloperDiagnostics() {
+        if (diagnosticsJob?.isActive == true) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDiagnosticsRefreshAtElapsedMillis < DIAGNOSTICS_REFRESH_COOLDOWN_MS) return
+        _state.update { it.copy(diagnostics = it.diagnostics.copy(loading = true)) }
+        diagnosticsJob = viewModelScope.launch {
+            try {
+                val snapshot = withContext(Dispatchers.IO) { collectDeveloperDiagnostics() }
+                lastDiagnosticsRefreshAtElapsedMillis = SystemClock.elapsedRealtime()
+                _state.update { it.copy(diagnostics = snapshot) }
+            } finally {
+                diagnosticsJob = null
+            }
+        }
+    }
+
+    fun stopInactiveDeveloperProcesses() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = _state.value
+            if (!current.isRunning) {
+                runCatching { claudeRuntime.stopActiveSession() }
+                runCatching { dshRuntime.stopActiveSession() }
+                runCatching { antigravityRuntime.stopActiveSession() }
+            }
+            if (!current.projectTerminalRunning) {
+                projectTerminalProcess?.takeIf(Process::isAlive)?.destroyForcibly()
+                projectTerminalProcess = null
+            }
+            if (!current.androidBuildRunning) {
+                androidBuildProcess?.takeIf(Process::isAlive)?.destroyForcibly()
+                androidBuildProcess = null
+            }
+            withContext(Dispatchers.Main) {
+                _state.update { it.copy(toastMessage = str(R.string.diagnostics_inactive_stopped)) }
+                lastDiagnosticsRefreshAtElapsedMillis = 0L
+                refreshDeveloperDiagnostics()
+            }
+        }
+    }
+
+    fun clearDeveloperRuntimeCache() {
+        val current = _state.value
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
+            _state.update { it.copy(toastMessage = str(R.string.diagnostics_cache_busy)) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            getApplication<Application>().cacheDir.listFiles().orEmpty()
+                .filter { it.isFile && it.name.startsWith("runtime-output-") }
+                .forEach { runCatching { it.delete() } }
+            withContext(Dispatchers.Main) {
+                _state.update { it.copy(toastMessage = str(R.string.diagnostics_cache_cleared)) }
+                lastDiagnosticsRefreshAtElapsedMillis = 0L
+                refreshDeveloperDiagnostics()
+            }
+        }
+    }
+
+    /** Drops only rebuildable or already-persisted data when Android reports memory pressure. */
+    fun releaseMemoryCaches() {
+        folderMetadataCache.clear()
+        cachedRecentExitSummary = null
+        _state.update { current ->
+            current.copy(
+                projectTerminalLines = current.projectTerminalLines.takeLast(MEMORY_PRESSURE_TERMINAL_LINES),
+                projectTerminalLiveOutput = current.projectTerminalLiveOutput.takeLast(MEMORY_PRESSURE_TEXT_CHARS),
+                androidBuildLog = current.androidBuildLog.takeLast(MEMORY_PRESSURE_TEXT_CHARS),
+                androidLogcat = current.androidLogcat.copy(
+                    lines = current.androidLogcat.lines.takeLast(MEMORY_PRESSURE_LOGCAT_LINES),
+                ),
+            )
+        }
+    }
+
+    private fun collectDeveloperDiagnostics(): DeveloperDiagnostics {
+        val current = _state.value
+        val memory = Debug.MemoryInfo().also(Debug::getMemoryInfo)
+        val runtime = Runtime.getRuntime()
+        val active = buildList {
+            if (current.isRunning) add(current.agentKind.title)
+            if (current.projectTerminalRunning || projectTerminalProcess?.isAlive == true) add("Project terminal")
+            if (terminalProcess?.isAlive == true) add("Quick terminal")
+            if (current.androidBuildRunning || androidBuildProcess?.isAlive == true) add("Android build")
+            if (current.androidLogcat.running || androidLogcatProcess?.isAlive == true) add("Logcat")
+        }
+        val runtimeCache = getApplication<Application>().cacheDir.listFiles().orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.name.startsWith("runtime-output-") }
+            .sumOf(File::length)
+        return DeveloperDiagnostics(
+            appPssBytes = memory.totalPss.toLong() * 1_024L,
+            javaHeapBytes = runtime.totalMemory() - runtime.freeMemory(),
+            javaHeapMaxBytes = runtime.maxMemory(),
+            activeProcesses = active,
+            messageCount = current.messages.size,
+            liveActivityCount = current.liveProcess.size,
+            terminalBufferBytes = utf8SizeInBytes(current.projectTerminalLiveOutput) +
+                current.projectTerminalLines.sumOf { utf8SizeInBytes(it.output) },
+            buildLogBytes = utf8SizeInBytes(current.androidBuildLog),
+            logcatLines = current.androidLogcat.lines.size,
+            fileEntries = current.workspaceFiles.size,
+            runtimeCacheBytes = runtimeCache,
+            recentExit = recentAppExitSummary(),
+            refreshedAtMillis = System.currentTimeMillis(),
+        )
+    }
+
+    private fun recentAppExitSummary(): String? {
+        val now = SystemClock.elapsedRealtime()
+        if (now - recentExitLoadedAtElapsedMillis < RECENT_EXIT_CACHE_MS) return cachedRecentExitSummary
+        recentExitLoadedAtElapsedMillis = now
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val manager = getApplication<Application>().getSystemService(ActivityManager::class.java)
+        val exit = manager.getHistoricalProcessExitReasons(getApplication<Application>().packageName, 0, 8)
+            .firstOrNull { info ->
+                info.reason == android.app.ApplicationExitInfo.REASON_ANR ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_CRASH ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE ||
+                    info.reason == android.app.ApplicationExitInfo.REASON_LOW_MEMORY
+            } ?: run {
+                cachedRecentExitSummary = null
+                return null
+            }
+        val reason = when (exit.reason) {
+            android.app.ApplicationExitInfo.REASON_ANR -> "ANR"
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "Low memory"
+            android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "Excessive resource use"
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "Native crash"
+            else -> "Crash"
+        }
+        val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(exit.timestamp))
+        return ("$reason · $time" + exit.description?.takeIf(String::isNotBlank)?.let { " · ${it.take(160)}" }.orEmpty())
+            .also { cachedRecentExitSummary = it }
     }
 
     private fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
@@ -860,6 +1216,159 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun buildAndRunAndroidApp() {
+        performAndroidAction(AndroidAction.BUILD_AND_RUN)
+    }
+
+    fun performAndroidAction(action: AndroidAction) {
+        when (action) {
+            AndroidAction.BUILD -> {
+                if (!completeFromReusableApk(action, launch = false)) startAndroidGradleTask("assembleDebug", action)
+            }
+            AndroidAction.FORCE_BUILD -> startAndroidGradleTask("assembleDebug", action)
+            AndroidAction.INSTALL -> installLatestAndroidApk(launch = false, action = action)
+            AndroidAction.RUN -> runLatestAndroidApk()
+            AndroidAction.BUILD_AND_RUN -> {
+                if (!completeFromReusableApk(action, launch = true)) startAndroidGradleTask("assembleDebug", action)
+            }
+            AndroidAction.CLEAN -> startAndroidGradleTask("clean", action)
+            AndroidAction.NONE -> Unit
+        }
+    }
+
+    private fun completeFromReusableApk(action: AndroidAction, launch: Boolean): Boolean {
+        val current = _state.value
+        val project = current.activeProject ?: return false
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) return false
+        val workspace = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return false
+        val apk = findReusableDebugApk(workspace) ?: return false
+        if (launch) {
+            if (AndroidAppInstaller.openIfAlreadyInstalled(getApplication(), apk)) {
+                androidLaunchAtMillis = System.currentTimeMillis()
+            } else {
+                beginAndroidInstall(apk, launch = true, action = action)
+                return true
+            }
+        }
+        val now = System.currentTimeMillis()
+        val message = if (launch) "No changes — opened the installed app" else "APK is already current"
+        _state.update {
+            it.copy(
+                androidBuildRunning = false,
+                androidBuildPhase = AndroidBuildPhase.SUCCEEDED,
+                androidBuildAction = action,
+                androidBuildStage = AndroidBuildStage.COMPLETE,
+                androidBuildIssues = emptyList(),
+                androidBuildMessage = message,
+                androidBuildLog = "Gradle skipped: project files have not changed since the last successful build.\n",
+                androidBuildStartedAtMillis = now,
+                androidBuildFinishedAtMillis = now,
+                androidBuildApkPath = apk.absolutePath,
+                androidBuildApkSizeBytes = apk.length(),
+                toastMessage = message,
+            )
+        }
+        saveAndroidBuildRecord(project.id)
+        refreshAndroidApkInfo()
+        return true
+    }
+
+    fun cleanAndroidProject() {
+        performAndroidAction(AndroidAction.CLEAN)
+    }
+
+    private fun runLatestAndroidApk() {
+        val project = _state.value.activeProject ?: return
+        val root = findAndroidProjectRoot(projectWorkspaceRoot(project))
+        val apk = root?.let(::findDebugApk)
+        if (apk == null) {
+            _state.update { it.copy(toastMessage = "Build an APK before running the app") }
+            return
+        }
+        if (AndroidAppInstaller.openIfAlreadyInstalled(getApplication(), apk)) {
+            androidLaunchAtMillis = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            _state.update {
+                it.copy(
+                    androidBuildAction = AndroidAction.RUN,
+                    androidBuildStage = AndroidBuildStage.COMPLETE,
+                    androidBuildPhase = AndroidBuildPhase.SUCCEEDED,
+                    androidBuildMessage = "App launched without rebuilding",
+                    androidBuildStartedAtMillis = now,
+                    androidBuildFinishedAtMillis = now,
+                    toastMessage = "App launched",
+                )
+            }
+        } else {
+            beginAndroidInstall(apk, launch = true, action = AndroidAction.RUN)
+        }
+    }
+
+    private fun installLatestAndroidApk(launch: Boolean, action: AndroidAction) {
+        val project = _state.value.activeProject ?: return
+        val root = findAndroidProjectRoot(projectWorkspaceRoot(project))
+        val apk = root?.let(::findDebugApk)
+        if (apk == null) {
+            _state.update { it.copy(toastMessage = "Build an APK before installing it") }
+            return
+        }
+        beginAndroidInstall(apk, launch, action)
+    }
+
+    private fun beginAndroidInstall(apk: File, launch: Boolean, action: AndroidAction) {
+        if (_state.value.androidBuildRunning && pendingAndroidInstallId != null) return
+        val operationId = UUID.randomUUID().toString()
+        pendingAndroidInstallId = operationId
+        pendingAndroidInstallLaunch = launch
+        val now = System.currentTimeMillis()
+        _state.update {
+            it.copy(
+                androidBuildRunning = true,
+                androidBuildAction = action,
+                androidBuildStage = AndroidBuildStage.INSTALLING,
+                androidBuildPhase = AndroidBuildPhase.BUILDING,
+                androidBuildMessage = if (launch) "Installing APK before launch…" else "Installing APK…",
+                androidBuildIssues = emptyList(),
+                androidBuildStartedAtMillis = it.androidBuildStartedAtMillis ?: now,
+                androidBuildFinishedAtMillis = null,
+                androidBuildApkPath = apk.absolutePath,
+                androidBuildApkSizeBytes = apk.length(),
+            )
+        }
+        runCatching {
+            AndroidAppInstaller.install(getApplication(), apk, launchAfterInstall = launch, operationId = operationId)
+        }.onFailure { error ->
+            pendingAndroidInstallId = null
+            pendingAndroidInstallLaunch = false
+            _state.update {
+                it.copy(
+                    androidBuildRunning = false,
+                    androidBuildPhase = AndroidBuildPhase.FAILED,
+                    androidBuildStage = AndroidBuildStage.FAILED,
+                    androidBuildMessage = error.message ?: "Could not start APK installation",
+                    androidBuildIssues = listOf(AndroidBuildIssue(title = "Installation failed", detail = error.message ?: "Could not start Android's installer")),
+                )
+            }
+        }
+    }
+
+    fun cancelAndroidBuild() {
+        if (!_state.value.androidBuildRunning) return
+        androidBuildStopRequested = true
+        _state.update {
+            it.copy(
+                androidBuildPhase = AndroidBuildPhase.CANCELLING,
+                androidBuildStage = AndroidBuildStage.CANCELLING,
+                androidBuildMessage = "Stopping Gradle safely…",
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            androidBuildProcess?.destroy()
+            delay(500)
+            if (androidBuildProcess?.isAlive == true) androidBuildProcess?.destroyForcibly()
+        }
+    }
+
+    private fun startAndroidGradleTask(task: String, action: AndroidAction) {
         val project = _state.value.activeProject ?: return
         if (_state.value.androidBuildRunning) return
         if (!installer.isStackInstalled(DevStack.ANDROID)) {
@@ -876,66 +1385,602 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(toastMessage = str(R.string.vm_wait_terminal_before_build)) }
             return
         }
-        _state.update { it.copy(androidBuildRunning = true, androidBuildMessage = str(R.string.vm_building_debug_apk), toastMessage = null) }
+        val startedAt = System.currentTimeMillis()
+        androidBuildStopRequested = false
+        _state.update {
+            it.copy(
+                androidBuildRunning = true,
+                androidBuildPhase = AndroidBuildPhase.PREPARING,
+                androidBuildAction = action,
+                androidBuildStage = AndroidBuildStage.PREPARING,
+                androidBuildIssues = emptyList(),
+                androidBuildMessage = if (task == "clean") "Preparing clean…" else "Preparing Android build…",
+                androidBuildLog = "",
+                androidBuildStartedAtMillis = startedAt,
+                androidBuildFinishedAtMillis = null,
+                androidBuildApkPath = null,
+                androidBuildApkSizeBytes = null,
+                toastMessage = null,
+            )
+        }
+        saveAndroidBuildRecord(project.id)
+        startAndroidBuildForegroundService(project, task)
         viewModelScope.launch(Dispatchers.IO) {
+            var buildWorkspace: File? = null
+            var finalOutput = ""
+            var finalExitCode = -1
             runCatching {
                 val installed = installer.installedRuntime()
-                val workspace = findAndroidGradleProjectRoot(projectWorkspaceRoot(project))
+                val workspace = findAndroidProjectRoot(projectWorkspaceRoot(project))
                     ?: error(str(R.string.vm_no_android_project))
+                buildWorkspace = workspace
+                val command = androidGradleCommand(workspace, task)
+                _state.update {
+                    it.copy(
+                        androidBuildPhase = AndroidBuildPhase.BUILDING,
+                        androidBuildStage = AndroidBuildStage.RESOLVING,
+                        androidBuildMessage = if (task == "clean") "Cleaning project…" else "Running assembleDebug…",
+                        androidBuildLog = "$ $command\n",
+                    )
+                }
                 val process = installer.process(
                     installed.proot, installed.rootfs, workspace, emptyMap(),
-                    listOf(
-                        "/usr/bin/bash", "-lc",
-                        "gradle --init-script /root/.gradle/init.d/pocketdev-android.gradle " +
-                            "-Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 " +
-                            "--no-daemon assembleDebug --console=plain",
-                    ),
+                    listOf("/usr/bin/bash", "-lc", command),
                     projectGuestRoot(project),
                 )
-                val exitCode = process.waitFor()
-                val buildOutput = (process as? NativeSpawnProcess)?.outputFile?.readTailText(MAX_PROCESS_OUTPUT_BYTES).orEmpty()
-                check(exitCode == 0) {
-                    buildOutput.trim().takeLast(2_000).ifBlank { str(R.string.vm_gradle_build_failed, exitCode) }
+                androidBuildProcess = process
+                RuntimeTaskController.stopAction = ::cancelAndroidBuild
+                val native = process as? NativeSpawnProcess ?: error("Unsupported Android build process")
+                var offset = 0L
+                while (process.isAlive || native.outputFile.length() > offset) {
+                    val available = native.outputFile.length() - offset
+                    if (available <= 0L) {
+                        Thread.sleep(75)
+                        continue
+                    }
+                    val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+                    val count = RandomAccessFile(native.outputFile, "r").use { file ->
+                        file.seek(offset)
+                        file.read(bytes)
+                    }
+                    if (count > 0) {
+                        offset += count
+                        val chunk = sanitizeTerminalOutput(bytes.decodeToString(0, count))
+                        _state.update { current ->
+                            val nextStage = inferAndroidBuildStage(chunk, current.androidBuildStage)
+                            current.copy(
+                                androidBuildLog = (current.androidBuildLog + chunk).takeLast(MAX_ANDROID_BUILD_LOG),
+                                androidBuildStage = nextStage,
+                                androidBuildMessage = androidStageMessage(nextStage),
+                            )
+                        }
+                    }
                 }
-                val apk = workspace.walkTopDown()
-                    .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) && it.path.contains("/outputs/apk/debug/") }
-                    .maxByOrNull(File::lastModified)
-                    ?: error(str(R.string.vm_no_debug_apk))
-                AndroidAppInstaller.install(getApplication(), apk)
-            }.onSuccess {
+                val exitCode = process.waitFor()
+                val buildOutput = sanitizeTerminalOutput(native.outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES))
+                finalExitCode = exitCode
+                finalOutput = buildOutput
+                if (androidBuildStopRequested) throw java.util.concurrent.CancellationException("Build cancelled")
+                check(exitCode == 0) {
+                    diagnoseAndroidBuildFailure(buildOutput, exitCode)
+                }
+                if (task == "clean") null else {
+                    _state.update { it.copy(androidBuildStage = AndroidBuildStage.FINDING_APK, androidBuildMessage = "Finding debug APK…") }
+                    findDebugApk(workspace) ?: error("Gradle finished but no debug APK was found")
+                }
+            }.onSuccess { apk ->
+                val shouldInstallAndRun = apk != null && action == AndroidAction.BUILD_AND_RUN
+                val message = if (apk == null) "Project cleaned successfully" else "Debug APK built successfully"
+                val buildCompletedAt = System.currentTimeMillis()
+                withContext(Dispatchers.Main) {
+                    _state.update { current ->
+                        val duration = (buildCompletedAt - startedAt).coerceAtLeast(1L)
+                        val recentDurations = if (apk != null) {
+                            (current.androidBuildRecentDurationsMillis + duration).takeLast(5)
+                        } else current.androidBuildRecentDurationsMillis
+                        current.copy(
+                            androidBuildRunning = shouldInstallAndRun,
+                            androidBuildPhase = AndroidBuildPhase.SUCCEEDED,
+                            androidBuildStage = if (shouldInstallAndRun) AndroidBuildStage.INSTALLING else AndroidBuildStage.COMPLETE,
+                            androidBuildMessage = message,
+                            androidBuildIssues = emptyList(),
+                            androidBuildFinishedAtMillis = buildCompletedAt,
+                            androidBuildApkPath = apk?.absolutePath,
+                            androidBuildApkSizeBytes = apk?.length(),
+                            androidBuildRecentDurationsMillis = recentDurations,
+                            toastMessage = message,
+                        )
+                    }
+                    saveAndroidBuildRecord(project.id)
+                    refreshAndroidApkInfo()
+                }
+                finishAndroidBuildForegroundService(project, message, failed = false)
+                if (shouldInstallAndRun) beginAndroidInstall(apk!!, launch = true, action = action)
+            }.onFailure { error ->
+                val cancelled = error is java.util.concurrent.CancellationException || androidBuildStopRequested
+                val message = if (cancelled) "Android build cancelled" else error.message ?: "Could not build APK"
+                val issues = if (cancelled) emptyList() else buildWorkspace?.let {
+                    parseAndroidBuildIssues(finalOutput.ifBlank { message }, it, finalExitCode)
+                }.orEmpty().ifEmpty { listOf(AndroidBuildIssue(title = "Build failed", detail = message)) }
                 withContext(Dispatchers.Main) {
                     _state.update {
                         it.copy(
                             androidBuildRunning = false,
-                            androidBuildMessage = str(R.string.vm_apk_sent_to_installer),
-                            toastMessage = str(R.string.vm_apk_built),
+                            androidBuildPhase = if (cancelled) AndroidBuildPhase.CANCELLED else AndroidBuildPhase.FAILED,
+                            androidBuildStage = if (cancelled) AndroidBuildStage.CANCELLED else AndroidBuildStage.FAILED,
+                            androidBuildMessage = message,
+                            androidBuildIssues = issues,
+                            androidBuildFinishedAtMillis = System.currentTimeMillis(),
+                            toastMessage = message,
                         )
                     }
+                    saveAndroidBuildRecord(project.id)
                 }
-            }.onFailure { error ->
-                withContext(Dispatchers.Main) {
-                    _state.update { it.copy(androidBuildRunning = false, androidBuildMessage = null, toastMessage = error.message ?: str(R.string.vm_apk_build_failed)) }
+                finishAndroidBuildForegroundService(project, message, failed = !cancelled, cancelled = cancelled)
+            }.also {
+                androidBuildProcess = null
+                androidBuildStopRequested = false
+                RuntimeTaskController.stopAction = null
+                steeringToFollowUp = false
+                if (pendingFollowUps.isNotEmpty()) {
+                    viewModelScope.launch {
+                        delay(150)
+                        if (!_state.value.isRunning && !_state.value.androidBuildRunning && !_state.value.projectTerminalRunning) {
+                            startNextFollowUp()
+                        }
+                    }
                 }
             }
         }
     }
 
-    private fun findAndroidGradleProjectRoot(workspace: File): File? {
-        val settingsNames = setOf("settings.gradle", "settings.gradle.kts", "settings.gradle.dcl")
-        return workspace.walkTopDown()
-            .maxDepth(4)
-            .filter { it.isFile && it.name in settingsNames }
-            .mapNotNull(File::getParentFile)
-            .sortedBy { it.absolutePath.length }
-            .firstOrNull { root ->
-                root.walkTopDown()
-                    .maxDepth(4)
-                    .any { it.isFile && it.invariantSeparatorsPath.endsWith("src/main/AndroidManifest.xml") }
-            }
-    }
-
     private fun requiresAndroidToolchain(command: String): Boolean =
         Regex("(?m)(^|[;&|]\\s*)(?:\\./)?gradle(?:w)?(?:\\s|$)", RegexOption.IGNORE_CASE).containsMatchIn(command)
+
+    private fun androidStageMessage(stage: AndroidBuildStage): String = when (stage) {
+        AndroidBuildStage.PREPARING -> "Preparing Android build…"
+        AndroidBuildStage.RESOLVING -> "Resolving dependencies…"
+        AndroidBuildStage.COMPILING -> "Compiling source code…"
+        AndroidBuildStage.RESOURCES -> "Processing Android resources…"
+        AndroidBuildStage.PACKAGING -> "Packaging debug APK…"
+        AndroidBuildStage.FINDING_APK -> "Finding debug APK…"
+        AndroidBuildStage.INSTALLING -> "Installing APK…"
+        AndroidBuildStage.LAUNCHING -> "Launching app…"
+        AndroidBuildStage.COMPLETE -> "Complete"
+        AndroidBuildStage.CANCELLING -> "Stopping Gradle safely…"
+        AndroidBuildStage.CANCELLED -> "Android build cancelled"
+        AndroidBuildStage.FAILED -> "Android operation failed"
+        AndroidBuildStage.IDLE -> "Ready"
+    }
+
+    private fun startAndroidBuildForegroundService(project: Project, task: String) {
+        ContextCompat.startForegroundService(
+            getApplication(),
+            Intent(getApplication(), RuntimeExecutionService::class.java)
+                .setAction(RuntimeExecutionService.ACTION_START)
+                .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, project.name)
+                .putExtra(RuntimeExecutionService.EXTRA_TITLE, if (task == "clean") "Cleaning Android project" else "Building Android app")
+                .putExtra(RuntimeExecutionService.EXTRA_DETAIL, if (task == "clean") "Running Gradle clean" else "Running Gradle assembleDebug")
+                .putExtra(RuntimeExecutionService.EXTRA_CAN_STOP, true),
+        )
+    }
+
+    private fun finishAndroidBuildForegroundService(
+        project: Project,
+        detail: String,
+        failed: Boolean,
+        cancelled: Boolean = false,
+    ) {
+        runCatching {
+            getApplication<Application>().startService(
+                Intent(getApplication(), RuntimeExecutionService::class.java)
+                    .setAction(
+                        when {
+                            cancelled -> RuntimeExecutionService.ACTION_CANCELLED
+                            failed -> RuntimeExecutionService.ACTION_FAILED
+                            else -> RuntimeExecutionService.ACTION_COMPLETE
+                        },
+                    )
+                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, project.name)
+                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
+            )
+        }
+    }
+
+    private fun androidBuildRecordFile(projectId: String): File =
+        File(getApplication<Application>().filesDir, "android-builds/$projectId.json")
+
+    private fun saveAndroidBuildRecord(projectId: String) {
+        val state = _state.value
+        runCatching {
+            androidBuildRecordFile(projectId).apply {
+                parentFile?.mkdirs()
+                writeText(
+                    JSONObject()
+                        .put("phase", state.androidBuildPhase.name)
+                        .put("message", state.androidBuildMessage)
+                        .put("log", state.androidBuildLog.takeLast(MAX_ANDROID_BUILD_LOG))
+                        .put("startedAtMillis", state.androidBuildStartedAtMillis)
+                        .put("finishedAtMillis", state.androidBuildFinishedAtMillis)
+                        .put("apkPath", state.androidBuildApkPath)
+                        .put("apkSizeBytes", state.androidBuildApkSizeBytes)
+                        .put("action", state.androidBuildAction.name)
+                        .put("stage", state.androidBuildStage.name)
+                        .put("recentDurationsMillis", JSONArray(state.androidBuildRecentDurationsMillis))
+                        .put("issues", JSONArray().apply {
+                            state.androidBuildIssues.forEach { issue ->
+                                put(JSONObject()
+                                    .put("severity", issue.severity.name)
+                                    .put("title", issue.title)
+                                    .put("detail", issue.detail)
+                                    .put("suggestion", issue.suggestion)
+                                    .put("filePath", issue.filePath)
+                                    .put("line", issue.line)
+                                    .put("column", issue.column))
+                            }
+                        })
+                        .toString(),
+                )
+            }
+        }
+    }
+
+    private fun loadAndroidBuildRecord(projectId: String): AndroidBuildRecord {
+        val file = androidBuildRecordFile(projectId)
+        if (!file.isFile) return AndroidBuildRecord()
+        return runCatching {
+            val json = JSONObject(file.readText())
+            val phase = runCatching { AndroidBuildPhase.valueOf(json.optString("phase")) }
+                .getOrDefault(AndroidBuildPhase.IDLE)
+                .let { if (it in setOf(AndroidBuildPhase.PREPARING, AndroidBuildPhase.BUILDING, AndroidBuildPhase.CANCELLING)) AndroidBuildPhase.CANCELLED else it }
+            AndroidBuildRecord(
+                phase = phase,
+                message = if (phase == AndroidBuildPhase.CANCELLED) "Previous Android build was interrupted" else json.optString("message").takeIf(String::isNotBlank),
+                log = json.optString("log"),
+                startedAtMillis = json.optLong("startedAtMillis").takeIf { it > 0L },
+                finishedAtMillis = json.optLong("finishedAtMillis").takeIf { it > 0L },
+                apkPath = json.optString("apkPath").takeIf { it.isNotBlank() && File(it).isFile },
+                apkSizeBytes = json.optLong("apkSizeBytes").takeIf { it > 0L },
+                action = runCatching { AndroidAction.valueOf(json.optString("action")) }.getOrDefault(AndroidAction.NONE),
+                recentDurationsMillis = json.optJSONArray("recentDurationsMillis")?.let { array ->
+                    (0 until array.length()).mapNotNull { index -> array.optLong(index).takeIf { it > 0L } }
+                }.orEmpty(),
+                stage = runCatching { AndroidBuildStage.valueOf(json.optString("stage")) }.getOrDefault(
+                    when (phase) {
+                        AndroidBuildPhase.SUCCEEDED -> AndroidBuildStage.COMPLETE
+                        AndroidBuildPhase.FAILED -> AndroidBuildStage.FAILED
+                        AndroidBuildPhase.CANCELLED -> AndroidBuildStage.CANCELLED
+                        else -> AndroidBuildStage.IDLE
+                    },
+                ),
+                issues = json.optJSONArray("issues")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        array.optJSONObject(index)?.let { item ->
+                            AndroidBuildIssue(
+                                severity = runCatching { com.jarves.mh.runtime.AndroidIssueSeverity.valueOf(item.optString("severity")) }
+                                    .getOrDefault(com.jarves.mh.runtime.AndroidIssueSeverity.ERROR),
+                                title = item.optString("title"),
+                                detail = item.optString("detail"),
+                                suggestion = item.optString("suggestion").takeIf(String::isNotBlank),
+                                filePath = item.optString("filePath").takeIf(String::isNotBlank),
+                                line = item.optInt("line").takeIf { it > 0 },
+                                column = item.optInt("column").takeIf { it > 0 },
+                            )
+                        }
+                    }
+                }.orEmpty(),
+            )
+        }.getOrDefault(AndroidBuildRecord())
+    }
+
+    fun refreshAndroidDashboard() {
+        refreshAndroidApkInfo()
+        refreshAndroidHealth()
+    }
+
+    fun refreshAndroidApkInfo() {
+        val project = _state.value.activeProject ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val info = runCatching {
+                val projectRoot = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return@runCatching null
+                val apk = findDebugApk(projectRoot) ?: return@runCatching null
+                val app = getApplication<Application>()
+                @Suppress("DEPRECATION")
+                val archive = app.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+                val packageName = archive?.packageName ?: AndroidAppInstaller.packageName(app, apk)
+                AndroidApkInfo(
+                    path = apk.absolutePath,
+                    fileName = apk.name,
+                    sizeBytes = apk.length(),
+                    builtAtMillis = apk.lastModified(),
+                    packageName = packageName,
+                    versionName = archive?.versionName,
+                    versionCode = archive?.let {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong()
+                    },
+                    minSdk = archive?.applicationInfo?.minSdkVersion,
+                    targetSdk = archive?.applicationInfo?.targetSdkVersion,
+                    stale = isDebugApkStale(projectRoot, apk),
+                    installed = packageName?.let { AndroidAppInstaller.isInstalled(app, it) } == true,
+                    installedMatches = AndroidAppInstaller.installedMatches(app, apk),
+                )
+            }.getOrNull()
+            _state.update { it.copy(androidApkInfo = info) }
+        }
+    }
+
+    fun shareAndroidApk() {
+        val info = _state.value.androidApkInfo ?: return
+        val file = File(info.path).takeIf(File::isFile) ?: return
+        runCatching {
+            val app = getApplication<Application>()
+            val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", file)
+            app.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "application/vnd.android.package-archive"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }, "Share APK").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { error -> _state.update { it.copy(toastMessage = error.message ?: "Could not share APK") } }
+    }
+
+    fun saveAndroidApk(uri: Uri) {
+        val info = _state.value.androidApkInfo ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val source = File(info.path).takeIf(File::isFile) ?: error("APK is unavailable")
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
+                    source.inputStream().buffered().use { it.copyTo(output) }
+                } ?: error("The selected location could not be opened")
+            }
+            _state.update { it.copy(toastMessage = if (result.isSuccess) "APK saved" else result.exceptionOrNull()?.message ?: "Could not save APK") }
+        }
+    }
+
+    fun openInstalledAndroidAppDetails() {
+        val packageName = _state.value.androidApkInfo?.packageName ?: return
+        getApplication<Application>().startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    fun uninstallAndroidApp() {
+        val packageName = _state.value.androidApkInfo?.packageName ?: return
+        getApplication<Application>().startActivity(
+            Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    fun openAndroidIssue(issue: AndroidBuildIssue) {
+        val project = _state.value.activeProject ?: return
+        val path = issue.filePath ?: return
+        val root = projectWorkspaceRoot(project)
+        val candidate = File(root, path)
+        val resolved = when {
+            candidate.isFile -> candidate
+            else -> root.walkTopDown().firstOrNull { it.isFile && it.name == File(path).name }
+        } ?: return
+        val relative = resolved.relativeTo(root).invariantSeparatorsPath
+        _state.update { it.copy(openedFile = OpenedFileState(path = relative, targetLine = issue.line, targetColumn = issue.column)) }
+        loadOpenedFile(project, relative, issue.line, issue.column)
+    }
+
+    fun refreshAndroidHealth() {
+        val project = _state.value.activeProject ?: return
+        if (_state.value.androidHealthRunning) return
+        _state.update { it.copy(androidHealthRunning = true, androidHealthChecks = emptyList()) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val checks = mutableListOf<AndroidHealthCheck>()
+            val toolsInstalled = installer.isStackInstalled(DevStack.ANDROID)
+            checks += AndroidHealthCheck(
+                "tools", "Android development tools",
+                if (toolsInstalled) "Android SDK, Gradle, and Java are installed." else "The Android development stack is not installed.",
+                if (toolsInstalled) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                if (toolsInstalled) AndroidHealthFix.NONE else AndroidHealthFix.INSTALL_TOOLS,
+            )
+            val root = findAndroidProjectRoot(projectWorkspaceRoot(project))
+            checks += AndroidHealthCheck(
+                "project", "Android project",
+                root?.let { "Project detected at ${it.name}." } ?: "No Android Gradle project was detected.",
+                if (root != null) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+            )
+            val launcher = root?.let { File(it, "gradlew").isFile || File(it, "build.gradle").isFile || File(it, "build.gradle.kts").isFile } == true
+            checks += AndroidHealthCheck(
+                "gradle", "Gradle launcher",
+                if (launcher) "A Gradle launcher is available." else "No Gradle wrapper or build file was found.",
+                if (launcher) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+            )
+            if (toolsInstalled && root != null) {
+                val (toolchainExit, output) = runAndroidGuestCommand(
+                    project,
+                    "java -version 2>&1 | grep -E '\"17\\.|version 17' >/dev/null && " +
+                        "gradle --version >/dev/null && " +
+                        "/root/android-sdk/build-tools/35.0.0/aapt2 version >/dev/null && " +
+                        "printf POCKETDEV_TOOLCHAIN_OK",
+                )
+                val ok = toolchainExit == 0 && "POCKETDEV_TOOLCHAIN_OK" in output
+                checks += AndroidHealthCheck(
+                    "toolchain", "Java, Gradle, and AAPT2",
+                    if (ok) "Java 17, Gradle, and AAPT2 responded successfully." else "One or more Android build tools could not be verified.",
+                    if (ok) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                    if (ok) AndroidHealthFix.NONE else AndroidHealthFix.INSTALL_TOOLS,
+                )
+                val compileSdk = root.walkTopDown().maxDepth(3).filter { it.isFile && it.name in setOf("build.gradle", "build.gradle.kts") }
+                    .mapNotNull { Regex("compileSdk(?:Version)?\\s*(?:=|\\s)\\s*(\\d+)").find(it.readText())?.groupValues?.get(1)?.toIntOrNull() }
+                    .maxOrNull()
+                val platformAvailable = compileSdk == null || File(installer.installedRuntime().rootfs, "root/android-sdk/platforms/android-$compileSdk/android.jar").isFile
+                checks += AndroidHealthCheck(
+                    "sdk", "Compile SDK",
+                    when { compileSdk == null -> "The compile SDK could not be determined."; platformAvailable -> "Android API $compileSdk is installed."; else -> "Android API $compileSdk is required but unavailable." },
+                    when { compileSdk == null -> AndroidHealthStatus.WARNING; platformAvailable -> AndroidHealthStatus.PASSED; else -> AndroidHealthStatus.FAILED },
+                    if (!platformAvailable) AndroidHealthFix.INSTALL_TOOLS else AndroidHealthFix.NONE,
+                )
+            }
+            val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = connectivity.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
+            val online = network?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            checks += AndroidHealthCheck(
+                "network", "Dependency network",
+                if (online) "An internet connection is available." else "No internet connection is available; uncached dependencies may fail.",
+                if (online) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
+                if (online) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_NETWORK_SETTINGS,
+            )
+            val freeBytes = StatFs(app.filesDir.absolutePath).availableBytes
+            val enoughStorage = freeBytes >= 1_500L * 1024L * 1024L
+            checks += AndroidHealthCheck(
+                "storage", "Free storage",
+                "${freeBytes / 1024 / 1024} MB available for builds and APK installation.",
+                if (enoughStorage) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
+                if (enoughStorage) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_STORAGE_SETTINGS,
+            )
+            val installAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || app.packageManager.canRequestPackageInstalls()
+            checks += AndroidHealthCheck(
+                "install", "APK installation permission",
+                if (installAllowed) "PocketDev can request APK installation." else "Allow PocketDev to install unknown apps.",
+                if (installAllowed) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                if (installAllowed) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_INSTALL_SETTINGS,
+            )
+            val apk = root?.let(::findDebugApk)
+            checks += AndroidHealthCheck(
+                "apk", "Debug APK",
+                when { apk == null -> "No debug APK has been built yet."; isDebugApkStale(root, apk) -> "The latest APK is older than the project source."; else -> "The debug APK matches the current project source." },
+                when { apk == null -> AndroidHealthStatus.WARNING; isDebugApkStale(root, apk) -> AndroidHealthStatus.WARNING; else -> AndroidHealthStatus.PASSED },
+            )
+            _state.update { it.copy(androidHealthRunning = false, androidHealthChecks = checks) }
+        }
+    }
+
+    fun performAndroidHealthFix(fix: AndroidHealthFix) {
+        val app = getApplication<Application>()
+        when (fix) {
+            AndroidHealthFix.INSTALL_TOOLS -> {
+                _state.update { current ->
+                    current.copy(
+                        androidHealthRunning = true,
+                        androidHealthChecks = current.androidHealthChecks.map { check ->
+                            if (check.fix == AndroidHealthFix.INSTALL_TOOLS) {
+                                check.copy(
+                                    detail = "Repairing Android development tools…",
+                                    status = AndroidHealthStatus.RUNNING,
+                                    fix = AndroidHealthFix.NONE,
+                                )
+                            } else check
+                        },
+                    )
+                }
+                installDevStack(DevStack.ANDROID, refreshAndroidHealthAfter = true)
+            }
+            AndroidHealthFix.OPEN_INSTALL_SETTINGS -> app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            AndroidHealthFix.OPEN_NETWORK_SETTINGS -> app.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            AndroidHealthFix.OPEN_STORAGE_SETTINGS -> app.startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            AndroidHealthFix.CLEAN -> cleanAndroidProject()
+            AndroidHealthFix.REFRESH -> refreshAndroidHealth()
+            AndroidHealthFix.COPY_LOGCAT_COMMAND, AndroidHealthFix.NONE -> Unit
+        }
+    }
+
+    private fun runAndroidGuestCommand(project: Project, command: String): Pair<Int, String> {
+        return runCatching {
+            val runtime = installer.installedRuntime()
+            val workspace = projectWorkspaceRoot(project)
+            val outputFile = File(getApplication<Application>().cacheDir, "android-health-${System.nanoTime()}.log")
+            try {
+                val process = installer.process(
+                    runtime.proot, runtime.rootfs, workspace, emptyMap(),
+                    listOf("/usr/bin/bash", "-lc", command), projectGuestRoot(project), outputFile = outputFile,
+                )
+                val exit = process.waitFor()
+                exit to sanitizeTerminalOutput(outputFile.readTailText(64 * 1024)).trim()
+            } finally { outputFile.delete() }
+        }.getOrElse { -1 to (it.message ?: "Command failed") }
+    }
+
+    private fun hasLogcatAccess(): Boolean {
+        val app = getApplication<Application>()
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED) return true
+        return runCatching {
+            val process = ProcessBuilder("su", "-c", "id").redirectErrorStream(true).start()
+            val finished = process.waitFor(800, TimeUnit.MILLISECONDS)
+            if (!finished) process.destroyForcibly()
+            finished && process.exitValue() == 0
+        }.getOrDefault(false)
+    }
+
+    fun startAndroidLogcat() {
+        if (androidLogcatJob?.isActive == true) return
+        val info = _state.value.androidApkInfo
+        val packageName = info?.packageName
+        if (packageName.isNullOrBlank() || info.installed.not()) {
+            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = "Install the APK before opening Logcat.")) }
+            return
+        }
+        if (!hasLogcatAccess()) {
+            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = LOGCAT_GRANT_COMMAND, packageName = packageName)) }
+            return
+        }
+        val app = getApplication<Application>()
+        val uid = runCatching { app.packageManager.getApplicationInfo(packageName, 0).uid }.getOrNull()
+        if (uid == null) {
+            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = "The installed app could not be found.")) }
+            return
+        }
+        androidLogcatJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val root = ContextCompat.checkSelfPermission(app, Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED
+                val since = androidLaunchAtMillis?.let {
+                    SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date(it))
+                } ?: "1"
+                val logCommand = "/system/bin/logcat --uid=$uid -v threadtime -T '$since'"
+                val process = if (root) ProcessBuilder("su", "-c", logCommand).redirectErrorStream(true).start()
+                    else ProcessBuilder("/system/bin/logcat", "--uid=$uid", "-v", "threadtime", "-T", since).redirectErrorStream(true).start()
+                androidLogcatProcess = process
+                _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = true, running = true, paused = false, message = null, packageName = packageName)) }
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { raw ->
+                        if (!_state.value.androidLogcat.paused) appendAndroidLogLine(raw)
+                    }
+                }
+            }.onFailure { error ->
+                _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false, message = error.message ?: "Logcat stopped")) }
+            }
+            androidLogcatProcess = null
+            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false)) }
+        }
+    }
+
+    private fun appendAndroidLogLine(raw: String) {
+        val levelChar = Regex("\\s([VDIWEF])\\s").find(raw)?.groupValues?.getOrNull(1)
+        val level = when (levelChar) {
+            "D" -> AndroidLogLevel.DEBUG; "I" -> AndroidLogLevel.INFO; "W" -> AndroidLogLevel.WARNING
+            "E" -> AndroidLogLevel.ERROR; "F" -> AndroidLogLevel.FATAL; else -> AndroidLogLevel.VERBOSE
+        }
+        val location = Regex("([A-Za-z0-9_]+\\.(?:kt|java)):(\\d+)").find(raw)
+        _state.update { current ->
+            val line = AndroidLogLine(
+                id = System.nanoTime(), text = raw, level = level,
+                filePath = location?.groupValues?.getOrNull(1), line = location?.groupValues?.getOrNull(2)?.toIntOrNull(),
+            )
+            current.copy(androidLogcat = current.androidLogcat.copy(lines = (current.androidLogcat.lines + line).takeLast(MAX_LOGCAT_LINES)))
+        }
+    }
+
+    fun stopAndroidLogcat() {
+        androidLogcatProcess?.destroy()
+        androidLogcatJob?.cancel()
+        androidLogcatJob = null
+        _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false)) }
+    }
+
+    fun toggleAndroidLogcatPause() = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(paused = !it.androidLogcat.paused)) }
+    fun clearAndroidLogcat() = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(lines = emptyList())) }
+    fun setAndroidLogcatQuery(value: String) = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(query = value)) }
+    fun setAndroidLogcatLevel(value: AndroidLogLevel) = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(minimumLevel = value)) }
+
+    fun openAndroidLogLine(line: AndroidLogLine) {
+        val fileName = line.filePath ?: return
+        openAndroidIssue(AndroidBuildIssue(title = "Logcat", detail = line.text, filePath = fileName, line = line.line))
+    }
 
 
     fun toggleTheme() {
@@ -1644,7 +2689,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Installs one development stack on demand (Settings) with live progress. */
-    fun installDevStack(stack: DevStack) {
+    fun installDevStack(stack: DevStack, refreshAndroidHealthAfter: Boolean = false) {
         if (_state.value.devStackInstalling != null) return
         _state.update {
             it.copy(
@@ -1707,8 +2752,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         onSuccess = { str(R.string.vm_stack_tools_ready, stack.localizedLabel(getApplication())) },
                         onFailure = { _ -> result.exceptionOrNull()?.message?.take(200) ?: str(R.string.vm_install_failed_named, stack.localizedLabel(getApplication())) },
                     ),
+                    androidHealthRunning = if (refreshAndroidHealthAfter) false else current.androidHealthRunning,
                 )
             }
+            if (refreshAndroidHealthAfter) refreshAndroidHealth()
         }
     }
 
@@ -1876,7 +2923,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (current.isRunning || current.projectTerminalRunning) {
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
             val chats = preferences.loadProjectChats(project.id).ifEmpty {
                 listOf(ProjectChat(title = str(R.string.vm_main_chat)))
             }
@@ -1900,6 +2947,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val activeChat = chats.first()
         val saved = preferences.loadMessages(project.id, activeChat.id)
         val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
+        val androidBuild = loadAndroidBuildRecord(project.id)
         _state.update {
             it.copy(
                 activeProject = project,
@@ -1930,6 +2978,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 previewReady = false,
                 previewUrl = null,
                 pendingAttachments = emptyList(),
+                androidBuildRunning = false,
+                androidBuildPhase = androidBuild.phase,
+                androidBuildAction = androidBuild.action,
+                androidBuildStage = androidBuild.stage,
+                androidBuildIssues = androidBuild.issues,
+                androidBuildMessage = androidBuild.message,
+                androidBuildLog = androidBuild.log,
+                androidBuildStartedAtMillis = androidBuild.startedAtMillis,
+                androidBuildFinishedAtMillis = androidBuild.finishedAtMillis,
+                androidBuildApkPath = androidBuild.apkPath,
+                androidBuildApkSizeBytes = androidBuild.apkSizeBytes,
+                androidBuildRecentDurationsMillis = androidBuild.recentDurationsMillis,
             )
         }
         refreshProjectFiles()
@@ -1942,14 +3002,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeProject() {
         val active = _state.value.activeProject
         persistMessages()
-        if (_state.value.isRunning || _state.value.projectTerminalRunning) {
+        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update {
                 it.copy(
                     workspaceVisible = false,
-                    toastMessage = if (it.isRunning) {
-                        str(R.string.vm_task_continues_background)
-                    } else {
-                        str(R.string.vm_terminal_continues_background)
+                    toastMessage = when {
+                        it.isRunning -> str(R.string.vm_task_continues_background)
+                        it.androidBuildRunning -> "Android build continues in the background"
+                        else -> str(R.string.vm_terminal_continues_background)
                     },
                 )
             }
@@ -2029,7 +3089,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun activateReadOnlyProject() {
-        if (_state.value.isRunning || _state.value.projectTerminalRunning) return
+        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         val project = _state.value.readOnlyProject ?: return
         closeReadOnlyProject()
         openProject(project)
@@ -2039,7 +3099,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createProject(name: String) {
         if (name.isBlank()) return
-        if (_state.value.isRunning || _state.value.projectTerminalRunning) {
+        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_new_project)) }
             return
         }
@@ -2090,8 +3150,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshProjectFiles()
     }
 
+    fun createAndroidProject(name: String, template: AndroidTemplate) {
+        if (name.isBlank()) return
+        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
+            _state.update { it.copy(toastMessage = "Stop the active task before creating another project") }
+            return
+        }
+        val cleanName = name.replace(Regex("\\s+"), " ").trim().take(60)
+        val baseSlug = projectSlug(cleanName)
+        val usedSlugs = _state.value.projects.mapTo(mutableSetOf()) { it.slug }
+        val slug = generateSequence(1) { it + 1 }
+            .map { number -> if (number == 1) baseSlug else "$baseSlug-$number" }
+            .first { it !in usedSlugs }
+        val project = Project(
+            name = cleanName,
+            description = if (template == AndroidTemplate.COMPOSE) "Android · Jetpack Compose" else "Android · Kotlin + XML",
+            language = "Kotlin",
+            slug = slug,
+            type = ProjectType.ANDROID,
+            androidTemplate = template,
+        )
+        val workspace = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
+        runCatching { AndroidProjectTemplateGenerator.generate(workspace, cleanName, template) }
+            .onFailure { error ->
+                _state.update { it.copy(toastMessage = error.message ?: "Could not create Android project") }
+                return
+            }
+        val firstChat = ProjectChat(title = "New chat")
+        preferences.saveProjectChats(project.id, listOf(firstChat))
+        _state.update { it.copy(projects = listOf(project) + it.projects) }
+        preferences.saveProjects(_state.value.projects)
+        openProject(project)
+        if (!installer.isStackInstalled(DevStack.ANDROID)) {
+            _state.update { it.copy(toastMessage = "Android project created. Install Android tools from Settings before building.") }
+        }
+    }
+
     fun createQuickProject() {
-        if (_state.value.isRunning || _state.value.projectTerminalRunning) {
+        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_new_project)) }
             return
         }
@@ -2112,7 +3208,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importZipProject(uri: Uri) {
-        if (_state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning) return
+        if (_state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { it.copy(projectImporting = true, projectImportMessage = str(R.string.vm_reading_archive)) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { extractImportedProject(uri) } }
@@ -2275,7 +3371,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun cloneGitRepository(url: String, repositoryName: String?, branch: String?, useGitHubCli: Boolean) {
-        if (_state.value.gitCloneRunning || _state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning) return
+        if (_state.value.gitCloneRunning || _state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         val normalized = runCatching { validateGitUrl(url) }.getOrElse { error ->
             _state.update { it.copy(toastMessage = error.message ?: str(R.string.vm_invalid_git_url)) }
             return
@@ -2320,7 +3416,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             outputFile = output,
                         )
                         val exit = process.waitFor()
-                        val details = output.readText().trim()
+                        val details = output.readTailText(MAX_PROCESS_OUTPUT_BYTES).trim()
                         check(exit == 0) { details.takeLast(600).ifBlank { str(R.string.vm_git_clone_failed_exit, exit) } }
                         val metadata = detectImportedProjectMetadata(workspace)
                         Project(
@@ -2672,13 +3768,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteProject(projectId: String) {
         val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
-        if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning) return
+        if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
+        folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
         viewModelScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
             File(filesDir, "workspaces/${project.id}").deleteRecursively()
             terminalHistoryFile(project.id).delete()
+            androidBuildRecordFile(project.id).delete()
             preferences.deleteProjectChats(project.id)
         }
     }
@@ -2720,13 +3818,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshProjectFiles()
     }
 
-    fun exportActiveProject(uri: Uri) {
+    fun exportActiveProject(uri: Uri, selection: ExportSelection) {
         val current = _state.value
         val project = current.activeProject ?: return
-        if (current.isRunning || current.projectTerminalRunning) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_export)) }
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning ||
+            current.projectExportRunning || current.openedFile?.saving == true
+        ) {
+            _state.update { it.copy(toastMessage = str(R.string.export_busy)) }
             return
         }
+        _state.update { it.copy(projectExportRunning = true) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -2744,7 +3845,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         true
                                     } else {
                                         val relative = directory.relativeTo(root).invariantSeparatorsPath
-                                        !isExportExcludedPath(relative) &&
+                                        selection.canContainIncluded(relative) &&
+                                            !isClaudeRuntimeMetadata(relative) &&
                                             !Files.isSymbolicLink(directory.toPath()) &&
                                             runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
                                     }
@@ -2753,7 +3855,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 .filter { file ->
                                     !Files.isSymbolicLink(file.toPath()) &&
                                         runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
-                                        !isExportExcludedPath(file.relativeTo(root).invariantSeparatorsPath)
+                                        !isClaudeRuntimeMetadata(file.relativeTo(root).invariantSeparatorsPath) &&
+                                        if (file.isDirectory) {
+                                            selection.canContainIncluded(file.relativeTo(root).invariantSeparatorsPath)
+                                        } else {
+                                            selection.includes(file.relativeTo(root).invariantSeparatorsPath)
+                                        }
                                 }
                                 .forEach { file ->
                                     val relative = file.relativeTo(root).invariantSeparatorsPath
@@ -2768,9 +3875,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             _state.update {
                 it.copy(
+                    projectExportRunning = false,
+                    projectExportSucceededAtMillis = result.getOrNull()?.let { System.currentTimeMillis() },
                     toastMessage = result.fold(
-                        onSuccess = { str(R.string.vm_exported, "${project.slug}.zip") },
-                        onFailure = { error -> str(R.string.vm_export_failed, error.message ?: str(R.string.vm_unknown_error)) },
+                        onSuccess = { str(R.string.export_success, "${project.slug}.zip") },
+                        onFailure = { error -> str(R.string.export_failed, error.message ?: str(R.string.unknown_error)) },
                     ),
                 )
             }
@@ -2826,9 +3935,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val (entries, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
                 Triple(
-                    readWorkspace(project),
+                    readWorkspaceDirectory(project, ""),
                     if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
-                    findAndroidGradleProjectRoot(projectWorkspaceRoot(project)) != null,
+                    findAndroidProjectRoot(projectWorkspaceRoot(project)) != null,
                 )
             }
             if (_state.value.activeProject?.id == project.id) {
@@ -2840,59 +3949,191 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         androidProjectDetected = androidProjectDetected,
                     )
                 }
+                loadMissingFolderCounts(project, entries)
             }
+        }
+    }
+
+    fun loadProjectDirectory(relativePath: String) {
+        val project = _state.value.activeProject ?: return
+        val existingEntries = _state.value.workspaceFiles
+        viewModelScope.launch {
+            val (children, updatedEntries) = withContext(Dispatchers.IO) {
+                val loadedChildren = readWorkspaceDirectory(project, relativePath)
+                val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
+                val retained = existingEntries.filterNot { entry ->
+                    entry.path.startsWith(prefix) && entry.path.removePrefix(prefix).let { !it.contains('/') }
+                }
+                val sorted = sortWorkspaceEntries((retained + loadedChildren).distinctBy { it.path }).map { entry ->
+                    if (entry.path == relativePath) entry.copy(childCount = loadedChildren.size) else entry
+                }
+                loadedChildren to sorted
+            }
+            if (_state.value.activeProject?.id != project.id) return@launch
+            _state.update { current -> current.copy(workspaceFiles = updatedEntries) }
+            updateFolderMetadata(project, relativePath, children.size)
+            loadMissingFolderCounts(project, children)
         }
     }
 
     fun openFile(entry: WorkspaceEntry) {
         if (entry.isDirectory) return
         val project = _state.value.activeProject ?: return
-        _state.update { it.copy(openedFilePath = entry.path, openedFileContent = null, fileContentLoading = true) }
+        _state.update { it.copy(openedFile = OpenedFileState(path = entry.path)) }
+        loadOpenedFile(project, entry.path)
+    }
+
+    private fun loadOpenedFile(project: Project, path: String, targetLine: Int? = null, targetColumn: Int? = null) {
         viewModelScope.launch {
-            val content = withContext(Dispatchers.IO) {
-                val file = File(projectWorkspaceRoot(project), entry.path)
+            val loaded = withContext(Dispatchers.IO) {
+                val file = safeWorkspaceFile(project, path)
+                    ?: return@withContext OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.UNSAFE)
                 runCatching {
-                    if (file.length() > 512_000L) {
-                        file.inputStream().use { stream ->
-                            val buf = ByteArray(512_000)
-                            val read = stream.read(buf)
-                            String(buf, 0, read)
-                        } + "\n\n" + str(R.string.vm_file_truncated)
+                    val tooLarge = file.length() > MAX_EDITABLE_FILE_BYTES
+                    val bytes = if (tooLarge) file.inputStream().use { it.readNBytes(MAX_EDITABLE_FILE_BYTES.toInt()) } else file.readBytes()
+                    if (bytes.any { it == 0.toByte() }) {
+                        OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.BINARY)
                     } else {
-                        file.readText()
+                        val decoder = Charsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                        val decoded = runCatching { decoder.decode(ByteBuffer.wrap(bytes)).toString() }.getOrNull()
+                        if (decoded == null) {
+                            OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.INVALID_UTF8)
+                        } else {
+                            val content = if (tooLarge) decoded + "\n\n…" else decoded
+                            OpenedFileState(
+                                path = path,
+                                content = content,
+                                draft = content,
+                                loading = false,
+                                readOnlyReason = FileReadOnlyReason.TOO_LARGE.takeIf { tooLarge },
+                                originalFingerprint = if (tooLarge) null else fingerprint(file),
+                                lineEnding = if (decoded.contains("\r\n")) "\r\n" else "\n",
+                                hadTrailingNewline = decoded.endsWith("\n") || decoded.endsWith("\r"),
+                            )
+                        }
                     }
-                }.getOrElse { str(R.string.vm_read_file_failed, it.message.orEmpty()) }
+                }.getOrElse {
+                    OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.READ_ERROR)
+                }
             }
-            _state.update { it.copy(openedFileContent = content, fileContentLoading = false) }
+            if (_state.value.openedFile?.path == path) {
+                _state.update { it.copy(openedFile = loaded.copy(targetLine = targetLine, targetColumn = targetColumn)) }
+            }
         }
     }
 
     fun closeFile() {
-        _state.update { it.copy(openedFilePath = null, openedFileContent = null, fileContentLoading = false) }
+        _state.update { it.copy(openedFile = null) }
+    }
+
+    fun beginFileEdit() {
+        val current = _state.value
+        val opened = current.openedFile ?: return
+        if (opened.loading || opened.readOnlyReason != null || opened.content == null ||
+            current.isRunning || current.projectTerminalRunning || current.androidBuildRunning
+        ) return
+        _state.update { it.copy(openedFile = opened.copy(editing = true, draft = opened.content, dirty = false, conflict = false)) }
+    }
+
+    fun updateFileDraft(value: String) {
+        val opened = _state.value.openedFile ?: return
+        if (!opened.editing || opened.saving) return
+        _state.update { it.copy(openedFile = opened.copy(draft = value, dirty = value != opened.content, conflict = false)) }
+    }
+
+    fun cancelFileEdit() {
+        val opened = _state.value.openedFile ?: return
+        _state.update { it.copy(openedFile = opened.copy(editing = false, draft = opened.content.orEmpty(), dirty = false, conflict = false)) }
+    }
+
+    fun reloadOpenedFile() {
+        val project = _state.value.activeProject ?: return
+        val path = _state.value.openedFile?.path ?: return
+        _state.update { it.copy(openedFile = OpenedFileState(path = path)) }
+        loadOpenedFile(project, path)
+    }
+
+    fun dismissFileConflict() {
+        val opened = _state.value.openedFile ?: return
+        _state.update { it.copy(openedFile = opened.copy(conflict = false, saving = false)) }
+    }
+
+    fun saveOpenedFile() {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        val opened = current.openedFile ?: return
+        if (!opened.editing || opened.saving || !opened.dirty || current.isRunning ||
+            current.projectTerminalRunning || current.androidBuildRunning
+        ) return
+        _state.update { it.copy(openedFile = opened.copy(saving = true, conflict = false)) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val file = safeWorkspaceFile(project, opened.path) ?: error("unsafe_path")
+                    if (opened.originalFingerprint == null || fingerprint(file) != opened.originalFingerprint) {
+                        return@runCatching false
+                    }
+                    var normalized = opened.draft.replace("\r\n", "\n").replace('\r', '\n')
+                    normalized = normalized.trimEnd('\n') + if (opened.hadTrailingNewline) "\n" else ""
+                    if (opened.lineEnding == "\r\n") normalized = normalized.replace("\n", "\r\n")
+                    val temporary = File(file.parentFile, ".${file.name}.${UUID.randomUUID()}.tmp")
+                    try {
+                        temporary.writeText(normalized, Charsets.UTF_8)
+                        if (file.canExecute()) temporary.setExecutable(true, false)
+                        runCatching {
+                            Files.move(
+                                temporary.toPath(), file.toPath(),
+                                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+                            )
+                        }.getOrElse {
+                            Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                        }
+                    } finally {
+                        temporary.delete()
+                    }
+                    true
+                }
+            }
+            when {
+                result.getOrNull() == false -> _state.update {
+                    it.copy(openedFile = it.openedFile?.copy(saving = false, conflict = true))
+                }
+                result.isSuccess -> {
+                    _state.update { it.copy(toastMessage = str(R.string.file_saved)) }
+                    invalidateFolderMetadata(project.id, listOf(opened.path))
+                    refreshProjectFiles()
+                    loadOpenedFile(project, opened.path)
+                }
+                else -> _state.update {
+                    it.copy(
+                        openedFile = it.openedFile?.copy(saving = false),
+                        toastMessage = str(R.string.file_save_failed),
+                    )
+                }
+            }
+        }
     }
 
 
-    private fun readWorkspace(project: Project): List<WorkspaceEntry> {
+    private fun readWorkspaceDirectory(project: Project, relativePath: String): List<WorkspaceEntry> {
         val root = projectWorkspaceRoot(project)
         if (!root.isDirectory) return emptyList()
         val rootPath = root.canonicalFile.toPath()
-        return root.walkTopDown()
-            .maxDepth(12)
-            .onEnter { directory ->
-                val relative = if (directory == root) "" else directory.relativeTo(root).invariantSeparatorsPath
-                directory == root || (!isClaudeRuntimeMetadata(relative) &&
-                    !Files.isSymbolicLink(directory.toPath()) &&
-                    runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-                    )
-            }
-            .drop(1)
-            .filter { file ->
-                val relative = file.relativeTo(root).invariantSeparatorsPath
-                !isClaudeRuntimeMetadata(relative) &&
-                    !Files.isSymbolicLink(file.toPath()) &&
-                    runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-            }
-            .take(MAX_VISIBLE_WORKSPACE_ENTRIES)
+        val directory = if (relativePath.isBlank()) root else File(root, relativePath)
+        if (!directory.isDirectory || Files.isSymbolicLink(directory.toPath()) ||
+            !runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+        ) return emptyList()
+        fun isVisibleSafeEntry(file: File): Boolean {
+            val relative = file.relativeTo(root).invariantSeparatorsPath
+            return !isClaudeRuntimeMetadata(relative) &&
+                !Files.isSymbolicLink(file.toPath()) &&
+                runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+        }
+        return directory.listFiles().orEmpty()
+            .asSequence()
+            .filter(::isVisibleSafeEntry)
             .map { file ->
                 val relative = file.relativeTo(root).invariantSeparatorsPath
                 WorkspaceEntry(
@@ -2901,10 +4142,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isDirectory = file.isDirectory,
                     depth = relative.count { it == '/' },
                     sizeBytes = if (file.isFile) file.length() else 0,
+                    childCount = if (file.isDirectory) {
+                        folderMetadataCache[folderMetadataKey(project.id, relative)]
+                            ?.takeIf { it.modifiedAtMillis == file.lastModified() }
+                            ?.childCount
+                    } else {
+                        null
+                    },
                 )
             }
-            .sortedWith(compareBy<WorkspaceEntry> { it.path.lowercase() }.thenByDescending { it.isDirectory })
+            .sortedWith(compareByDescending<WorkspaceEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
             .toList()
+    }
+
+    private fun loadMissingFolderCounts(project: Project, entries: List<WorkspaceEntry>) {
+        entries.asSequence()
+            .filter { it.isDirectory && it.childCount == null && !isDeferredMetadataPath(it.path) }
+            .forEach { entry ->
+                val key = folderMetadataKey(project.id, entry.path)
+                if (!folderCountsInFlight.add(key)) return@forEach
+                viewModelScope.launch {
+                    val metadata = withContext(Dispatchers.IO) {
+                        val directory = safeWorkspaceDirectory(project, entry.path)
+                        directory?.let {
+                            FolderMetadata(
+                                modifiedAtMillis = it.lastModified(),
+                                childCount = countVisibleChildren(project, it),
+                            )
+                        }
+                    }
+                    folderCountsInFlight.remove(key)
+                    if (metadata == null || _state.value.activeProject?.id != project.id) return@launch
+                    folderMetadataCache[key] = metadata
+                    _state.update { current ->
+                        current.copy(
+                            workspaceFiles = current.workspaceFiles.map { item ->
+                                if (item.path == entry.path) item.copy(childCount = metadata.childCount) else item
+                            },
+                        )
+                    }
+                }
+            }
+    }
+
+    private fun updateFolderMetadata(project: Project, relativePath: String, count: Int) {
+        val directory = safeWorkspaceDirectory(project, relativePath) ?: return
+        folderMetadataCache[folderMetadataKey(project.id, relativePath)] = FolderMetadata(
+            modifiedAtMillis = directory.lastModified(),
+            childCount = count,
+        )
+    }
+
+    private fun countVisibleChildren(project: Project, directory: File): Int {
+        val root = projectWorkspaceRoot(project).canonicalFile.toPath()
+        return directory.listFiles().orEmpty().count { file ->
+            val relative = runCatching { file.relativeTo(projectWorkspaceRoot(project)).invariantSeparatorsPath }
+                .getOrNull() ?: return@count false
+            !isClaudeRuntimeMetadata(relative) &&
+                !Files.isSymbolicLink(file.toPath()) &&
+                runCatching { file.canonicalFile.toPath().startsWith(root) }.getOrDefault(false)
+        }
+    }
+
+    private fun safeWorkspaceDirectory(project: Project, relativePath: String): File? {
+        val root = projectWorkspaceRoot(project).canonicalFile
+        if (relativePath.isBlank()) return root.takeIf(File::isDirectory)
+        val directory = safeWorkspaceFile(project, relativePath) ?: return null
+        return directory.takeIf(File::isDirectory)
+    }
+
+    private fun folderMetadataKey(projectId: String, path: String): String = "$projectId:${path.trim('/')}"
+
+    private fun invalidateFolderMetadata(projectId: String, paths: List<String>) {
+        paths.forEach { changedPath ->
+            val normalized = changedPath.trim('/')
+            val parent = normalized.substringBeforeLast('/', "")
+            folderMetadataCache.remove(folderMetadataKey(projectId, parent))
+            folderMetadataCache.remove(folderMetadataKey(projectId, normalized))
+        }
+    }
+
+    private fun isDeferredMetadataPath(path: String): Boolean {
+        val segments = path.split('/')
+        return segments.any { it in DEFERRED_FOLDER_METADATA_NAMES }
+    }
+
+    private fun sortWorkspaceEntries(entries: List<WorkspaceEntry>): List<WorkspaceEntry> {
+        val childrenByParent = entries.groupBy { entry -> entry.path.substringBeforeLast('/', "") }
+        val siblingOrder = compareByDescending<WorkspaceEntry> { it.isDirectory }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+            .thenBy { it.name }
+        return buildList(entries.size) {
+            fun appendChildren(parentPath: String) {
+                childrenByParent[parentPath].orEmpty().sortedWith(siblingOrder).forEach { entry ->
+                    add(entry)
+                    appendChildren(entry.path)
+                }
+            }
+            appendChildren("")
+        }
     }
 
     private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {
@@ -2913,19 +4249,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             relativePath.startsWith(".claude/")
     }
 
-    private fun isExportExcludedPath(relativePath: String): Boolean {
-        val excludedNames = setOf(
-            ".git", ".claude", ".gradle", ".idea", ".next", ".cache",
-            "node_modules", ".venv", "venv", "__pycache__", "build",
-        )
-        return relativePath.split('/').any { it in excludedNames } || isClaudeRuntimeMetadata(relativePath)
+    private fun safeWorkspaceFile(project: Project, relativePath: String): File? {
+        if (relativePath.isBlank() || isClaudeRuntimeMetadata(relativePath)) return null
+        val root = projectWorkspaceRoot(project).canonicalFile
+        var cursor = root
+        for (segment in relativePath.replace('\\', '/').split('/')) {
+            if (segment.isBlank() || segment == "." || segment == "..") return null
+            cursor = File(cursor, segment)
+            if (Files.isSymbolicLink(cursor.toPath())) return null
+        }
+        val canonical = runCatching { cursor.canonicalFile }.getOrNull() ?: return null
+        return canonical.takeIf { it.toPath().startsWith(root.toPath()) && it.isFile }
+    }
+
+    private fun fingerprint(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     fun addChatAttachments(uris: List<Uri>) {
         val current = _state.value
         val project = current.activeProject ?: return
         val chatId = current.activeChatId ?: return
-        if (current.isRunning || uris.isEmpty()) return
+        if (uris.isEmpty()) return
         val remaining = (MAX_ATTACHMENTS_PER_MESSAGE - current.pendingAttachments.size).coerceAtLeast(0)
         if (remaining == 0) {
             _state.update { it.copy(toastMessage = str(R.string.vm_max_attachments, MAX_ATTACHMENTS_PER_MESSAGE)) }
@@ -3058,7 +4412,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val attachments = state.value.pendingAttachments
-        if ((prompt.isBlank() && attachments.isEmpty()) || state.value.isRunning) return
+        if (prompt.isBlank() && attachments.isEmpty()) return
+        if (state.value.isRunning || state.value.androidBuildRunning) {
+            queueFollowUp(project, prompt, attachments)
+            return
+        }
+        if (state.value.projectTerminalRunning) {
+            _state.update { it.copy(toastMessage = "Wait for the terminal command to finish, then send your message.") }
+            return
+        }
+        startPrompt(project, prompt, attachments)
+    }
+
+    private fun queueFollowUp(project: Project, prompt: String, attachments: List<ChatAttachment>) {
+        val requestText = prompt.trim().ifBlank { "Please review the attached files." }
+        pendingFollowUps.addLast(QueuedFollowUp(projectId = project.id, prompt = requestText, attachments = attachments))
+        _state.update {
+            it.copy(
+                pendingAttachments = emptyList(),
+                queuedFollowUps = pendingFollowUps.toList(),
+                toastMessage = "Follow-up queued",
+            )
+        }
+    }
+
+    fun steerQueuedFollowUp(id: String) {
+        if (steeringToFollowUp) return
+        val selected = pendingFollowUps.firstOrNull { it.id == id } ?: return
+        pendingFollowUps.remove(selected)
+        pendingFollowUps.addFirst(selected)
+        _state.update {
+            it.copy(
+                queuedFollowUps = pendingFollowUps.toList(),
+                toastMessage = "Steering to this follow-up",
+            )
+        }
+        when {
+            _state.value.isRunning -> {
+                steeringToFollowUp = true
+                viewModelScope.launch { activeRuntime().stopActiveSession() }
+            }
+            _state.value.androidBuildRunning -> {
+                steeringToFollowUp = true
+                cancelAndroidBuild()
+            }
+            else -> startNextFollowUp()
+        }
+    }
+
+    fun removeQueuedFollowUp(id: String) {
+        val selected = pendingFollowUps.firstOrNull { it.id == id } ?: return
+        pendingFollowUps.remove(selected)
+        _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
+    }
+
+    private fun startPrompt(project: Project, prompt: String, attachments: List<ChatAttachment>) {
         // requestText is sent to the agent, so it stays English; the chat title is user-facing.
         val requestText = prompt.trim().ifBlank { "Please review the attached files." }
         updateActiveChatTitle(prompt.trim().ifBlank { str(R.string.md_chat_title_attachments) })
@@ -3120,7 +4528,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopTask() {
         if (!_state.value.isRunning) return
+        steeringToFollowUp = false
+        pendingFollowUps.clear()
+        _state.update { it.copy(queuedFollowUps = emptyList()) }
         viewModelScope.launch { activeRuntime().stopActiveSession() }
+    }
+
+    private fun startNextFollowUp() {
+        val next = if (pendingFollowUps.isEmpty()) null else pendingFollowUps.removeFirst()
+        if (next == null) {
+            _state.update { it.copy(queuedFollowUps = emptyList()) }
+            return
+        }
+        val project = _state.value.activeProject
+        if (project == null || project.id != next.projectId) {
+            pendingFollowUps.clear()
+            _state.update { it.copy(queuedFollowUps = emptyList()) }
+            return
+        }
+        _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
+        startPrompt(project, next.prompt, next.attachments)
     }
 
     fun undoLastChanges() {
@@ -3175,7 +4602,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isNoisyRuntimeItem(item: ActivityItem): Boolean {
-        val combined = "${item.title} ${item.detail}"
+        // Never allocate or scan an entire command/result just to classify the row.
+        val combined = "${item.title} ${item.detail.take(NOISY_ITEM_SCAN_CHARS)}"
         return combined.contains("Starting Claude Code", true) ||
             combined.contains("Agent process started", true) ||
             combined.contains("Claude Code connected", true) ||
@@ -3227,7 +4655,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun finishWorkSegment(current: AppUiState, finishedAt: Long = System.currentTimeMillis()): AppUiState {
         val meaningfulItems = current.liveProcess.filterNot(::isNoisyRuntimeItem)
+            .map(::boundedActivityItem)
             .map { if (it.isComplete) it else it.copy(isComplete = true) }
+            .takeLast(MAX_VISIBLE_WORK_ITEMS)
         if (!current.liveThinking && meaningfulItems.isEmpty()) {
             return current.copy(liveProcess = emptyList(), workSegmentStartedAtMillis = null)
         }
@@ -3262,15 +4692,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun appendWorkItem(current: AppUiState, item: ActivityItem): AppUiState {
-        if (isNoisyRuntimeItem(item)) return current
+        val boundedItem = boundedActivityItem(item)
+        if (isNoisyRuntimeItem(boundedItem)) return current
         return current.copy(
-            liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } + item,
+            liveProcess = (current.liveProcess
+                .map { if (!it.isComplete) it.copy(isComplete = true) else it } + boundedItem)
+                .takeLast(MAX_VISIBLE_WORK_ITEMS),
             liveThinking = false,
             workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
         )
     }
 
     private fun onRuntimeEvent(event: RuntimeEvent) {
+        val terminalEventForActiveSession =
+            (event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) &&
+                _state.value.isRunning &&
+                (_state.value.activeSessionId == null || _state.value.activeSessionId == event.sessionId)
         if (event is RuntimeEvent.SessionFailed && _state.value.agentKind == AgentKind.ANTIGRAVITY &&
             (event.reason.contains("sign-in", true) || event.reason.contains("authentication", true))) {
             antigravityAuthController.invalidateSession(event.reason)
@@ -3360,13 +4797,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         },
                         liveThinking = false,
                         activeThinkingBlockId = null,
-                        activity = listOf(
+                        activity = (listOf(
                             ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
-                        ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
+                        ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it })
+                            .take(MAX_VISIBLE_WORK_ITEMS),
                     )
                     appendWorkItem(
                         planned,
                         ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
+                    )
+                }
+                is RuntimeEvent.ToolProgress -> {
+                    val runningIndex = current.liveProcess.indexOfLast {
+                        !it.isComplete && it.title == "Running ${event.toolName}"
+                    }
+                    if (runningIndex < 0) current else current.copy(
+                        liveProcess = current.liveProcess.toMutableList().also { items ->
+                            items[runningIndex] = boundedActivityItem(
+                                items[runningIndex].copy(detail = event.detail),
+                            )
+                        },
                     )
                 }
                 is RuntimeEvent.RuntimeLog -> appendWorkItem(
@@ -3401,18 +4851,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 "${event.toolName} completed",
                                 runningItem.detail.ifBlank { summary },
                                 isCommand = event.toolName == "Bash",
-                            )
+                            ).let(::boundedActivityItem)
                         }
                     } else {
-                        current.liveProcess + ActivityItem(
+                        current.liveProcess + boundedActivityItem(ActivityItem(
                             "${event.toolName} completed",
                             summary,
                             isCommand = event.toolName == "Bash",
-                        )
+                        ))
                     }
                     current.copy(
-                        activity = listOf(ActivityItem(summary, event.toolName)) + current.activity,
-                        liveProcess = process,
+                        activity = (listOf(ActivityItem(summary, event.toolName)) + current.activity)
+                            .take(MAX_VISIBLE_WORK_ITEMS),
+                        liveProcess = process.takeLast(MAX_VISIBLE_WORK_ITEMS),
                         liveThinking = false,
                         workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                     )
@@ -3471,12 +4922,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        if (event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) {
+        if (terminalEventForActiveSession) {
             activeRuntimeRequest = null
             failedApiKeyIds.clear()
+            steeringToFollowUp = false
+            if (pendingFollowUps.isNotEmpty()) {
+                viewModelScope.launch {
+                    delay(150)
+                    if (!_state.value.isRunning) startNextFollowUp()
+                }
+            }
         }
         if (event is RuntimeEvent.FilesChanged || event is RuntimeEvent.SessionCompleted) {
-            _state.value.activeProject?.id?.let { touchProject(it) }
+            _state.value.activeProject?.id?.let { projectId ->
+                if (event is RuntimeEvent.FilesChanged) invalidateFolderMetadata(projectId, event.paths)
+                touchProject(projectId)
+            }
             refreshProjectFiles()
         }
         // Save every visible reasoning/tool transition, not only assistant text and
@@ -3586,7 +5047,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val project = current.activeProject ?: return
         val chatId = current.activeChatId ?: return
-        val liveItems = if (includeLiveProcess) current.liveProcess.filterNot(::isNoisyRuntimeItem) else emptyList()
+        val liveItems = if (includeLiveProcess) {
+            current.liveProcess.takeLast(MAX_VISIBLE_WORK_ITEMS)
+                .map(::boundedActivityItem)
+                .filterNot(::isNoisyRuntimeItem)
+        } else {
+            emptyList()
+        }
         val messages = if (liveItems.isEmpty() && !current.liveThinking) {
             current.messages
         } else {
@@ -3603,6 +5070,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         transcriptWrites.trySend(TranscriptWrite(project.id, chatId, messages))
+    }
+
+    private fun boundedActivityItem(item: ActivityItem): ActivityItem {
+        if (item.detail.length <= MAX_ACTIVITY_DETAIL_CHARS) return item
+        return item.copy(
+            detail = "… Earlier output omitted …\n" + item.detail.takeLast(MAX_ACTIVITY_DETAIL_CHARS),
+        )
     }
 
     private fun updateActiveChatTitle(prompt: String) {
@@ -3627,11 +5101,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProjectChats(project.id, _state.value.projectChats)
     }
 
+    override fun onCleared() {
+        stopAndroidLogcat()
+        super.onCleared()
+    }
+
     companion object {
+        /** A long-running agent can poll a managed command hundreds of times. Keep the chat
+         * responsive by retaining the latest useful steps instead of composing an unbounded list. */
+        private const val MAX_VISIBLE_WORK_ITEMS = 32
+        private val DEFERRED_FOLDER_METADATA_NAMES = setOf(".git", ".gradle", "build", "node_modules")
+        private const val MAX_ACTIVITY_DETAIL_CHARS = 8_000
+        private const val NOISY_ITEM_SCAN_CHARS = 320
+        private const val TRANSCRIPT_WRITE_DEBOUNCE_MS = 500L
+        private const val DIAGNOSTICS_REFRESH_COOLDOWN_MS = 1_000L
+        private const val RECENT_EXIT_CACHE_MS = 60_000L
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
-        private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
+        private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
+        private const val MAX_ANDROID_BUILD_LOG = 300_000
+        private const val MAX_LOGCAT_LINES = 5_000
+        private const val MEMORY_PRESSURE_TERMINAL_LINES = 20
+        private const val MEMORY_PRESSURE_LOGCAT_LINES = 500
+        private const val MEMORY_PRESSURE_TEXT_CHARS = 64 * 1024
+        const val LOGCAT_GRANT_COMMAND = "adb shell pm grant com.jarves.mh android.permission.READ_LOGS"
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_PROCESS_OUTPUT_BYTES = 512 * 1024
         private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
