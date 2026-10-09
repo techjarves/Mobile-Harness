@@ -9,6 +9,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
@@ -30,6 +31,7 @@ internal class LocalFormatGateway(
     private fun acceptLoop() {
         while (running.get()) {
             runCatching { server.accept() }.getOrNull()?.let { socket ->
+                runCatching { socket.soTimeout = SOCKET_TIMEOUT_MS }
                 Thread({ socket.use(::handle) }, "mh-format-request").apply { isDaemon = true; start() }
             }
         }
@@ -45,7 +47,16 @@ internal class LocalFormatGateway(
             val split = line.indexOf(':')
             if (split > 0) headers[line.substring(0, split).lowercase()] = line.substring(split + 1).trim()
         }
+        val output = BufferedOutputStream(socket.getOutputStream())
+        if (!isAuthorized(headers)) {
+            writeJson(output, 401, errorJson("authentication_error", "Missing or invalid credentials"))
+            return
+        }
         val length = headers["content-length"]?.toIntOrNull() ?: 0
+        if (length !in 0..MAX_REQUEST_BYTES) {
+            writeJson(output, 413, errorJson("invalid_request_error", "Request body is too large"))
+            return
+        }
         val bodyBytes = ByteArray(length)
         var offset = 0
         while (offset < length) {
@@ -54,7 +65,6 @@ internal class LocalFormatGateway(
             offset += count
         }
         val path = requestLine.split(' ').getOrNull(1).orEmpty().substringBefore('?')
-        val output = BufferedOutputStream(socket.getOutputStream())
         if (path.endsWith("/count_tokens")) {
             val approximate = bodyBytes.decodeToString().length / 4 + 1
             writeJson(output, 200, JSONObject().put("input_tokens", approximate).toString())
@@ -211,6 +221,21 @@ internal class LocalFormatGateway(
         output.flush()
     }
 
+    /**
+     * Only forward requests that present the provider key Claude Code was configured with.
+     *
+     * Binding to 127.0.0.1 keeps this server off the network, but it does not make it
+     * private: on Android any app with the INTERNET permission can connect to a loopback
+     * port. Without this check, another installed app could have its requests forwarded
+     * upstream on the user's key.
+     */
+    private fun isAuthorized(headers: Map<String, String>): Boolean {
+        val presented = headers["x-api-key"]
+            ?: headers["authorization"]?.removePrefix("Bearer ")?.trim()
+            ?: return false
+        return MessageDigest.isEqual(presented.toByteArray(), apiKey.toByteArray())
+    }
+
     private fun readLine(input: BufferedInputStream): String? {
         val bytes = ArrayList<Byte>()
         while (true) {
@@ -250,5 +275,10 @@ internal class LocalFormatGateway(
     override fun close() {
         running.set(false)
         runCatching { server.close() }
+    }
+
+    private companion object {
+        const val MAX_REQUEST_BYTES = 8 * 1024 * 1024
+        const val SOCKET_TIMEOUT_MS = 30_000
     }
 }

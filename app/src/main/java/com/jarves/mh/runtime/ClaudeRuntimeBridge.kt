@@ -164,7 +164,8 @@ class ClaudeRuntimeBridge(
 
             val command = buildList {
                 add(launch.executable)
-                add("--bare")
+                // Do not use --bare here: Claude Code bare mode ignores CLAUDE_CODE_OAUTH_TOKEN,
+                // which is how setup-token authenticates Claude subscriptions.
                 add("-p")
                 add(contextPrompt)
                 add("--output-format")

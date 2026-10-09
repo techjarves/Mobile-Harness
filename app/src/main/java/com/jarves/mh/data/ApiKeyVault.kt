@@ -80,7 +80,7 @@ class ApiKeyVault(context: Context) {
     private fun putEncrypted(storageId: String, secret: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-        val encrypted = cipher.doFinal(secret.toByteArray(Charsets.UTF_8))
+        val encrypted = cipher.doFinal(cleanSecret(secret).toByteArray(Charsets.UTF_8))
         preferences.edit()
             .putString("$storageId.iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString("$storageId.value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
@@ -111,8 +111,16 @@ class ApiKeyVault(context: Context) {
         val encrypted = Base64.decode(preferences.getString("$storageId.value", null), Base64.NO_WRAP)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(128, iv))
-        cipher.doFinal(encrypted).toString(Charsets.UTF_8)
+        // Also clean on read so keys saved before this fix (e.g. a token wrapped across lines) still work.
+        cleanSecret(cipher.doFinal(encrypted).toString(Charsets.UTF_8))
     }.getOrNull()
+
+    /**
+     * API keys and OAuth tokens never contain whitespace. Terminals often wrap long tokens such as
+     * `claude setup-token` output, so pasted secrets can include line breaks or a "Bearer " prefix.
+     */
+    private fun cleanSecret(secret: String): String =
+        secret.trim().removePrefix("Bearer ").removePrefix("bearer ").filterNot(Char::isWhitespace)
 
     private fun removeEncrypted(storageId: String) {
         preferences.edit().remove("$storageId.iv").remove("$storageId.value").apply()
