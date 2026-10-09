@@ -261,6 +261,7 @@ import kotlinx.coroutines.launch
 
 
 import androidx.annotation.StringRes
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.jarves.mh.R
 import com.jarves.mh.ui.theme.AppLanguage
@@ -3786,7 +3787,7 @@ private fun ProjectsScreen(
     }
     if (showCreate) AlertDialog(
         onDismissRequest = { showCreate = false },
-        title = { Text("Create a project") },
+        title = { Text(stringResource(R.string.an_create_project)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.ws_project_name)) }, singleLine = true)
@@ -3821,7 +3822,7 @@ private fun ProjectsScreen(
                 )
                 if (androidTemplate != null) {
                     Text(
-                        "Kotlin · min SDK 28 · target SDK 36",
+                        stringResource(R.string.an_template_info, 28, 36),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -4168,7 +4169,7 @@ private fun ProjectCard(
                         Text(
                             when {
                                 taskRunning -> stringResource(R.string.ws_task_running)
-                                buildRunning -> "Android build"
+                                buildRunning -> stringResource(R.string.an_android_build)
                                 else -> stringResource(R.string.ws_terminal_running)
                             },
                             color = MaterialTheme.colorScheme.primary,
@@ -5008,7 +5009,8 @@ private fun AndroidDashboardScreen(
                         }
                         if (state.androidBuildIssues.isNotEmpty()) {
                             item { Text(stringResource(R.string.build_issues), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-                            items(state.androidBuildIssues) { issue ->
+                            items(state.androidBuildIssues) { rawIssue ->
+                                val issue = rawIssue.localized(LocalContext.current)
                                 Card(
                                     modifier = Modifier.fillMaxWidth().clickable(enabled = issue.filePath != null) { onOpenIssue(issue) },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
@@ -5309,7 +5311,8 @@ private fun ProfessionalAndroidOverview(
 
         if (state.androidBuildIssues.isNotEmpty()) {
             item { Text(stringResource(R.string.build_issues), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-            items(state.androidBuildIssues) { issue ->
+            items(state.androidBuildIssues) { rawIssue ->
+                val issue = rawIssue.localized(LocalContext.current)
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable(enabled = issue.filePath != null) { onOpenIssue(issue) },
                     color = MaterialTheme.colorScheme.errorContainer,
@@ -6274,17 +6277,17 @@ private fun QueuedFollowUpCard(
                 )
                 if (followUp.attachments.isNotEmpty()) {
                     Text(
-                        "${followUp.attachments.size} attachment${if (followUp.attachments.size == 1) "" else "s"}",
+                        pluralStringResource(R.plurals.an_attachments, followUp.attachments.size, followUp.attachments.size),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            TextButton(onClick = onSteer) { Text("Steer") }
+            TextButton(onClick = onSteer) { Text(stringResource(R.string.an_steer)) }
             IconButton(onClick = onRemove, modifier = Modifier.size(38.dp)) {
                 Icon(
                     Icons.Default.Delete,
-                    contentDescription = "Remove queued follow-up",
+                    contentDescription = stringResource(R.string.an_remove_queued_follow_up),
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
