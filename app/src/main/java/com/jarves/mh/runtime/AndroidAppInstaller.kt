@@ -9,13 +9,15 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Process
 import androidx.core.content.FileProvider
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 import java.io.File
 
 /** Installs a locally-built APK through Android's package manager, without ADB. */
 object AndroidAppInstaller {
     fun install(context: Context, apk: File) {
         require(apk.isFile && apk.extension.equals("apk", ignoreCase = true) && apk.length() > 0L) {
-            "A valid APK was not produced: ${apk.name}"
+            AppStrings.get(context, R.string.rt_apk_invalid, apk.name)
         }
         if (isMiuiDevice()) {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", apk)

@@ -10,6 +10,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.jarves.mh.MainActivity
 import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 
 internal object RuntimeTaskController {
     @Volatile var stopAction: (() -> Unit)? = null
@@ -21,8 +22,13 @@ internal object RuntimeTaskController {
 
 class RuntimeExecutionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
-    private var projectName: String = "your project"
-    private var notificationTitle: String = "Mobile Harness is working"
+    // Resolved lazily: string resources are not reachable before the Service is attached.
+    private var projectNameOverride: String? = null
+    private var notificationTitleOverride: String? = null
+    private val projectName: String
+        get() = projectNameOverride ?: AppStrings.get(this, R.string.rt_exec_default_project)
+    private val notificationTitle: String
+        get() = notificationTitleOverride ?: AppStrings.get(this, R.string.rt_exec_default_title)
     private var canStop: Boolean = true
     private var taskRunning: Boolean = false
 
@@ -32,35 +38,35 @@ class RuntimeExecutionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        intent?.getStringExtra(EXTRA_PROJECT_NAME)?.takeIf(String::isNotBlank)?.let { projectName = it }
-        intent?.getStringExtra(EXTRA_TITLE)?.takeIf(String::isNotBlank)?.let { notificationTitle = it }
+        intent?.getStringExtra(EXTRA_PROJECT_NAME)?.takeIf(String::isNotBlank)?.let { projectNameOverride = it }
+        intent?.getStringExtra(EXTRA_TITLE)?.takeIf(String::isNotBlank)?.let { notificationTitleOverride = it }
         if (intent?.hasExtra(EXTRA_CAN_STOP) == true) canStop = intent.getBooleanExtra(EXTRA_CAN_STOP, true)
         when (intent?.action ?: ACTION_START) {
             ACTION_STOP -> {
                 RuntimeTaskController.requestStop()
                 getSystemService(NotificationManager::class.java).notify(
                     RUNNING_NOTIFICATION_ID,
-                    runningNotification("Stopping safely…", includeStop = false),
+                    runningNotification(AppStrings.get(this, R.string.rt_exec_stopping), includeStop = false),
                 )
             }
             ACTION_PROGRESS -> {
                 // Live step updates only matter while a task is actually running.
                 if (!taskRunning) return START_NOT_STICKY
                 val detail = intent?.getStringExtra(EXTRA_DETAIL)?.takeIf { it.isNotBlank() }
-                    ?: "Claude Code is working in $projectName"
+                    ?: AppStrings.get(this, R.string.rt_exec_working_in, projectName)
                 getSystemService(NotificationManager::class.java).notify(
                     RUNNING_NOTIFICATION_ID,
                     runningNotification(detail, includeStop = canStop),
                 )
             }
             ACTION_COMPLETE -> finishTask(
-                title = "Task completed",
-                detail = intent?.getStringExtra(EXTRA_DETAIL) ?: "Mobile Harness finished working in $projectName.",
+                title = AppStrings.get(this, R.string.rt_exec_task_completed),
+                detail = intent?.getStringExtra(EXTRA_DETAIL) ?: AppStrings.get(this, R.string.rt_exec_finished_in, projectName),
                 failed = false,
             )
             ACTION_FAILED -> finishTask(
-                title = "Task needs attention",
-                detail = intent?.getStringExtra(EXTRA_DETAIL) ?: "Mobile Harness could not finish the task.",
+                title = AppStrings.get(this, R.string.rt_exec_task_attention),
+                detail = intent?.getStringExtra(EXTRA_DETAIL) ?: AppStrings.get(this, R.string.rt_exec_could_not_finish),
                 failed = true,
             )
             ACTION_CANCELLED -> {
@@ -73,7 +79,7 @@ class RuntimeExecutionService : Service() {
                 taskRunning = true
                 startForeground(
                     RUNNING_NOTIFICATION_ID,
-                    runningNotification("Claude Code is working in $projectName", includeStop = canStop),
+                    runningNotification(AppStrings.get(this, R.string.rt_exec_working_in, projectName), includeStop = canStop),
                 )
                 acquireWakeLock()
             }
@@ -98,7 +104,7 @@ class RuntimeExecutionService : Service() {
                 Intent(this, RuntimeExecutionService::class.java).setAction(ACTION_STOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            builder.addAction(0, "Stop task", stopIntent)
+            builder.addAction(0, AppStrings.get(this, R.string.rt_exec_stop_task), stopIntent)
         }
         return builder.build()
     }
@@ -170,13 +176,21 @@ class RuntimeExecutionService : Service() {
         fun ensureNotificationChannels(context: android.content.Context) {
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(
-                NotificationChannel(RUNNING_CHANNEL_ID, "Running coding tasks", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Shows progress while Mobile Harness is working in the background"
+                NotificationChannel(
+                    RUNNING_CHANNEL_ID,
+                    AppStrings.get(context, R.string.rt_exec_channel_running),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = AppStrings.get(context, R.string.rt_exec_channel_running_description)
                 },
             )
             manager.createNotificationChannel(
-                NotificationChannel(RESULT_CHANNEL_ID, "Task results", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Notifies you when a coding task finishes or needs attention"
+                NotificationChannel(
+                    RESULT_CHANNEL_ID,
+                    AppStrings.get(context, R.string.rt_exec_channel_results),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = AppStrings.get(context, R.string.rt_exec_channel_results_description)
                 },
             )
         }

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">Веб (JavaScript / TypeScript)</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android (Java / Kotlin)</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">Сайты и веб-приложения на HTML, CSS и JS-фреймворках.</string>
+    <string name="md_stack_python_description">Скрипты, автоматизация, работа с данными и бэкенды на Python.</string>
+    <string name="md_stack_android_description">Создавайте Android-приложения и устанавливайте их прямо на этот телефон.</string>
+    <string name="md_stack_cpp_description">Быстрые компилируемые программы, алгоритмы и системный код.</string>
+    <string name="md_stack_php_description">Сайты и приложения на PHP — классические сайты и проекты Laravel.</string>
+    <string name="md_stack_web_installs">Node.js и npm (уже включены)</string>
+    <string name="md_stack_python_installs">python3, pip, venv и инструменты сборки</string>
+    <string name="md_stack_android_installs">JDK 17, Android SDK 36 для ARM64, Build Tools 35, Gradle 8.14.3 и офлайн-кэш Maven</string>
+    <string name="md_stack_cpp_installs">gcc, g++, make, cmake, gdb</string>
+    <string name="md_stack_php_installs">php-cli, распространённые расширения и Composer</string>
+    <string name="md_time_just_now">Только что</string>
+    <string name="md_time_minutes_ago">%1$d мин назад</string>
+    <string name="md_time_hours_ago">%1$d ч назад</string>
+    <string name="md_time_yesterday">Вчера</string>
+    <string name="md_time_days_ago">%1$d дн назад</string>
+    <string name="md_model_default">%1$s по умолчанию (%2$s)</string>
+    <string name="md_model_opencode_default">OpenCode Zen по умолчанию</string>
+    <string name="md_activity_permission_denied">Доступ запрещён</string>
+    <string name="md_reason_stopped_by_user">Остановлено пользователем</string>
+    <string name="md_reason_no_api_key">Для %1$s не сохранён API-ключ.</string>
+    <string name="md_reason_no_claude_token">Токен подписки Claude не сохранён. Добавьте его в разделе Агент → Провайдер ИИ.</string>
+    <string name="md_reason_dsh_not_installed">DeepSeek Harness не установлен. Откройте Настройки → Агент для программирования, чтобы установить его.</string>
+    <string name="md_reason_antigravity_not_installed">Antigravity CLI не установлен. Откройте Настройки → Агент для программирования, чтобы установить его.</string>
+    <string name="md_chat_title_attachments">Просмотреть прикреплённые файлы</string>
+    <string name="md_reason_user_not_found">Пользователь не найден. Проверьте API-ключ и аккаунт провайдера.</string>
+    <string name="md_reason_key_rejected">Провайдер отклонил сохранённый API-ключ.</string>
+    <string name="md_reason_verification_failed">Проверка среды выполнения не пройдена. Ничего непроверенного не запускалось.</string>
+    <string name="md_reason_claude_could_not_start">Не удалось запустить среду Claude Code.</string>
+    <string name="md_reason_claude_reported_error">Claude Code сообщил об ошибке</string>
+    <string name="md_reason_agent_exit_code">%1$s остановился с кодом выхода %2$d</string>
+    <string name="md_reason_antigravity_exit_code">Antigravity завершился с кодом %1$d</string>
+    <string name="md_reason_antigravity_signin">Antigravity требует входа через Google. Откройте Настройки → Агент для программирования.</string>
+    <string name="md_reason_antigravity_no_credits">На аккаунте Antigravity закончились кредиты. Проверьте тариф или дождитесь их обновления.</string>
+    <string name="md_reason_antigravity_time_limit">Antigravity достиг 60-минутного лимита задачи. Ваши файлы сохранены.</string>
+    <string name="md_reason_antigravity_model_unavailable">Выбранная модель Antigravity недоступна. Обновите список моделей в Настройках.</string>
+    <string name="md_reason_antigravity_failed">Antigravity не удалось выполнить задачу.</string>
+    <string name="md_reason_antigravity_cli_missing_short">Antigravity CLI не установлен.</string>
+    <string name="md_reason_dsh_stopped_before_prompt">DeepSeek Harness остановился до обработки запроса</string>
+    <string name="md_reason_dsh_no_key">API-ключ не был передан в DeepSeek Harness. Сохраните ключ провайдера заново в Настройках.</string>
+    <string name="md_reason_dsh_could_not_start">Не удалось запустить DeepSeek Harness.</string>
+    <string name="md_reason_dsh_unspecified">DeepSeek Harness сообщил о неизвестной ошибке</string>
+    <string name="md_reason_dsh_turn_failed">Ход DeepSeek Harness завершился с ошибкой</string>
+    <string name="md_reason_dsh_blocked">DeepSeek Harness не смог завершить задачу из-за блокировки</string>
+    <string name="md_tool_failed">Ошибка инструмента</string>
+    <string name="md_tool_completed_successfully">Успешно выполнено</string>
+</resources>

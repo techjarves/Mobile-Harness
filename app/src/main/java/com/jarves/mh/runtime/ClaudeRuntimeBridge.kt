@@ -3,6 +3,8 @@ package com.jarves.mh.runtime
 import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.DiffLine
@@ -106,7 +108,7 @@ class ClaudeRuntimeBridge(
         currentThinkingBlockId = 0L
         streamedThinking.clear()
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
-        pushForegroundProgress("Starting Claude Code…")
+        pushForegroundProgress(R.string.rt_bridge_starting, "Claude Code")
         val secret = secretFor(provider).orEmpty()
         if (secret.isBlank()) {
             val message = if (provider.kind == ProviderKind.CLAUDE) {
@@ -252,7 +254,7 @@ class ClaudeRuntimeBridge(
                     finishForegroundRuntime(
                         completed = true,
                         projectName = projectSlug,
-                        detail = "Claude Code finished the task in $projectSlug.",
+                        detail = AppStrings.get(context, R.string.rt_bridge_finished_in, "Claude Code", projectSlug),
                     )
                 } else {
                     if (userStopRequested) throw ProviderSessionException("Stopped by user")
@@ -540,7 +542,7 @@ class ClaudeRuntimeBridge(
                     isFinal = isFinal,
                 ),
             )
-            pushForegroundProgress("Thinking…")
+            pushForegroundProgress(R.string.rt_bridge_thinking)
         }
     }
 
@@ -551,7 +553,7 @@ class ClaudeRuntimeBridge(
             lastReasoningTokens = tokens
             lastReasoningUpdateAt = now
             eventBus.emit(RuntimeEvent.ReasoningProgress(sessionId, tokens))
-            pushForegroundProgress("Thinking…")
+            pushForegroundProgress(R.string.rt_bridge_thinking)
         }
     }
 
@@ -571,7 +573,7 @@ class ClaudeRuntimeBridge(
             else -> input.optString("description").ifBlank { "Running $name" }
         }
         eventBus.emit(RuntimeEvent.ToolStarted(sessionId, name, sanitizeForDisplay(detail.ifBlank { "Running $name" })))
-        pushForegroundProgress("Running $name · ${detail.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { name }}")
+        pushForegroundProgress(R.string.rt_bridge_running_tool, name, detail.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { name })
     }
 
     private fun terminalStatus(line: String): Pair<String, String>? = null
@@ -584,8 +586,8 @@ class ClaudeRuntimeBridge(
             // is already done, which would freeze the notification on its last step.
             finishForegroundRuntime(
                 completed = true,
-                projectName = activeProjectSlug ?: "your project",
-                detail = "Claude Code finished the task.",
+                projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
+                detail = AppStrings.get(context, R.string.rt_bridge_finished, "Claude Code"),
             )
         }
     }
@@ -598,7 +600,7 @@ class ClaudeRuntimeBridge(
             } else {
                 finishForegroundRuntime(
                     completed = false,
-                    projectName = activeProjectSlug ?: "your project",
+                    projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
                     detail = reason,
                 )
             }
@@ -759,7 +761,7 @@ class ClaudeRuntimeBridge(
                     diffLines = listOf(
                         DiffLine(
                             DiffLineType.INFO,
-                            "File is too large to preview safely. Undo and Keep still work.",
+                            AppStrings.get(context, R.string.rt_diff_file_too_large),
                         ),
                     ),
                 )
@@ -780,7 +782,7 @@ class ClaudeRuntimeBridge(
 
     private fun buildDiffLines(beforeBytes: ByteArray, afterBytes: ByteArray): List<DiffLine> {
         if (beforeBytes.any { it == 0.toByte() } || afterBytes.any { it == 0.toByte() }) {
-            return listOf(DiffLine(DiffLineType.INFO, "Binary file changed"))
+            return listOf(DiffLine(DiffLineType.INFO, AppStrings.get(context, R.string.rt_diff_binary_changed)))
         }
         val before = textLines(beforeBytes)
         val after = textLines(afterBytes)
@@ -788,7 +790,7 @@ class ClaudeRuntimeBridge(
             return listOf(
                 DiffLine(
                     DiffLineType.INFO,
-                    "Diff is too large to display (${before.size} → ${after.size} lines). Undo and Keep still work.",
+                    AppStrings.get(context, R.string.rt_diff_too_large, before.size, after.size),
                 ),
             )
         }
@@ -948,6 +950,13 @@ class ClaudeRuntimeBridge(
      * notification, so the notification panel shows the real task progress.
      * Throttled because each update is a service round-trip.
      */
+    /** Localized variant; resolves the string only when the throttle allows an update. */
+    private fun pushForegroundProgress(@androidx.annotation.StringRes id: Int, vararg args: Any) {
+        if (activeSessionId == null) return
+        if (android.os.SystemClock.elapsedRealtime() - lastForegroundProgressAt < FOREGROUND_PROGRESS_MIN_INTERVAL_MS) return
+        pushForegroundProgress(AppStrings.get(context, id, *args))
+    }
+
     private fun pushForegroundProgress(detailRaw: String) {
         if (activeSessionId == null) return
         val now = android.os.SystemClock.elapsedRealtime()

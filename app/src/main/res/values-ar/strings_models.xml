@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">ويب (JavaScript / TypeScript)</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android (Java / Kotlin)</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">مواقع وتطبيقات ويب باستخدام HTML وCSS وأطر عمل JS.</string>
+    <string name="md_stack_python_description">سكربتات وأتمتة وعمل على البيانات وخوادم خلفية بلغة Python.</string>
+    <string name="md_stack_android_description">أنشئ مشاريع تطبيقات Android وثبّتها مباشرة على هذا الهاتف.</string>
+    <string name="md_stack_cpp_description">برامج مُترجمة سريعة وخوارزميات وبرمجة أنظمة.</string>
+    <string name="md_stack_php_description">مواقع وتطبيقات باستخدام PHP — مواقع تقليدية ومشاريع Laravel.</string>
+    <string name="md_stack_web_installs">Node.js وnpm (مضمّنان بالفعل)</string>
+    <string name="md_stack_python_installs">python3 وpip وvenv وأدوات البناء</string>
+    <string name="md_stack_android_installs">JDK 17 وAndroid SDK 36 لمعمارية ARM64 وBuild Tools 35 وGradle 8.14.3 وذاكرة Maven مؤقتة دون اتصال</string>
+    <string name="md_stack_cpp_installs">gcc، g++، make، cmake، gdb</string>
+    <string name="md_stack_php_installs">php-cli والإضافات الشائعة وComposer</string>
+    <string name="md_time_just_now">الآن</string>
+    <string name="md_time_minutes_ago">منذ %1$d د</string>
+    <string name="md_time_hours_ago">منذ %1$d س</string>
+    <string name="md_time_yesterday">أمس</string>
+    <string name="md_time_days_ago">منذ %1$d ي</string>
+    <string name="md_model_default">%1$s الافتراضي (%2$s)</string>
+    <string name="md_model_opencode_default">OpenCode Zen الافتراضي</string>
+    <string name="md_activity_permission_denied">تم رفض الإذن</string>
+    <string name="md_reason_stopped_by_user">أوقفه المستخدم</string>
+    <string name="md_reason_no_api_key">لا يوجد مفتاح API محفوظ لـ %1$s.</string>
+    <string name="md_reason_no_claude_token">لا يوجد رمز اشتراك Claude محفوظ. أضف رمزًا من الوكيل ← مزود الذكاء الاصطناعي.</string>
+    <string name="md_reason_dsh_not_installed">DeepSeek Harness غير مثبّت. افتح الإعدادات ← وكيل البرمجة لتثبيته.</string>
+    <string name="md_reason_antigravity_not_installed">Antigravity CLI غير مثبّت. افتح الإعدادات ← وكيل البرمجة لتثبيته.</string>
+    <string name="md_chat_title_attachments">مراجعة الملفات المرفقة</string>
+    <string name="md_reason_user_not_found">لم يتم العثور على المستخدم. تحقق من مفتاح API وحساب المزود.</string>
+    <string name="md_reason_key_rejected">رفض المزود مفتاح API المحفوظ.</string>
+    <string name="md_reason_verification_failed">فشل التحقق من بيئة التشغيل. لم يُنفَّذ أي شيء غير موثّق.</string>
+    <string name="md_reason_claude_could_not_start">تعذّر تشغيل بيئة Claude Code الفعلية.</string>
+    <string name="md_reason_claude_reported_error">أبلغ Claude Code عن خطأ</string>
+    <string name="md_reason_agent_exit_code">توقف %1$s برمز الخروج %2$d</string>
+    <string name="md_reason_antigravity_exit_code">خرج Antigravity بالرمز %1$d</string>
+    <string name="md_reason_antigravity_signin">يحتاج Antigravity إلى تسجيل الدخول عبر Google. افتح الإعدادات ← وكيل البرمجة.</string>
+    <string name="md_reason_antigravity_no_credits">نفدت أرصدة حساب Antigravity. تحقق من خطة الحساب أو انتظر إعادة تعيين الأرصدة.</string>
+    <string name="md_reason_antigravity_time_limit">بلغ Antigravity حد المهمة البالغ 60 دقيقة. تم الاحتفاظ بملفاتك.</string>
+    <string name="md_reason_antigravity_model_unavailable">نموذج Antigravity المحدد غير متاح. حدّث النماذج من الإعدادات.</string>
+    <string name="md_reason_antigravity_failed">تعذّر على Antigravity إكمال المهمة.</string>
+    <string name="md_reason_antigravity_cli_missing_short">Antigravity CLI غير مثبّت.</string>
+    <string name="md_reason_dsh_stopped_before_prompt">توقف DeepSeek Harness قبل معالجة الطلب</string>
+    <string name="md_reason_dsh_no_key">لم يصل أي مفتاح API إلى DeepSeek Harness. أعد حفظ مفتاح المزود من الإعدادات.</string>
+    <string name="md_reason_dsh_could_not_start">تعذّر تشغيل DeepSeek Harness.</string>
+    <string name="md_reason_dsh_unspecified">أبلغ DeepSeek Harness عن خطأ غير محدد</string>
+    <string name="md_reason_dsh_turn_failed">فشلت جولة DeepSeek Harness</string>
+    <string name="md_reason_dsh_blocked">مُنع DeepSeek Harness من إكمال المهمة</string>
+    <string name="md_tool_failed">فشلت الأداة</string>
+    <string name="md_tool_completed_successfully">اكتمل بنجاح</string>
+</resources>

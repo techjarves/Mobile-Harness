@@ -4,6 +4,10 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.system.Os
 import com.jarves.mh.BuildConfig
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
+import com.jarves.mh.ui.localizedLabel
+import com.jarves.mh.ui.localizedTitle
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -71,6 +75,10 @@ class RuntimeInstaller(private val context: Context) {
     private val dshAndroidCompatibilityMarker = File(rootfs, ".pocket-dsh-android-compat-version")
     private val macosMetadataRepairMarker = File(rootfs, ".pocket-macos-metadata-repair")
 
+    /** Resolves a user-visible installer label in the language picked inside the app. */
+    private fun str(@androidx.annotation.StringRes id: Int, vararg args: Any): String =
+        AppStrings.get(context, id, *args)
+
     fun isInstalled(): Boolean {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         val rootfsLayoutReady = ensureRootfsCompatibilityLinks()
@@ -106,7 +114,7 @@ class RuntimeInstaller(private val context: Context) {
 
     /** Returns the already verified runtime without performing network or update checks. */
     fun installedRuntime(): InstalledRuntime {
-        check(isInstalled()) { "Core runtime setup is incomplete. Reopen Mobile Harness to repair it." }
+        check(isInstalled()) { str(R.string.rt_install_incomplete) }
         return InstalledRuntime(
             proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so"),
             rootfs = rootfs,
@@ -146,12 +154,12 @@ class RuntimeInstaller(private val context: Context) {
                 android.os.Build.SUPPORTED_ABIS,
                 System.getProperty("os.arch"),
             ),
-        ) { "Unsupported architecture: Mobile Harness requires an ARM64 device or ARM64 emulator" }
+        ) { str(R.string.rt_install_unsupported_arch) }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
 
         if (!File(rootfs, "usr/bin/bash").exists() || rootfsMarker.readTextOrNull() != ROOTFS_VERSION) {
-            onProgress(RuntimeInstallProgress("Preparing the private development runtime", 0.03f))
+            onProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_runtime), 0.03f))
             val archive = obtainRuntimeBundle(
                 CORE_BUNDLE,
                 preferEmbedded = BuildConfig.OFFLINE_RUNTIME_BUNDLES,
@@ -159,7 +167,7 @@ class RuntimeInstaller(private val context: Context) {
                 to = 0.25f,
                 onProgress,
             )
-            onProgress(RuntimeInstallProgress("Verifying and unpacking the Core runtime", 0.28f))
+            onProgress(RuntimeInstallProgress(str(R.string.rt_install_unpacking_core), 0.28f))
             val staging = File(runtimeDir, "ubuntu.installing")
             staging.deleteRecursively()
             staging.mkdirs()
@@ -192,12 +200,12 @@ class RuntimeInstaller(private val context: Context) {
             aptInstall(
                 proot,
                 listOf("git", "ca-certificates"),
-                "Installing Git and base tools",
+                str(R.string.rt_install_git_base_tools),
                 0.70f,
                 onProgress,
             )
             writeResolver()
-            verifyGuest(proot, "git --version", "Base tools could not be verified")
+            verifyGuest(proot, "git --version", str(R.string.rt_install_verify_failed, "Git"))
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
         }
 
@@ -213,7 +221,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
         }
-        onProgress(RuntimeInstallProgress("Setup complete", 1f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
     }
 
@@ -232,7 +240,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
         }
-        onProgress(RuntimeInstallProgress("${agent.title} is ready", 1f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, agent.localizedTitle(context)), 1f))
     }
 
     fun isAgentInstalled(agent: com.jarves.mh.model.AgentKind): Boolean {
@@ -272,17 +280,18 @@ class RuntimeInstaller(private val context: Context) {
     suspend fun ensureGitHubCliInstalled(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
         if (isGitHubCliInstalled()) return
         check(!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            "GitHub sign-in needs the PocketDev online APK."
+            str(R.string.rt_install_github_needs_online)
         }
         writeResolver()
         downloads.mkdirs()
         val downloaded = File(downloads, "gh-$GITHUB_CLI_VERSION-linux-arm64.tar.gz")
-        onProgress(RuntimeInstallProgress("Downloading official GitHub CLI", 0.05f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_downloading_github_cli), 0.05f))
+        val githubDownloadLabel = str(R.string.rt_install_downloading_version, "GitHub CLI", GITHUB_CLI_VERSION)
         downloadVerified(GITHUB_CLI_RELEASE_URL, downloaded, GITHUB_CLI_RELEASE_SHA256) { bytes, total ->
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
             onProgress(
                 RuntimeInstallProgress(
-                    message = "Downloading GitHub CLI $GITHUB_CLI_VERSION",
+                    message = githubDownloadLabel,
                     fraction = 0.05f + ratio * 0.75f,
                     downloadedBytes = bytes,
                     totalBytes = total.takeIf { it > 0L },
@@ -290,7 +299,7 @@ class RuntimeInstaller(private val context: Context) {
                 ),
             )
         }
-        onProgress(RuntimeInstallProgress("Installing GitHub CLI $GITHUB_CLI_VERSION", 0.85f, indeterminate = true))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_version, "GitHub CLI", GITHUB_CLI_VERSION), 0.85f, indeterminate = true))
         val destination = File(rootfs, GITHUB_CLI_GUEST_PATH.removePrefix("/"))
         destination.parentFile?.mkdirs()
         var found = false
@@ -310,10 +319,10 @@ class RuntimeInstaller(private val context: Context) {
         }
         check(found) { "Official GitHub CLI archive did not contain the expected binary" }
         downloaded.delete()
-        verifyGuest(proot = installedRuntime().proot, command = "$GITHUB_CLI_GUEST_PATH --version", failureMessage = "GitHub CLI verification failed")
+        verifyGuest(proot = installedRuntime().proot, command = "$GITHUB_CLI_GUEST_PATH --version", failureMessage = str(R.string.rt_install_verify_failed, "GitHub CLI"))
         githubCliMarker.writeText(GITHUB_CLI_VERSION)
         check(isGitHubCliInstalled()) { "GitHub CLI installation is incomplete" }
-        onProgress(RuntimeInstallProgress("GitHub CLI is ready", 1f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, "GitHub CLI"), 1f))
     }
 
     /**
@@ -377,7 +386,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> updateDsh(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> updateAgy(runtime, expectedVersion, onProgress)
         }
-        onProgress(RuntimeInstallProgress("${agent.title} $expectedVersion is ready", 1f, event = RuntimeInstallEvent.COMPLETED))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_version_ready, agent.localizedTitle(context), expectedVersion), 1f, event = RuntimeInstallEvent.COMPLETED))
     }
 
     private suspend fun updateClaude(
@@ -386,14 +395,15 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         val latest = JSONObject(fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")).getString("version")
-        check(latest == expectedVersion) { "A newer Claude Code release appeared. Check again before updating." }
+        check(latest == expectedVersion) { str(R.string.rt_install_newer_release, "Claude Code") }
         val base = "https://downloads.claude.ai/claude-code-releases/$latest"
         val manifest = JSONObject(fetchText("$base/manifest.json"))
         val checksum = manifest.getJSONObject("platforms").getJSONObject("linux-arm64").getString("checksum")
         val downloaded = File(downloads, "claude-$latest")
+        val claudeDownloadLabel = str(R.string.rt_install_downloading_version, "Claude Code", latest)
         downloadVerified("$base/linux-arm64/claude", downloaded, checksum) { bytes, total ->
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress("Downloading Claude Code $latest", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+            onProgress(RuntimeInstallProgress(claudeDownloadLabel, ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
         val claude = File(rootfs, CLAUDE_GUEST_PATH.removePrefix("/"))
         claude.parentFile?.mkdirs()
@@ -402,7 +412,7 @@ class RuntimeInstaller(private val context: Context) {
         Os.chmod(staged.absolutePath, 0b111101101)
         Os.rename(staged.absolutePath, claude.absolutePath)
         downloaded.delete()
-        verifyGuest(runtime.proot, "$CLAUDE_GUEST_PATH --version", "Claude Code update verification failed")
+        verifyGuest(runtime.proot, "$CLAUDE_GUEST_PATH --version", str(R.string.rt_install_update_verify_failed, "Claude Code"))
         claudeMarker.writeText(latest)
     }
 
@@ -413,11 +423,12 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         val manifest = fetchAgyManifest()
         val latest = manifest.getString("version")
-        check(latest == expectedVersion) { "A newer Antigravity release appeared. Check again before updating." }
+        check(latest == expectedVersion) { str(R.string.rt_install_newer_release, "Antigravity") }
         val downloaded = File(downloads, "antigravity-$latest-linux-arm64.tar.gz")
+        val agyDownloadLabel = str(R.string.rt_install_downloading_version, "Antigravity CLI", latest)
         downloadVerified(manifest.getString("url"), downloaded, manifest.getString("sha512"), algorithm = "SHA-512") { bytes, total ->
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress("Downloading Antigravity CLI $latest", ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+            onProgress(RuntimeInstallProgress(agyDownloadLabel, ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
         val destination = File(rootfs, AGY_GUEST_PATH.removePrefix("/"))
         var found = false
@@ -437,7 +448,7 @@ class RuntimeInstaller(private val context: Context) {
         }
         downloaded.delete()
         check(found) { "Antigravity update archive is incomplete" }
-        verifyGuest(runtime.proot, "$AGY_GUEST_PATH --version", "Antigravity update verification failed")
+        verifyGuest(runtime.proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_update_verify_failed, "Antigravity CLI"))
         agyMarker.writeText(latest)
     }
 
@@ -447,7 +458,7 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         val latest = JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version")
-        check(latest == expectedVersion) { "A newer DeepSeek Harness release appeared. Check again before updating." }
+        check(latest == expectedVersion) { str(R.string.rt_install_newer_release, "DeepSeek Harness") }
         val quotedVersion = latest.replace(Regex("[^0-9A-Za-z.+-]"), "")
         check(quotedVersion == latest) { "Invalid DeepSeek Harness version" }
         runGuestCommand(
@@ -463,12 +474,12 @@ class RuntimeInstaller(private val context: Context) {
             fraction = 0.55f,
             timeoutMs = 20 * 60 * 1_000L,
             onProgress = onProgress,
-            failureMessage = "DeepSeek Harness update failed; the installed version was preserved",
+            failureMessage = str(R.string.rt_install_dsh_update_failed),
         )
         dshMarker.writeText(latest)
         dshAndroidCompatibilityMarker.delete()
         ensureDshAndroidCompatibility()
-        verifyGuest(runtime.proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness update verification failed")
+        verifyGuest(runtime.proot, "/usr/local/bin/dsh --profile headless --help", str(R.string.rt_install_update_verify_failed, "DeepSeek Harness"))
     }
 
     private fun fetchAgyManifest(): JSONObject = JSONObject(
@@ -516,12 +527,12 @@ class RuntimeInstaller(private val context: Context) {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.CLAUDE_CODE)) return
         installRuntimeOverlay(
             bundle = CLAUDE_BUNDLE,
-            message = "Installing Claude Code $CLAUDE_BUNDLED_VERSION",
+            message = str(R.string.rt_install_installing_version, "Claude Code", CLAUDE_BUNDLED_VERSION),
             from = fraction,
             to = 0.995f,
             onProgress = onProgress,
         )
-        verifyGuest(proot, "$CLAUDE_GUEST_PATH --version", "Claude Code verification failed")
+        verifyGuest(proot, "$CLAUDE_GUEST_PATH --version", str(R.string.rt_install_verify_failed, "Claude Code"))
         require(claudeMarker.readTextOrNull() == CLAUDE_BUNDLED_VERSION) {
             "The Claude Code runtime bundle is incomplete"
         }
@@ -535,13 +546,13 @@ class RuntimeInstaller(private val context: Context) {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return
         installRuntimeOverlay(
             bundle = AGY_BUNDLE,
-            message = "Installing Antigravity CLI $AGY_VERSION",
+            message = str(R.string.rt_install_installing_version, "Antigravity CLI", AGY_VERSION),
             from = fraction,
             to = 0.995f,
             onProgress = onProgress,
             forceEmbedded = true,
         )
-        verifyGuest(proot, "$AGY_GUEST_PATH --version", "Antigravity CLI verification failed")
+        verifyGuest(proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_verify_failed, "Antigravity CLI"))
         agyMarker.writeText(AGY_VERSION)
         require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
             "Antigravity CLI installation is incomplete"
@@ -559,13 +570,13 @@ class RuntimeInstaller(private val context: Context) {
         }
         installRuntimeOverlay(
             bundle = DSH_BUNDLE,
-            message = "Installing DeepSeek Harness $DSH_VERSION",
+            message = str(R.string.rt_install_installing_version, "DeepSeek Harness", DSH_VERSION),
             from = fraction,
             to = 0.995f,
             onProgress = onProgress,
         )
         ensureDshAndroidCompatibility()
-        verifyGuest(proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness verification failed")
+        verifyGuest(proot, "/usr/local/bin/dsh --profile headless --help", str(R.string.rt_install_verify_failed, "DeepSeek Harness"))
         require(isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)) {
             "The DeepSeek Harness runtime bundle is incomplete"
         }
@@ -635,7 +646,7 @@ class RuntimeInstaller(private val context: Context) {
         val runtime = installedRuntime()
         if (isStackInstalled(stack)) return
         applyStack(runtime.proot, stack, 0.05f, 0.95f, onProgress)
-        onProgress(RuntimeInstallProgress("${stack.label} tools are ready", 1f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_stack_ready, stack.localizedLabel(context)), 1f))
     }
 
     /**
@@ -647,11 +658,11 @@ class RuntimeInstaller(private val context: Context) {
         stack: DevStack,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        require(stack != DevStack.WEB) { "Web tools are part of the core runtime and cannot be removed" }
+        require(stack != DevStack.WEB) { str(R.string.rt_install_web_not_removable) }
         val runtime = installedRuntime()
         if (!isStackInstalled(stack)) return
 
-        onProgress(RuntimeInstallProgress("Removing ${stack.label} tools", 0.1f, indeterminate = true))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_removing_stack, stack.localizedLabel(context)), 0.1f, indeterminate = true))
         when (stack) {
             DevStack.WEB -> Unit
             DevStack.PYTHON -> removePythonStack()
@@ -676,7 +687,7 @@ class RuntimeInstaller(private val context: Context) {
         }
 
         writeDevStackState(readDevStackState().apply { put(stack.name, false) })
-        onProgress(RuntimeInstallProgress("${stack.label} removed", 1f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_stack_removed, stack.localizedLabel(context)), 1f))
     }
 
     private fun removePythonStack() {
@@ -750,18 +761,18 @@ class RuntimeInstaller(private val context: Context) {
         var verified = true
         when (stack) {
             DevStack.WEB -> {
-                onProgress(RuntimeInstallProgress("Checking Node.js and npm", from))
-                verifyGuest(proot, "node --version && npm --version", "Node.js tools could not be verified")
+                onProgress(RuntimeInstallProgress(str(R.string.rt_install_checking_node), from))
+                verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
             }
             DevStack.PYTHON -> {
-                installRuntimeOverlay(PYTHON_BUNDLE, "Installing Python, pip, and venv", from, to, onProgress)
+                installRuntimeOverlay(PYTHON_BUNDLE, str(R.string.rt_install_python), from, to, onProgress)
                 runCatching {
-                    verifyGuest(proot, "python3 --version && pip3 --version", "Python tools could not be verified")
+                    verifyGuest(proot, "python3 --version && pip3 --version", str(R.string.rt_install_verify_failed, "Python"))
                 }.onFailure { error ->
                     verified = false
                     onProgress(
                         RuntimeInstallProgress(
-                            "Python verify failed (will retry on next launch): ${error.message?.take(120)}",
+                            str(R.string.rt_install_python_verify_failed, error.message?.take(120).orEmpty()),
                             to,
                         ),
                     )
@@ -774,31 +785,31 @@ class RuntimeInstaller(private val context: Context) {
                 aptInstall(
                     proot,
                     listOf("build-essential", "cmake", "gdb"),
-                    "Installing C/C++ compilers and build tools",
+                    str(R.string.rt_install_cpp),
                     from,
                     onProgress,
                 )
                 verifyGuest(
                     proot,
                     "gcc --version && g++ --version && make --version && cmake --version",
-                    "C/C++ tools could not be verified",
+                    str(R.string.rt_install_verify_failed, "C/C++"),
                 )
             }
             DevStack.PHP -> {
                 aptInstall(
                     proot,
                     listOf("php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip", "unzip"),
-                    "Installing PHP and common extensions",
+                    str(R.string.rt_install_php),
                     from,
                     onProgress,
                 )
                 installComposer(proot, from, onProgress)
-                verifyGuest(proot, "php --version && composer --version", "PHP tools could not be verified")
+                verifyGuest(proot, "php --version && composer --version", str(R.string.rt_install_verify_failed, "PHP"))
             }
         }
         if (!verified) return
         writeDevStackState(readDevStackState().apply { put(stack.name, true) })
-        onProgress(RuntimeInstallProgress("${stack.label} installed", to))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_stack_installed, stack.localizedLabel(context)), to))
     }
 
     /**
@@ -812,7 +823,7 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         val composer = File(rootfs, "usr/local/bin/composer")
         if (composer.isFile) return
-        onProgress(RuntimeInstallProgress("Downloading Composer", fraction))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_downloading_named, "Composer"), fraction))
         downloads.mkdirs()
         val staged = File(downloads, "composer.phar")
         val checksum = fetchText("https://getcomposer.org/download/latest-stable/composer.phar.sha256sum")
@@ -833,7 +844,7 @@ class RuntimeInstaller(private val context: Context) {
         staged.inputStream().use { input -> FileOutputStream(composer).use { input.copyTo(it) } }
         staged.delete()
         Os.chmod(composer.absolutePath, 0b111101101)
-        onProgress(RuntimeInstallProgress("Installing Composer", fraction))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_named, "Composer"), fraction))
     }
 
     private suspend fun installAndroidToolchain(
@@ -853,7 +864,7 @@ class RuntimeInstaller(private val context: Context) {
             !localMaven.isDirectory) {
             installRuntimeOverlay(
                 ANDROID_BUNDLE,
-                "Installing the Android development tools",
+                str(R.string.rt_install_android_tools),
                 from,
                 to,
                 onProgress,
@@ -870,7 +881,7 @@ class RuntimeInstaller(private val context: Context) {
             proot,
             "java -version 2>&1 | grep -E '\"17\\.|version 17' && " +
                 "gradle --version && aapt2 version && test -f \"${'$'}ANDROID_HOME/platforms/android-36/android.jar\"",
-            "Android SDK, Gradle, or Java could not be verified",
+            str(R.string.rt_install_verify_failed, "Android SDK, Gradle, Java"),
         )
     }
 
@@ -890,7 +901,7 @@ class RuntimeInstaller(private val context: Context) {
         extractZstdTar(archive, rootfs)
         stripMacosMetadataArtifacts(rootfs)
         if (archive.parentFile == downloads) archive.delete()
-        onProgress(RuntimeInstallProgress("${bundle.label} tools installed", to))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_bundle_tools_installed, bundle.label), to))
     }
 
     /**
@@ -933,7 +944,8 @@ class RuntimeInstaller(private val context: Context) {
         val destination = File(downloads, bundle.fileName)
         val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
         if (useEmbedded) {
-            onProgress(RuntimeInstallProgress("Loading ${bundle.label} bundle", from, 0, bundle.compressedBytes))
+            val loadingLabel = str(R.string.rt_install_loading_bundle, bundle.label)
+            onProgress(RuntimeInstallProgress(loadingLabel, from, 0, bundle.compressedBytes))
             val temporary = File(downloads, "${bundle.fileName}.part")
             context.assets.open("runtime/${bundle.fileName}").use { input ->
                 FileOutputStream(temporary).use { output ->
@@ -946,7 +958,7 @@ class RuntimeInstaller(private val context: Context) {
                         output.write(buffer, 0, count)
                         copied += count
                         val ratio = (copied.toFloat() / bundle.compressedBytes).coerceIn(0f, 1f)
-                        onProgress(RuntimeInstallProgress("Loading ${bundle.label} bundle", from + ratio * (to - from), copied, bundle.compressedBytes))
+                        onProgress(RuntimeInstallProgress(loadingLabel, from + ratio * (to - from), copied, bundle.compressedBytes))
                     }
                 }
             }
@@ -959,9 +971,10 @@ class RuntimeInstaller(private val context: Context) {
         }
 
         val url = "${BuildConfig.RUNTIME_RELEASE_BASE_URL}/${bundle.fileName}"
+        val downloadingLabel = str(R.string.rt_install_downloading_bundle, bundle.label)
         downloadVerified(url, destination, bundle.sha256) { downloaded, total ->
             val ratio = if (total > 0) downloaded.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress("Downloading ${bundle.label} bundle", from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
+            onProgress(RuntimeInstallProgress(downloadingLabel, from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
         }
         return destination
     }
@@ -982,7 +995,7 @@ class RuntimeInstaller(private val context: Context) {
             val ratio = if (total > 0) downloaded.toFloat() / total else 0f
             onProgress(RuntimeInstallProgress(message, from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
         }
-        onProgress(RuntimeInstallProgress("Installing ${archiveName.removeSuffix(".zip")}", to, indeterminate = true))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_named, archiveName.removeSuffix(".zip")), to, indeterminate = true))
         val staging = File(destination.parentFile, "${destination.name}.installing")
         staging.deleteRecursively()
         staging.mkdirs()
@@ -1129,7 +1142,8 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         if (File(rootfs, "usr/local/bin/node").exists()) return
-        onProgress(RuntimeInstallProgress("Downloading Node.js $NODE_VERSION LTS", from))
+        val nodeDownloadLabel = str(R.string.rt_install_downloading_node, NODE_VERSION)
+        onProgress(RuntimeInstallProgress(nodeDownloadLabel, from))
         downloads.mkdirs()
         val nodeFileName = "node-$NODE_VERSION-linux-arm64.tar.gz"
         val nodeBaseUrl = "https://nodejs.org/dist/$NODE_VERSION"
@@ -1144,14 +1158,14 @@ class RuntimeInstaller(private val context: Context) {
             val ratio = if (total > 0) downloaded.toFloat() / total else 0f
             onProgress(
                 RuntimeInstallProgress(
-                    "Downloading Node.js $NODE_VERSION LTS",
+                    nodeDownloadLabel,
                     from + ratio * (to - from),
                     downloaded,
                     total.takeIf { it > 0 },
                 ),
             )
         }
-        onProgress(RuntimeInstallProgress("Installing Node.js and npm", to))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_node), to))
         val nodeStaging = File(runtimeDir, "node.installing")
         nodeStaging.deleteRecursively()
         nodeStaging.mkdirs()
@@ -1186,7 +1200,7 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         onProgress(
             RuntimeInstallProgress(
-                message = "Updating the private Ubuntu environment",
+                message = str(R.string.rt_install_updating_ubuntu),
                 fraction = 0.69f,
                 indeterminate = true,
             ),
@@ -1204,7 +1218,7 @@ class RuntimeInstaller(private val context: Context) {
             fraction = 0.69f,
             timeoutMs = 35 * 60 * 1_000L,
             onProgress = onProgress,
-            failureMessage = "Ubuntu maintenance could not be completed",
+            failureMessage = str(R.string.rt_install_ubuntu_maintenance_failed),
         )
     }
 
@@ -1230,7 +1244,7 @@ class RuntimeInstaller(private val context: Context) {
             fraction = fraction,
             timeoutMs = 30 * 60 * 1_000L,
             onProgress = onProgress,
-            failureMessage = "Could not install: $packageNames",
+            failureMessage = str(R.string.rt_install_could_not_install, packageNames),
         )
     }
 
@@ -1252,7 +1266,7 @@ class RuntimeInstaller(private val context: Context) {
             fraction = fraction,
             timeoutMs = 20 * 60 * 1_000L,
             onProgress = onProgress,
-            failureMessage = "Could not remove: $packageNames",
+            failureMessage = str(R.string.rt_install_could_not_remove, packageNames),
         )
     }
 
@@ -1332,7 +1346,7 @@ class RuntimeInstaller(private val context: Context) {
         val exit = running.waitFor()
         onProgress(
             RuntimeInstallProgress(
-                message = if (exit == 0) "Command completed" else "Command failed (exit $exit)",
+                message = if (exit == 0) str(R.string.rt_install_command_completed) else str(R.string.rt_install_command_failed, exit),
                 fraction = fraction,
                 terminalLine = "[exit $exit] $displayCommand",
                 event = RuntimeInstallEvent.COMMAND_COMPLETED,
@@ -1424,14 +1438,14 @@ class RuntimeInstaller(private val context: Context) {
 
     suspend fun initializeExisting(onProgress: suspend (RuntimeInstallProgress) -> Unit): InstalledRuntime {
         val installed = installedRuntime()
-        onProgress(RuntimeInstallProgress("Checking private runtime files", 0.15f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_checking_files), 0.15f))
         writeResolver()
         ensureSettingsAndHooks()
         File(context.filesDir, "runtime-bridge").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
-        onProgress(RuntimeInstallProgress("Preparing the Android runtime bridge", 0.42f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_bridge), 0.42f))
         check(File(rootfs, "usr/local/bin/node").canExecute()) { "Core runtime is missing Node.js" }
         check(File(rootfs, "usr/bin/git").canExecute()) { "Core runtime is missing Git" }
-        onProgress(RuntimeInstallProgress("Private runtime is ready", 1f))
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_runtime_ready), 1f))
         return installed
     }
 
@@ -1760,7 +1774,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         connection.readTimeout = 120_000
         connection.instanceFollowRedirects = true
         if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
-        check(connection.responseCode in 200..299) { "Download failed with HTTP ${connection.responseCode}" }
+        check(connection.responseCode in 200..299) { str(R.string.rt_install_download_failed_http, connection.responseCode) }
         val resumed = connection.responseCode == HttpURLConnection.HTTP_PARTIAL && existing > 0L
         if (!resumed) {
             temporary.delete()

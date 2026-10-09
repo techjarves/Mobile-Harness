@@ -3,6 +3,8 @@ package com.jarves.mh.runtime
 import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.DevStack
@@ -44,7 +46,7 @@ class DshRuntimeBridge(
     private val secretFor: (ProviderProfile) -> String?,
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
-    private val checkpoints = WorkspaceCheckpoints(context.filesDir)
+    private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
     override val events: Flow<RuntimeEvent> = eventBus
     private val finishedSessions = ConcurrentHashMap.newKeySet<String>()
@@ -68,7 +70,7 @@ class DshRuntimeBridge(
         foregroundResultPosted = false
         lastThinkingUpdateAt = 0L
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
-        pushForegroundProgress("Starting DeepSeek Harness…")
+        pushForegroundProgress(R.string.rt_bridge_starting, "DeepSeek Harness")
         val secret = secretFor(provider).orEmpty()
         if (secret.isBlank()) {
             eventBus.emit(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
@@ -167,7 +169,7 @@ class DshRuntimeBridge(
                 finishForegroundRuntime(
                     completed = true,
                     projectName = projectSlug,
-                    detail = "DeepSeek Harness finished the task in $projectSlug.",
+                    detail = AppStrings.get(context, R.string.rt_bridge_finished_in, "DeepSeek Harness", projectSlug),
                 )
             } else {
                 if (userStopRequested) throw DshSessionException("Stopped by user")
@@ -262,7 +264,7 @@ class DshRuntimeBridge(
                 is DshSdkProtocolEvent.Status -> {
                     if (protocolEvent.running) {
                         sawRunning = true
-                        pushForegroundProgress("DeepSeek Harness is working…")
+                        pushForegroundProgress(R.string.rt_bridge_working, "DeepSeek Harness")
                     } else if (sawRunning && !shutdownSent) {
                         completed = sawActivity && failure.isBlank()
                         if (!completed && failure.isBlank()) {
@@ -475,7 +477,7 @@ class DshRuntimeBridge(
                     isFinal = isFinal,
                 ),
             )
-            pushForegroundProgress("Thinking…")
+            pushForegroundProgress(R.string.rt_bridge_thinking)
         }
     }
 
@@ -484,8 +486,8 @@ class DshRuntimeBridge(
             eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
             finishForegroundRuntime(
                 completed = true,
-                projectName = activeProjectSlug ?: "your project",
-                detail = "DeepSeek Harness finished the task.",
+                projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
+                detail = AppStrings.get(context, R.string.rt_bridge_finished, "DeepSeek Harness"),
             )
         }
     }
@@ -498,7 +500,7 @@ class DshRuntimeBridge(
             } else {
                 finishForegroundRuntime(
                     completed = false,
-                    projectName = activeProjectSlug ?: "your project",
+                    projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
                     detail = reason,
                 )
             }
@@ -584,6 +586,13 @@ class DshRuntimeBridge(
         sb.appendLine("Now, respond to this new message from the user:")
         sb.appendLine(currentPrompt)
         return sb.toString()
+    }
+
+    /** Localized variant; resolves the string only when the throttle allows an update. */
+    private fun pushForegroundProgress(@androidx.annotation.StringRes id: Int, vararg args: Any) {
+        if (activeSessionId == null) return
+        if (android.os.SystemClock.elapsedRealtime() - lastForegroundProgressAt < FOREGROUND_PROGRESS_MIN_INTERVAL_MS) return
+        pushForegroundProgress(AppStrings.get(context, id, *args))
     }
 
     private fun pushForegroundProgress(detailRaw: String) {

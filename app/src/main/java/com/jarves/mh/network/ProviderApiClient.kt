@@ -1,6 +1,9 @@
 package com.jarves.mh.network
 
+import android.content.Context
+import com.jarves.mh.R
 import com.jarves.mh.model.ProviderProtocol
+import com.jarves.mh.ui.AppStrings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -25,18 +28,28 @@ sealed interface ConnectionValidation {
     ) : ConnectionValidation
 }
 
-class ProviderApiClient {
+/**
+ * [context] is optional so existing call sites keep compiling; pass the application
+ * context to return user-facing messages in the language picked inside the app.
+ */
+class ProviderApiClient(private val context: Context? = null) {
+    private fun text(@androidx.annotation.StringRes id: Int, fallback: String, vararg args: Any): String =
+        context?.let { AppStrings.get(it, id, *args) } ?: fallback
+
     suspend fun discoverModels(
         baseUrl: String,
         apiKey: String,
         protocol: ProviderProtocol,
     ): ModelDiscoveryResult = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) {
-            return@withContext ModelDiscoveryResult.Failure("Enter a base URL first.")
+            return@withContext ModelDiscoveryResult.Failure(text(R.string.rt_api_enter_base_url, "Enter a base URL first."))
         }
 
         var authError = false
-        var lastMessage = "This provider did not expose a model list. You can enter a custom model name."
+        var lastMessage = text(
+            R.string.rt_api_no_model_list,
+            "This provider did not expose a model list. You can enter a custom model name.",
+        )
         var lastProviderMessage: String? = null
         for (endpoint in modelEndpoints(baseUrl, protocol)) {
             // OpenRouter's complete catalog is public. Fetch it anonymously even when
@@ -53,7 +66,10 @@ class ProviderApiClient {
                 response.code in 200..299 -> {
                     val models = ModelResponseParser.parse(response.body)
                     if (models.isNotEmpty()) return@withContext ModelDiscoveryResult.Success(models, endpoint)
-                    lastMessage = "The provider replied, but its model list was empty or unsupported."
+                    lastMessage = text(
+                        R.string.rt_api_empty_model_list,
+                        "The provider replied, but its model list was empty or unsupported.",
+                    )
                 }
                 response.code > 0 && response.code != 404 -> {
                     lastMessage = friendlyHttpError(response.code)
@@ -63,7 +79,11 @@ class ProviderApiClient {
             }
         }
         ModelDiscoveryResult.Failure(
-            if (authError) "Check the saved API key, then try refreshing again." else lastMessage,
+            if (authError) {
+                text(R.string.rt_api_check_saved_key, "Check the saved API key, then try refreshing again.")
+            } else {
+                lastMessage
+            },
             lastProviderMessage,
         )
     }
@@ -78,7 +98,7 @@ class ProviderApiClient {
         openRouterAllowFallbacks: Boolean = true,
     ): ConnectionValidation = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
-            return@withContext ConnectionValidation.Failure("Base URL, model, and API key are required.")
+            return@withContext ConnectionValidation.Failure(text(R.string.rt_api_required_fields, "Base URL, model, and API key are required."))
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
         val body = validationBody(model, protocol, openRouterProviderOrder, openRouterAllowFallbacks)
@@ -87,45 +107,49 @@ class ProviderApiClient {
         // though discovery and the endpoint itself were healthy.
         val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 12_000, readTimeoutMs = 45_000)
         when {
-            response.code in 200..299 -> ConnectionValidation.Success("Connection verified.")
+            response.code in 200..299 -> ConnectionValidation.Success(text(R.string.rt_api_connection_verified, "Connection verified."))
             response.code == 401 || response.code == 403 -> ConnectionValidation.Failure(
-                "Check this API key or select another saved key.",
+                text(R.string.rt_api_check_key, "Check this API key or select another saved key."),
                 providerErrorMessage(response.body),
-                "Rejected",
+                text(R.string.rt_api_label_rejected, "Rejected"),
             )
             response.code == 404 -> ConnectionValidation.Failure(
-                "Check the Base URL and selected gateway protocol.",
+                text(R.string.rt_api_check_base_url, "Check the Base URL and selected gateway protocol."),
                 providerErrorMessage(response.body),
-                "Endpoint error",
+                text(R.string.rt_api_label_endpoint_error, "Endpoint error"),
             )
             response.code == 400 && response.body.contains("model", ignoreCase = true) ->
                 ConnectionValidation.Failure(
-                    "Refresh the model list or select a different model.",
+                    text(R.string.rt_api_refresh_models, "Refresh the model list or select a different model."),
                     providerErrorMessage(response.body),
-                    "Model error",
+                    text(R.string.rt_api_label_model_error, "Model error"),
                 )
             response.code == 429 -> ConnectionValidation.Failure(
-                "Wait a moment, then retry or use another API key.",
+                text(R.string.rt_api_rate_limited_retry, "Wait a moment, then retry or use another API key."),
                 providerErrorMessage(response.body),
-                "Rate limited",
+                text(R.string.rt_api_label_rate_limited, "Rate limited"),
             )
             response.code in 500..599 -> ConnectionValidation.Failure(
-                "The provider is temporarily unavailable. Try again shortly.",
+                text(R.string.rt_api_provider_unavailable, "The provider is temporarily unavailable. Try again shortly."),
                 providerErrorMessage(response.body),
-                "Provider error",
+                text(R.string.rt_api_label_provider_error, "Provider error"),
             )
             response.code > 0 -> ConnectionValidation.Failure(
-                "Review the model, protocol, and endpoint settings.",
+                text(R.string.rt_api_review_settings, "Review the model, protocol, and endpoint settings."),
                 providerErrorMessage(response.body),
-                "Request failed",
+                text(R.string.rt_api_label_request_failed, "Request failed"),
             )
             response.error?.contains("timeout", ignoreCase = true) == true ||
                 response.error?.contains("timed out", ignoreCase = true) == true ->
-                ConnectionValidation.Failure("Check your connection and try again.", response.error, "Timed out")
+                ConnectionValidation.Failure(
+                    text(R.string.rt_api_check_connection, "Check your connection and try again."),
+                    response.error,
+                    text(R.string.rt_api_label_timed_out, "Timed out"),
+                )
             else -> ConnectionValidation.Failure(
-                "Check your internet connection and provider settings.",
+                text(R.string.rt_api_check_internet, "Check your internet connection and provider settings."),
                 response.error,
-                "Network error",
+                text(R.string.rt_api_label_network_error, "Network error"),
             )
         }
     }
@@ -166,7 +190,7 @@ class ProviderApiClient {
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             connection.disconnect()
             HttpResult(code, responseBody)
-        }.getOrElse { HttpResult(0, "", it.message ?: "Network connection failed",) }
+        }.getOrElse { HttpResult(0, "", it.message ?: text(R.string.rt_api_network_failed, "Network connection failed")) }
     }
 
     private fun modelEndpoints(baseUrl: String, protocol: ProviderProtocol): List<String> {
@@ -247,9 +271,9 @@ class ProviderApiClient {
     }
 
     private fun friendlyHttpError(code: Int): String = when (code) {
-        429 -> "The provider rate limit was reached. Wait a moment and try again."
-        in 500..599 -> "The provider is temporarily unavailable (HTTP $code)."
-        else -> "The provider returned HTTP $code. Check the URL and account access."
+        429 -> text(R.string.rt_api_rate_limit_reached, "The provider rate limit was reached. Wait a moment and try again.")
+        in 500..599 -> text(R.string.rt_api_unavailable_http, "The provider is temporarily unavailable (HTTP $code).", code)
+        else -> text(R.string.rt_api_http_error, "The provider returned HTTP $code. Check the URL and account access.", code)
     }
 
     private fun providerErrorMessage(body: String): String? {

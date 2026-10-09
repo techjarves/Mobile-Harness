@@ -38,6 +38,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.res.stringResource
+import com.jarves.mh.R
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -202,7 +204,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = block.language.ifBlank { "code" },
+                    text = block.language.ifBlank { stringResource(R.string.ws_md_code_label) },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF9AA0A6),
@@ -217,7 +219,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                         ) {
                             Icon(
                                 Icons.Default.PlayArrow,
-                                contentDescription = "Run in project terminal",
+                                contentDescription = stringResource(R.string.ws_md_run_in_terminal),
                                 tint = PocketOrange,
                                 modifier = Modifier.size(18.dp),
                             )
@@ -236,7 +238,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                     ) {
                         Icon(
                             imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                            contentDescription = "Copy code",
+                            contentDescription = stringResource(R.string.ws_md_copy_code),
                             tint = if (copied) PocketOrange else Color(0xFF9AA0A6),
                             modifier = Modifier.size(16.dp),
                         )

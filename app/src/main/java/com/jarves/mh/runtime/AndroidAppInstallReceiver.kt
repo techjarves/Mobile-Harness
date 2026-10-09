@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
 import android.widget.Toast
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 
 class AndroidAppInstallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -19,7 +21,7 @@ class AndroidAppInstallReceiver : BroadcastReceiver() {
             return
         }
         if (status != PackageInstaller.STATUS_SUCCESS) {
-            val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Installation failed"
+            val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: AppStrings.get(context, R.string.rt_apk_install_failed)
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             return
         }
@@ -30,7 +32,7 @@ class AndroidAppInstallReceiver : BroadcastReceiver() {
                     context, 0, null, null, null,
                 )
             }.onFailure {
-                Toast.makeText(context, "Installed $packageName. Open it from your launcher.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, AppStrings.get(context, R.string.rt_apk_installed_open_launcher, packageName), Toast.LENGTH_LONG).show()
             }
             return
         }

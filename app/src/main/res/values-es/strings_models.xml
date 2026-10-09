@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">Web (JavaScript / TypeScript)</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android (Java / Kotlin)</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">Sitios y aplicaciones web con HTML, CSS y frameworks de JS.</string>
+    <string name="md_stack_python_description">Scripts, automatización, trabajo con datos y backends en Python.</string>
+    <string name="md_stack_android_description">Crea proyectos de apps Android e instálalas directamente en este teléfono.</string>
+    <string name="md_stack_cpp_description">Programas compilados rápidos, algoritmos y código de sistemas.</string>
+    <string name="md_stack_php_description">Sitios y apps con PHP: sitios clásicos y proyectos Laravel.</string>
+    <string name="md_stack_web_installs">Node.js y npm (ya incluidos)</string>
+    <string name="md_stack_python_installs">python3, pip, venv y herramientas de compilación</string>
+    <string name="md_stack_android_installs">JDK 17, Android SDK 36 para ARM64, Build Tools 35, Gradle 8.14.3 y una caché de Maven sin conexión</string>
+    <string name="md_stack_cpp_installs">gcc, g++, make, cmake, gdb</string>
+    <string name="md_stack_php_installs">php-cli, extensiones comunes y Composer</string>
+    <string name="md_time_just_now">Ahora mismo</string>
+    <string name="md_time_minutes_ago">hace %1$d min</string>
+    <string name="md_time_hours_ago">hace %1$d h</string>
+    <string name="md_time_yesterday">Ayer</string>
+    <string name="md_time_days_ago">hace %1$d d</string>
+    <string name="md_model_default">%1$s predeterminado (%2$s)</string>
+    <string name="md_model_opencode_default">OpenCode Zen predeterminado</string>
+    <string name="md_activity_permission_denied">Permiso denegado</string>
+    <string name="md_reason_stopped_by_user">Detenido por el usuario</string>
+    <string name="md_reason_no_api_key">No hay ninguna clave de API guardada para %1$s.</string>
+    <string name="md_reason_no_claude_token">No hay ningún token de suscripción de Claude guardado. Añade uno en Agente → Proveedor de IA.</string>
+    <string name="md_reason_dsh_not_installed">DeepSeek Harness no está instalado. Abre Ajustes → Agente de programación para instalarlo.</string>
+    <string name="md_reason_antigravity_not_installed">Antigravity CLI no está instalado. Abre Ajustes → Agente de programación para instalarlo.</string>
+    <string name="md_chat_title_attachments">Revisar los archivos adjuntos</string>
+    <string name="md_reason_user_not_found">Usuario no encontrado. Comprueba la clave de API y la cuenta del proveedor.</string>
+    <string name="md_reason_key_rejected">El proveedor rechazó la clave de API guardada.</string>
+    <string name="md_reason_verification_failed">Falló la verificación del entorno. No se ejecutó nada sin verificar.</string>
+    <string name="md_reason_claude_could_not_start">No se pudo iniciar el entorno real de Claude Code.</string>
+    <string name="md_reason_claude_reported_error">Claude Code informó de un error</string>
+    <string name="md_reason_agent_exit_code">%1$s se detuvo con el código de salida %2$d</string>
+    <string name="md_reason_antigravity_exit_code">Antigravity terminó con el código %1$d</string>
+    <string name="md_reason_antigravity_signin">Antigravity necesita iniciar sesión con Google. Abre Ajustes → Agente de programación.</string>
+    <string name="md_reason_antigravity_no_credits">Tu cuenta de Antigravity se quedó sin créditos. Revisa el plan de la cuenta o espera a que se restablezcan los créditos.</string>
+    <string name="md_reason_antigravity_time_limit">Antigravity alcanzó el límite de 60 minutos por tarea. Tus archivos se conservaron.</string>
+    <string name="md_reason_antigravity_model_unavailable">El modelo de Antigravity seleccionado no está disponible. Actualiza los modelos en Ajustes.</string>
+    <string name="md_reason_antigravity_failed">Antigravity no pudo completar la tarea.</string>
+    <string name="md_reason_antigravity_cli_missing_short">Antigravity CLI no está instalado.</string>
+    <string name="md_reason_dsh_stopped_before_prompt">DeepSeek Harness se detuvo antes de procesar la solicitud</string>
+    <string name="md_reason_dsh_no_key">Ninguna clave de API llegó a DeepSeek Harness. Vuelve a guardar la clave del proveedor en Ajustes.</string>
+    <string name="md_reason_dsh_could_not_start">No se pudo iniciar DeepSeek Harness.</string>
+    <string name="md_reason_dsh_unspecified">DeepSeek Harness informó de un error no especificado</string>
+    <string name="md_reason_dsh_turn_failed">Falló el turno de DeepSeek Harness</string>
+    <string name="md_reason_dsh_blocked">Se impidió que DeepSeek Harness completara la tarea</string>
+    <string name="md_tool_failed">La herramienta falló</string>
+    <string name="md_tool_completed_successfully">Completado correctamente</string>
+</resources>

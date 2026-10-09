@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">Web (JavaScript / TypeScript)</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android (Java / Kotlin)</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">Websites and web apps with HTML, CSS, and JS frameworks.</string>
+    <string name="md_stack_python_description">Scripts, automation, data work, and Python backends.</string>
+    <string name="md_stack_android_description">Build Android app projects and install them directly on this phone.</string>
+    <string name="md_stack_cpp_description">Fast compiled programs, algorithms, and systems code.</string>
+    <string name="md_stack_php_description">Websites and apps with PHP — classic sites and Laravel projects.</string>
+    <string name="md_stack_web_installs">Node.js and npm (already included)</string>
+    <string name="md_stack_python_installs">python3, pip, venv, and build tools</string>
+    <string name="md_stack_android_installs">JDK 17, ARM64 Android SDK 36, Build Tools 35, Gradle 8.14.3, and an offline Maven cache</string>
+    <string name="md_stack_cpp_installs">gcc, g++, make, cmake, gdb</string>
+    <string name="md_stack_php_installs">php-cli, common extensions, and Composer</string>
+    <string name="md_time_just_now">Just now</string>
+    <string name="md_time_minutes_ago">%1$dm ago</string>
+    <string name="md_time_hours_ago">%1$dh ago</string>
+    <string name="md_time_yesterday">Yesterday</string>
+    <string name="md_time_days_ago">%1$dd ago</string>
+    <string name="md_model_default">%1$s Default (%2$s)</string>
+    <string name="md_model_opencode_default">OpenCode Zen default</string>
+    <string name="md_activity_permission_denied">Permission denied</string>
+    <string name="md_reason_stopped_by_user">Stopped by user</string>
+    <string name="md_reason_no_api_key">No API key is saved for %1$s.</string>
+    <string name="md_reason_no_claude_token">No Claude subscription token is saved. Add one from Agent → AI provider.</string>
+    <string name="md_reason_dsh_not_installed">DeepSeek Harness is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_reason_antigravity_not_installed">Antigravity CLI is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_chat_title_attachments">Review the attached files</string>
+    <string name="md_reason_user_not_found">User not found. Check the API key and provider account.</string>
+    <string name="md_reason_key_rejected">The provider rejected the saved API key.</string>
+    <string name="md_reason_verification_failed">Runtime verification failed. Nothing unverified was executed.</string>
+    <string name="md_reason_claude_could_not_start">The real Claude Code runtime could not start.</string>
+    <string name="md_reason_claude_reported_error">Claude Code reported an error</string>
+    <string name="md_reason_agent_exit_code">%1$s stopped with exit code %2$d</string>
+    <string name="md_reason_antigravity_exit_code">Antigravity exited with code %1$d</string>
+    <string name="md_reason_antigravity_signin">Antigravity needs Google sign-in. Open Settings → Coding agent.</string>
+    <string name="md_reason_antigravity_no_credits">Your Antigravity account is out of credits. Check the account plan or wait for credits to reset.</string>
+    <string name="md_reason_antigravity_time_limit">Antigravity reached the 60-minute task limit. Your files were kept.</string>
+    <string name="md_reason_antigravity_model_unavailable">The selected Antigravity model is unavailable. Refresh models in Settings.</string>
+    <string name="md_reason_antigravity_failed">Antigravity could not complete the task.</string>
+    <string name="md_reason_antigravity_cli_missing_short">Antigravity CLI is not installed.</string>
+    <string name="md_reason_dsh_stopped_before_prompt">DeepSeek Harness stopped before processing the prompt</string>
+    <string name="md_reason_dsh_no_key">No API key reached DeepSeek Harness. Re-save the provider key in Settings.</string>
+    <string name="md_reason_dsh_could_not_start">DeepSeek Harness could not start.</string>
+    <string name="md_reason_dsh_unspecified">DeepSeek Harness reported an unspecified error</string>
+    <string name="md_reason_dsh_turn_failed">DeepSeek Harness turn failed</string>
+    <string name="md_reason_dsh_blocked">DeepSeek Harness was blocked from completing the task</string>
+    <string name="md_tool_failed">Tool failed</string>
+    <string name="md_tool_completed_successfully">Completed successfully</string>
+</resources>

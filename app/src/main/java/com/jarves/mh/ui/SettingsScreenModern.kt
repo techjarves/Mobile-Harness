@@ -152,9 +152,9 @@ fun SettingsScreen(
     stackPendingRemoval?.let { stack ->
         AlertDialog(
             onDismissRequest = { stackPendingRemoval = null },
-            title = { Text("Remove ${stack.label}?") },
+            title = { Text(stringResource(R.string.tools_remove_dialog_title, stack.localizedLabel())) },
             text = {
-                Text("This removes the toolchain and its runtime caches to free storage. Your projects and source files will not be deleted.")
+                Text(stringResource(R.string.tools_remove_dialog_desc))
             },
             confirmButton = {
                 TextButton(
@@ -162,9 +162,9 @@ fun SettingsScreen(
                         stackPendingRemoval = null
                         onRemoveDevStack(stack)
                     },
-                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                ) { Text(stringResource(R.string.action_remove), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { stackPendingRemoval = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { stackPendingRemoval = null }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 
@@ -298,7 +298,7 @@ fun SettingsScreen(
                     expanded = expanded == SettingsSection.TOOLS,
                     onClick = { toggle(SettingsSection.TOOLS) },
                 ) {
-                    Text("Node.js, npm, Git, and Claude Code are included.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.st_tools_included_note), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
                     DevStack.entries.forEachIndexed { index, stack ->
                         val installed = stack in state.installedDevStacks
@@ -306,8 +306,8 @@ fun SettingsScreen(
                         val removing = installing && state.devStackRemoving
                         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(stack.label, fontWeight = FontWeight.SemiBold)
-                                Text(stack.installsSummary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(stack.localizedLabel(), fontWeight = FontWeight.SemiBold)
+                                Text(stack.localizedInstallsSummary(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             when {
                                 removing -> Text(stringResource(R.string.tools_removing), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -338,14 +338,14 @@ fun SettingsScreen(
                                     Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text(
-                                                "${formatTransferMb(downloaded)} of ${formatTransferMb(total)}",
+                                                stringResource(R.string.st_transfer_progress, formatTransferMb(downloaded), formatTransferMb(total)),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = FontFamily.Monospace,
                                             )
                                             state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
                                                 Text(
-                                                    "${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left",
+                                                    stringResource(R.string.st_transfer_speed_eta, formatTransferSpeed(speed), formatTransferEta(downloaded, total, speed)),
                                                     fontSize = 11.sp,
                                                     color = PocketOrange,
                                                     fontFamily = FontFamily.Monospace,
@@ -353,7 +353,7 @@ fun SettingsScreen(
                                             }
                                         }
                                         Text(
-                                            state.devStackMessage ?: "Downloading…",
+                                            state.devStackMessage ?: stringResource(R.string.st_downloading),
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
@@ -362,7 +362,7 @@ fun SettingsScreen(
                                     }
                                 }
                             } ?: Text(
-                                state.devStackMessage ?: "Processing…",
+                                state.devStackMessage ?: stringResource(R.string.st_processing),
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -386,7 +386,7 @@ fun SettingsScreen(
                     RuntimeInfoRow(stringResource(R.string.runtime_environment), "Ubuntu 20.04 PRoot")
                     RuntimeInfoRow(
                         stringResource(R.string.runtime_active_agent),
-                        state.agentKind.title + if (state.installedAgentVersions.containsKey(state.agentKind)) "" else " · Not installed",
+                        state.agentKind.localizedTitle() + if (state.installedAgentVersions.containsKey(state.agentKind)) "" else " · " + stringResource(R.string.st_not_installed),
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Text(
@@ -396,11 +396,11 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (state.installedAgentVersions.isEmpty()) {
-                        RuntimeInfoRow("Status", "No verified agent installation")
+                        RuntimeInfoRow(stringResource(R.string.st_status), stringResource(R.string.st_no_verified_agent))
                     } else {
                         AgentKind.entries.forEach { agent ->
                             state.installedAgentVersions[agent]?.let { version ->
-                                RuntimeInfoRow(agent.title, "v$version")
+                                RuntimeInfoRow(agent.localizedTitle(), "v$version")
                             }
                         }
                     }
@@ -422,7 +422,7 @@ fun SettingsScreen(
                     AnimatedVisibility(showReliabilityHelp) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                "If large builds stop unexpectedly, Android Developer options may provide a child-process restriction toggle.",
+                                stringResource(R.string.st_reliability_help),
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -432,7 +432,7 @@ fun SettingsScreen(
                                         .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Open Developer options") }
+                            ) { Text(stringResource(R.string.st_open_developer_options)) }
                         }
                     }
                 }
@@ -546,7 +546,7 @@ private fun SettingsAccordion(
                 }
                 Icon(
                     if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    if (expanded) "Collapse" else "Expand",
+                    if (expanded) stringResource(R.string.st_collapse) else stringResource(R.string.st_expand),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -579,17 +579,17 @@ private fun AntigravityConnectionSettings(
         shape = RoundedCornerShape(14.dp),
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Official Antigravity CLI", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.st_official_antigravity_cli), fontWeight = FontWeight.SemiBold)
             Text(
                 auth.message ?: if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
-                    auth.accountEmail?.let { "Connected as $it" } ?: "Google account connected"
-                } else "Sign in using Google's browser flow.",
+                    auth.accountEmail?.let { stringResource(R.string.st_connected_as, it) } ?: stringResource(R.string.st_google_account_connected)
+                } else stringResource(R.string.st_sign_in_google_flow),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             when (auth.status) {
                 AntigravityAuthStatus.SIGNED_IN -> OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
-                    Text("Log out of Antigravity")
+                    Text(stringResource(R.string.st_log_out_antigravity))
                 }
                 AntigravityAuthStatus.STARTING, AntigravityAuthStatus.COMPLETING -> {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -599,33 +599,33 @@ private fun AntigravityConnectionSettings(
                         OutlinedButton(
                             onClick = { clipboard.setText(AnnotatedString(url)) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Copy Google sign-in URL") }
+                        ) { Text(stringResource(R.string.st_copy_google_signin_url)) }
                     }
                     OutlinedTextField(
                         value = code,
                         onValueChange = onCode,
-                        label = { Text("One-time authorization code") },
+                        label = { Text(stringResource(R.string.st_one_time_auth_code)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Button(onClick = onSubmitCode, enabled = code.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                        Text("Complete sign-in")
+                        Text(stringResource(R.string.st_complete_signin))
                     }
                 }
                 AntigravityAuthStatus.SIGNED_OUT, AntigravityAuthStatus.ERROR -> Button(
                     onClick = onStartLogin,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (auth.status == AntigravityAuthStatus.ERROR) "Reconnect with Google" else "Sign in with Google") }
+                ) { Text(if (auth.status == AntigravityAuthStatus.ERROR) stringResource(R.string.st_reconnect_google) else stringResource(R.string.agent_google_signin)) }
             }
         }
     }
 
     if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
-        Text("Model", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.st_model), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         OutlinedTextField(
             value = state.antigravityModel,
             onValueChange = onSetModel,
-            label = { Text("Antigravity model ID") },
+            label = { Text(stringResource(R.string.st_antigravity_model_id)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -637,7 +637,7 @@ private fun AntigravityConnectionSettings(
             if (state.antigravityModelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             else Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
             Spacer(Modifier.width(7.dp))
-            Text("Refresh models")
+            Text(stringResource(R.string.provider_refresh_models))
         }
         state.antigravityModels.forEach { model ->
             Row(
@@ -648,11 +648,18 @@ private fun AntigravityConnectionSettings(
                 SelectionDot(state.antigravityModel == model)
             }
         }
-        Text("Reasoning effort", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.st_reasoning_effort), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("low", "medium", "high").forEach { effort ->
                 OutlinedButton(onClick = { onSetEffort(effort) }, modifier = Modifier.weight(1f)) {
-                    Text(effort.replaceFirstChar(Char::uppercase))
+                    Text(
+                        when (effort) {
+                            "low" -> stringResource(R.string.st_effort_low)
+                            "medium" -> stringResource(R.string.st_effort_medium)
+                            "high" -> stringResource(R.string.st_effort_high)
+                            else -> effort
+                        },
+                    )
                 }
             }
         }
@@ -660,7 +667,7 @@ private fun AntigravityConnectionSettings(
 
     Surface(color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f), shape = RoundedCornerShape(12.dp)) {
         Text(
-            "Antigravity runs with automatic tool approval. It can edit files and execute commands inside the selected project. Review generated changes before keeping them.",
+            stringResource(R.string.st_antigravity_approval_warning),
             Modifier.fillMaxWidth().padding(12.dp),
             color = MaterialTheme.colorScheme.onErrorContainer,
             fontSize = 11.sp,
@@ -714,22 +721,22 @@ private fun ConnectionSettings(
             ))
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text("Active connection", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(state.provider.model.ifBlank { "Not configured" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(R.string.provider_active_connection), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(state.provider.model.ifBlank { stringResource(R.string.st_not_configured) }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 state.activeApiKeyName?.let { name ->
-                    Text("Key: $name", fontSize = 11.sp, color = PocketOrange, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(stringResource(R.string.st_key_label, name), fontSize = 11.sp, color = PocketOrange, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 state.apiPingMessage?.let {
                     Text(it, fontSize = 11.sp, color = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
             OutlinedButton(onClick = onPing, enabled = state.apiPingStatus != ApiPingStatus.PINGING, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                Text(if (state.apiPingStatus == ApiPingStatus.PINGING) "Testing…" else "Test")
+                Text(if (state.apiPingStatus == ApiPingStatus.PINGING) stringResource(R.string.provider_testing) else stringResource(R.string.action_test))
             }
         }
     }
 
-    Text("Provider", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(stringResource(R.string.provider_label), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Surface(
         modifier = Modifier.fillMaxWidth().clickable { providerExpanded = !providerExpanded },
         shape = RoundedCornerShape(14.dp),
@@ -738,10 +745,10 @@ private fun ConnectionSettings(
     ) {
         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(selectedKind.title, fontWeight = FontWeight.SemiBold)
-                Text(selectedKind.subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Text(selectedKind.localizedTitle(), fontWeight = FontWeight.SemiBold)
+                Text(selectedKind.localizedSubtitle(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
-            Icon(if (providerExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, "Choose provider")
+            Icon(if (providerExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, stringResource(R.string.st_choose_provider))
         }
     }
     AnimatedVisibility(providerExpanded) {
@@ -756,8 +763,8 @@ private fun ConnectionSettings(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(kind.title, fontWeight = FontWeight.Medium)
-                        Text(kind.subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Text(kind.localizedTitle(), fontWeight = FontWeight.Medium)
+                        Text(kind.localizedSubtitle(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
                     SelectionDot(selectedKind == kind)
                 }
@@ -776,10 +783,10 @@ private fun ConnectionSettings(
             overflow = TextOverflow.Ellipsis,
         )
     } else {
-        OutlinedTextField(baseUrl, onBaseUrl, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(baseUrl, onBaseUrl, label = { Text(stringResource(R.string.provider_base_url)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
     }
     if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
-        Text("Gateway protocol", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.provider_gateway_protocol), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)) {
             Column {
                 listOf("anthropic-messages", "openai-completions", "openai-responses").forEach { option ->
@@ -794,25 +801,25 @@ private fun ConnectionSettings(
             }
         }
     }
-    Text("Model", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    OutlinedTextField(model, onModel, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    Text(stringResource(R.string.st_model), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    OutlinedTextField(model, onModel, label = { Text(stringResource(R.string.provider_model_id)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
     OutlinedButton(onClick = onModels, enabled = baseUrl.isNotBlank() && apiKey.isNotBlank() && !isDiscovering, modifier = Modifier.fillMaxWidth().height(50.dp)) {
         if (isDiscovering) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
         else Icon(if (models.isEmpty()) Icons.Default.Search else Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
         Spacer(Modifier.width(7.dp))
-        Text(if (models.isEmpty()) "Find available models" else "Available models (${models.size})")
+        Text(if (models.isEmpty()) stringResource(R.string.provider_find_models) else stringResource(R.string.provider_available_models_count, models.size))
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("API keys", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("${savedKeys.size} saved · automatic failover enabled", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.provider_api_keys), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.st_saved_keys_failover, savedKeys.size), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         OutlinedButton(onClick = { addKeyExpanded = !addKeyExpanded }) {
-            Text(if (addKeyExpanded) "Cancel" else "Add key")
+            Text(if (addKeyExpanded) stringResource(R.string.action_cancel) else stringResource(R.string.provider_add_key))
         }
     }
     if (savedKeys.isNotEmpty()) {
-        Text("Saved API keys", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.st_saved_api_keys), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)) {
             Column {
                 savedKeys.forEachIndexed { index, key ->
@@ -823,14 +830,14 @@ private fun ConnectionSettings(
                         Column(Modifier.weight(1f)) {
                             Text(key.name, fontWeight = FontWeight.Medium)
                             Text(
-                                if (key.isActive) "Active now · tap another key to switch" else "Tap to make active",
+                                if (key.isActive) stringResource(R.string.st_active_now_switch) else stringResource(R.string.st_tap_to_make_active),
                                 fontSize = 11.sp,
                                 color = if (key.isActive) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         SelectionDot(key.isActive)
                         IconButton(onClick = { onRemoveKey(key.id) }) {
-                            Icon(Icons.Default.DeleteSweep, "Remove ${key.name}", Modifier.size(18.dp))
+                            Icon(Icons.Default.DeleteSweep, stringResource(R.string.st_remove_named, key.name), Modifier.size(18.dp))
                         }
                     }
                     if (index != savedKeys.lastIndex) HorizontalDivider(Modifier.padding(start = 13.dp))
@@ -843,21 +850,21 @@ private fun ConnectionSettings(
             OutlinedTextField(
                 newKeyName,
                 onNewKeyName,
-                label = { Text("Key name") },
-                placeholder = { Text("Work, Personal, Backup…") },
+                label = { Text(stringResource(R.string.provider_key_name)) },
+                placeholder = { Text(stringResource(R.string.st_key_name_placeholder)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 newApiKey,
                 onNewApiKey,
-                label = { Text("API key") },
+                label = { Text(stringResource(R.string.provider_api_key)) },
                 singleLine = true,
                 visualTransformation = if (newKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 trailingIcon = {
                     IconButton(onClick = onToggleNewKey) {
-                        Icon(if (newKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Show or hide new key")
+                        Icon(if (newKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, stringResource(R.string.st_show_hide_new_key))
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -870,7 +877,7 @@ private fun ConnectionSettings(
                 enabled = newKeyName.isNotBlank() && newApiKey.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().height(50.dp),
             ) {
-                Text("Save API key")
+                Text(stringResource(R.string.st_save_api_key))
             }
         }
     }
@@ -886,7 +893,7 @@ private fun ConnectionSettings(
             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(8.dp))
         }
-        Text(if (isValidating) "Checking connection" else "Test connection and save")
+        Text(if (isValidating) stringResource(R.string.st_checking_connection_plain) else stringResource(R.string.st_test_connection_and_save))
     }
 }
 
@@ -934,14 +941,14 @@ private fun DebugUpdateChannelSection(
     var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
     val isOverridden = initialUrl.isNotBlank()
     SettingsAccordion(
-        title = "Update channel",
-        subtitle = if (isOverridden) "Overridden · debug only" else "Default GitHub release",
+        title = stringResource(R.string.st_update_channel),
+        subtitle = if (isOverridden) stringResource(R.string.st_update_channel_overridden) else stringResource(R.string.st_update_channel_default),
         icon = Icons.Default.Tune,
         expanded = expanded,
         onClick = { expanded = !expanded },
     ) {
         Text(
-            "Debug builds only. Paste the temporary manifest URL from Cloudflare Tunnel, ngrok, or any HTTPS server hosting mobile-harness-update.json and a newer APK.",
+            stringResource(R.string.st_update_channel_help),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -949,7 +956,7 @@ private fun DebugUpdateChannelSection(
         OutlinedTextField(
             value = url,
             onValueChange = { url = it },
-            label = { Text("Manifest URL") },
+            label = { Text(stringResource(R.string.st_manifest_url)) },
             placeholder = { Text("https://your-tunnel.example/mobile-harness-update.json") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -965,20 +972,20 @@ private fun DebugUpdateChannelSection(
                 enabled = url.startsWith("https://"),
                 modifier = Modifier.weight(1f),
             ) {
-                Text(if (isOverridden) "Replace" else "Use & check")
+                Text(if (isOverridden) stringResource(R.string.st_replace) else stringResource(R.string.st_use_and_check))
             }
             OutlinedButton(
                 onClick = onClear,
                 enabled = isOverridden,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Reset")
+                Text(stringResource(R.string.st_reset))
             }
         }
         if (isOverridden) {
             Spacer(Modifier.height(6.dp))
             Text(
-                "Current: $initialUrl",
+                stringResource(R.string.st_current_url, initialUrl),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

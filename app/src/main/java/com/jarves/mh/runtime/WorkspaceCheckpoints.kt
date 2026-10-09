@@ -1,6 +1,9 @@
 package com.jarves.mh.runtime
 
+import android.content.Context
+import com.jarves.mh.R
 import com.jarves.mh.model.ChangeItem
+import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.model.DiffLine
 import com.jarves.mh.model.DiffLineType
 import java.io.File
@@ -16,7 +19,14 @@ import org.json.JSONArray
  * per-file Undo/Keep. Semantics mirror the original Claude bridge store so
  * both agents behave identically in the Changes tab.
  */
-class WorkspaceCheckpoints(private val filesDir: File) {
+class WorkspaceCheckpoints(
+    private val filesDir: File,
+    /** Optional: when present, informational diff rows use the language picked in the app. */
+    private val context: Context? = null,
+) {
+    private fun text(@androidx.annotation.StringRes id: Int, fallback: String, vararg args: Any): String =
+        context?.let { AppStrings.get(it, id, *args) } ?: fallback
+
     private val projectRoots = ConcurrentHashMap<String, String>()
 
     fun ensureWorkspace(projectId: String): File {
@@ -108,7 +118,7 @@ class WorkspaceCheckpoints(private val filesDir: File) {
                     diffLines = listOf(
                         DiffLine(
                             DiffLineType.INFO,
-                            "File is too large to preview safely. Undo and Keep still work.",
+                            text(R.string.rt_diff_file_too_large, "File is too large to preview safely. Undo and Keep still work."),
                         ),
                     ),
                 )
@@ -129,7 +139,7 @@ class WorkspaceCheckpoints(private val filesDir: File) {
 
     fun buildDiffLines(beforeBytes: ByteArray, afterBytes: ByteArray): List<DiffLine> {
         if (beforeBytes.any { it == 0.toByte() } || afterBytes.any { it == 0.toByte() }) {
-            return listOf(DiffLine(DiffLineType.INFO, "Binary file changed"))
+            return listOf(DiffLine(DiffLineType.INFO, text(R.string.rt_diff_binary_changed, "Binary file changed")))
         }
         val before = textLines(beforeBytes)
         val after = textLines(afterBytes)
@@ -137,7 +147,12 @@ class WorkspaceCheckpoints(private val filesDir: File) {
             return listOf(
                 DiffLine(
                     DiffLineType.INFO,
-                    "Diff is too large to display (${before.size} → ${after.size} lines). Undo and Keep still work.",
+                    text(
+                        R.string.rt_diff_too_large,
+                        "Diff is too large to display (${before.size} → ${after.size} lines). Undo and Keep still work.",
+                        before.size,
+                        after.size,
+                    ),
                 ),
             )
         }

@@ -2,6 +2,8 @@ package com.jarves.mh.runtime
 
 import android.content.Context
 import androidx.core.content.ContextCompat
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ProjectKind
@@ -142,7 +144,7 @@ class AntigravityRuntimeBridge(
     private val saveConversationId: (String, String) -> Unit,
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
-    private val checkpoints = WorkspaceCheckpoints(context.filesDir)
+    private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
     override val events: Flow<RuntimeEvent> = eventBus
     private val finished = ConcurrentHashMap.newKeySet<String>()
@@ -367,7 +369,7 @@ class AntigravityRuntimeBridge(
                 eventBus.emit(RuntimeEvent.FilesChanged(sessionId, checkpoints.buildChangeDetails(projectId, workspace, paths)))
             }
             emitCompleted(sessionId)
-            finishForegroundRuntime(true, projectSlug, "Antigravity finished the task in $projectSlug.")
+            finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
         }.onFailure {
             val message = if (userStopRequested) "Stopped by user" else friendlyError(it.message.orEmpty())
             emitFailure(sessionId, message)

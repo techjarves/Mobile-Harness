@@ -101,8 +101,8 @@ fun TerminalScreen(
     onClear: () -> Unit,
     onToggleTheme: () -> Unit,
     themeMode: AppThemeMode,
-    title: String = "Linux Terminal",
-    subtitle: String = "Ubuntu 24.04 · PRoot Sandbox",
+    title: String = stringResource(R.string.ws_terminal_linux_title),
+    subtitle: String = stringResource(R.string.ws_terminal_linux_subtitle),
     liveOutput: String = "",
     currentCommand: String? = null,
     commandDraft: String? = null,
@@ -200,13 +200,13 @@ fun TerminalScreen(
                             Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output", modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.ws_terminal_clear_output), modifier = Modifier.size(20.dp))
                         }
                         if (showThemeAction) {
                             IconButton(onClick = onToggleTheme) {
                                 Icon(
                                     if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Toggle theme",
+                                    contentDescription = stringResource(R.string.theme_toggle),
                                 )
                             }
                         }
@@ -248,13 +248,13 @@ fun TerminalScreen(
                     },
                     actions = {
                         IconButton(onClick = onClear) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output")
+                            Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.ws_terminal_clear_output))
                         }
                         if (showThemeAction) {
                             IconButton(onClick = onToggleTheme) {
                                 Icon(
                                     if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Toggle theme",
+                                    contentDescription = stringResource(R.string.theme_toggle),
                                 )
                             }
                         }
@@ -455,27 +455,27 @@ fun TerminalScreen(
                         .padding(bottom = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    TerminalKeyButton("↑", "Previous command") {
+                    TerminalKeyButton("↑", stringResource(R.string.ws_terminal_previous_command)) {
                         commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
                             historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
                             commandInput = TextFieldValue(it, TextRange(it.length))
                         }
                     }
-                    TerminalKeyButton("↓", "Next command") {
+                    TerminalKeyButton("↓", stringResource(R.string.ws_terminal_next_command)) {
                         if (historyIndex >= 0) {
                             historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
                             commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
                         }
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowBack, "Move cursor left") {
+                    TerminalIconKeyButton(Icons.Default.ArrowBack, stringResource(R.string.ws_terminal_cursor_left)) {
                         commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowForward, "Move cursor right") {
+                    TerminalIconKeyButton(Icons.Default.ArrowForward, stringResource(R.string.ws_terminal_cursor_right)) {
                         commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
                     }
-                    TerminalKeyButton("ALT", "Alt modifier", active = altActive, fixedWidth = true) { altActive = !altActive }
-                    TerminalKeyButton("ESC", "Escape") { commandInput = TextFieldValue() }
-                    TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
+                    TerminalKeyButton("ALT", stringResource(R.string.ws_terminal_alt_modifier), active = altActive, fixedWidth = true) { altActive = !altActive }
+                    TerminalKeyButton("ESC", stringResource(R.string.ws_terminal_escape)) { commandInput = TextFieldValue() }
+                    TerminalKeyButton("CTRL", stringResource(R.string.ws_terminal_ctrl_modifier), active = ctrlActive, fixedWidth = true) {
                         ctrlActive = !ctrlActive
                         if (ctrlActive) openTerminalKeyboard()
                     }

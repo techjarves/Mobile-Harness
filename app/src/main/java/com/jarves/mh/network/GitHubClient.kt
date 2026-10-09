@@ -1,5 +1,8 @@
 package com.jarves.mh.network
 
+import android.content.Context
+import com.jarves.mh.R
+import com.jarves.mh.ui.AppStrings
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
@@ -31,7 +34,11 @@ sealed interface GitHubTokenPoll {
     data class Failure(val message: String) : GitHubTokenPoll
 }
 
-class GitHubClient {
+/** [context] is optional; when present, user-facing errors use the language picked in the app. */
+class GitHubClient(private val context: Context? = null) {
+    private fun text(@androidx.annotation.StringRes id: Int, fallback: String, vararg args: Any): String =
+        context?.let { AppStrings.get(it, id, *args) } ?: fallback
+
     fun requestDeviceCode(clientId: String): GitHubDeviceCode {
         val json = postForm(
             "https://github.com/login/device/code",
@@ -59,9 +66,9 @@ class GitHubClient {
         return when (val error = json.optString("error")) {
             "authorization_pending" -> GitHubTokenPoll.Pending()
             "slow_down" -> GitHubTokenPoll.Pending(slowDown = true)
-            "access_denied" -> GitHubTokenPoll.Failure("GitHub authorization was cancelled")
-            "expired_token" -> GitHubTokenPoll.Failure("The GitHub sign-in code expired. Try again.")
-            else -> GitHubTokenPoll.Failure(json.optString("error_description").ifBlank { error.ifBlank { "GitHub sign-in failed" } })
+            "access_denied" -> GitHubTokenPoll.Failure(text(R.string.rt_gh_cancelled, "GitHub authorization was cancelled"))
+            "expired_token" -> GitHubTokenPoll.Failure(text(R.string.rt_gh_code_expired, "The GitHub sign-in code expired. Try again."))
+            else -> GitHubTokenPoll.Failure(json.optString("error_description").ifBlank { error.ifBlank { text(R.string.rt_gh_sign_in_failed, "GitHub sign-in failed") } })
         }
     }
 
@@ -132,7 +139,7 @@ class GitHubClient {
             ?.bufferedReader()?.use { it.readText() }.orEmpty()
         if (status !in 200..299) {
             val message = runCatching { JSONObject(text).optString("message") }.getOrNull()
-            error(message?.takeIf(String::isNotBlank) ?: "GitHub returned HTTP $status")
+            error(message?.takeIf(String::isNotBlank) ?: text(R.string.rt_gh_http_error, "GitHub returned HTTP $status", status))
         }
         return if (text.trimStart().startsWith("[")) JSONArray(text) else JSONObject(text)
     }

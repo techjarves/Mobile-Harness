@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">वेब (JavaScript / TypeScript)</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android (Java / Kotlin)</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">HTML, CSS और JS फ़्रेमवर्क के साथ वेबसाइटें और वेब ऐप्स।</string>
+    <string name="md_stack_python_description">स्क्रिप्ट, ऑटोमेशन, डेटा कार्य और Python बैकएंड।</string>
+    <string name="md_stack_android_description">Android ऐप प्रोजेक्ट बनाएं और उन्हें सीधे इस फ़ोन पर इंस्टॉल करें।</string>
+    <string name="md_stack_cpp_description">तेज़ कंपाइल्ड प्रोग्राम, एल्गोरिदम और सिस्टम कोड।</string>
+    <string name="md_stack_php_description">PHP के साथ वेबसाइटें और ऐप्स — क्लासिक साइटें और Laravel प्रोजेक्ट।</string>
+    <string name="md_stack_web_installs">Node.js और npm (पहले से शामिल)</string>
+    <string name="md_stack_python_installs">python3, pip, venv और बिल्ड टूल्स</string>
+    <string name="md_stack_android_installs">JDK 17, ARM64 Android SDK 36, Build Tools 35, Gradle 8.14.3 और एक ऑफ़लाइन Maven कैश</string>
+    <string name="md_stack_cpp_installs">gcc, g++, make, cmake, gdb</string>
+    <string name="md_stack_php_installs">php-cli, सामान्य एक्सटेंशन और Composer</string>
+    <string name="md_time_just_now">अभी</string>
+    <string name="md_time_minutes_ago">%1$d मिनट पहले</string>
+    <string name="md_time_hours_ago">%1$d घंटे पहले</string>
+    <string name="md_time_yesterday">कल</string>
+    <string name="md_time_days_ago">%1$d दिन पहले</string>
+    <string name="md_model_default">%1$s डिफ़ॉल्ट (%2$s)</string>
+    <string name="md_model_opencode_default">OpenCode Zen डिफ़ॉल्ट</string>
+    <string name="md_activity_permission_denied">अनुमति अस्वीकृत</string>
+    <string name="md_reason_stopped_by_user">उपयोगकर्ता द्वारा रोका गया</string>
+    <string name="md_reason_no_api_key">%1$s के लिए कोई API कुंजी सहेजी नहीं गई है।</string>
+    <string name="md_reason_no_claude_token">कोई Claude सदस्यता टोकन सहेजा नहीं गया है। एजेंट → AI प्रदाता से एक जोड़ें।</string>
+    <string name="md_reason_dsh_not_installed">DeepSeek Harness इंस्टॉल नहीं है। इसे इंस्टॉल करने के लिए सेटिंग्स → कोडिंग एजेंट खोलें।</string>
+    <string name="md_reason_antigravity_not_installed">Antigravity CLI इंस्टॉल नहीं है। इसे इंस्टॉल करने के लिए सेटिंग्स → कोडिंग एजेंट खोलें।</string>
+    <string name="md_chat_title_attachments">संलग्न फ़ाइलों की समीक्षा करें</string>
+    <string name="md_reason_user_not_found">उपयोगकर्ता नहीं मिला। API कुंजी और प्रदाता खाता जांचें।</string>
+    <string name="md_reason_key_rejected">प्रदाता ने सहेजी गई API कुंजी अस्वीकार कर दी।</string>
+    <string name="md_reason_verification_failed">रनटाइम सत्यापन विफल रहा। कुछ भी असत्यापित नहीं चलाया गया।</string>
+    <string name="md_reason_claude_could_not_start">वास्तविक Claude Code रनटाइम शुरू नहीं हो सका।</string>
+    <string name="md_reason_claude_reported_error">Claude Code ने एक त्रुटि बताई</string>
+    <string name="md_reason_agent_exit_code">%1$s एग्ज़िट कोड %2$d के साथ रुक गया</string>
+    <string name="md_reason_antigravity_exit_code">Antigravity कोड %1$d के साथ बंद हो गया</string>
+    <string name="md_reason_antigravity_signin">Antigravity को Google साइन-इन चाहिए। सेटिंग्स → कोडिंग एजेंट खोलें।</string>
+    <string name="md_reason_antigravity_no_credits">आपके Antigravity खाते के क्रेडिट खत्म हो गए हैं। खाता प्लान जांचें या क्रेडिट रीसेट होने की प्रतीक्षा करें।</string>
+    <string name="md_reason_antigravity_time_limit">Antigravity 60 मिनट की टास्क सीमा तक पहुंच गया। आपकी फ़ाइलें रखी गई हैं।</string>
+    <string name="md_reason_antigravity_model_unavailable">चयनित Antigravity मॉडल उपलब्ध नहीं है। सेटिंग्स में मॉडल रीफ़्रेश करें।</string>
+    <string name="md_reason_antigravity_failed">Antigravity टास्क पूरा नहीं कर सका।</string>
+    <string name="md_reason_antigravity_cli_missing_short">Antigravity CLI इंस्टॉल नहीं है।</string>
+    <string name="md_reason_dsh_stopped_before_prompt">DeepSeek Harness प्रॉम्प्ट प्रोसेस करने से पहले रुक गया</string>
+    <string name="md_reason_dsh_no_key">DeepSeek Harness तक कोई API कुंजी नहीं पहुंची। सेटिंग्स में प्रदाता कुंजी फिर से सहेजें।</string>
+    <string name="md_reason_dsh_could_not_start">DeepSeek Harness शुरू नहीं हो सका।</string>
+    <string name="md_reason_dsh_unspecified">DeepSeek Harness ने एक अनिर्दिष्ट त्रुटि बताई</string>
+    <string name="md_reason_dsh_turn_failed">DeepSeek Harness का टर्न विफल रहा</string>
+    <string name="md_reason_dsh_blocked">DeepSeek Harness को टास्क पूरा करने से रोका गया</string>
+    <string name="md_tool_failed">टूल विफल रहा</string>
+    <string name="md_tool_completed_successfully">सफलतापूर्वक पूरा हुआ</string>
+</resources>

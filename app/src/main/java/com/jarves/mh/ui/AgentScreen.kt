@@ -81,6 +81,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -117,29 +118,6 @@ private data class KeyConnectionStatus(
     val label: String = if (successful == true) "Verified" else "Failed",
 )
 
-@StringRes
-private fun agentProviderTitleResource(provider: ProviderKind): Int = when (provider) {
-    ProviderKind.CLAUDE -> R.string.provider_title_claude
-    ProviderKind.ANTHROPIC -> R.string.provider_title_anthropic
-    ProviderKind.LLM_ROUTER -> R.string.provider_title_openrouter
-    ProviderKind.DEEPSEEK -> R.string.provider_title_deepseek
-    ProviderKind.KIMI -> R.string.provider_title_kimi
-    ProviderKind.OPENCODE_ZEN -> R.string.provider_title_opencode
-    ProviderKind.NVIDIA_NIM -> R.string.provider_title_nvidia
-    ProviderKind.CUSTOM -> R.string.provider_title_custom
-}
-
-@StringRes
-private fun agentProviderSubtitleResource(provider: ProviderKind): Int = when (provider) {
-    ProviderKind.CLAUDE -> R.string.provider_subtitle_claude
-    ProviderKind.ANTHROPIC -> R.string.provider_subtitle_anthropic
-    ProviderKind.LLM_ROUTER -> R.string.provider_subtitle_openrouter
-    ProviderKind.DEEPSEEK -> R.string.provider_subtitle_deepseek
-    ProviderKind.KIMI, ProviderKind.CUSTOM -> R.string.provider_subtitle_anthropic_compatible
-    ProviderKind.OPENCODE_ZEN -> R.string.provider_subtitle_opencode
-    ProviderKind.NVIDIA_NIM -> R.string.provider_subtitle_nvidia
-}
-
 @Composable
 private fun localizeAgentInstallMessage(message: String): String {
     val trimmed = message.trim().removePrefix("• ").removePrefix("- ").trim()
@@ -172,12 +150,13 @@ internal fun formatAntigravityModelName(id: String): String = when (id) {
 }
 
 /** Returns tier classification badges for Antigravity models. */
+@Composable
 internal fun formatAntigravityModelTier(id: String): String = when {
-    id.contains("3.8") -> "Recommended"
-    id.contains("3.6") -> "Stable"
-    id.contains("3.1-pro") -> "Pro Reasoning"
+    id.contains("3.8") -> stringResource(R.string.agent_recommended)
+    id.contains("3.6") -> stringResource(R.string.st_tier_stable)
+    id.contains("3.1-pro") -> stringResource(R.string.st_tier_pro_reasoning)
     id.contains("claude") -> "Anthropic"
-    id.contains("gpt") -> "Open Source"
+    id.contains("gpt") -> stringResource(R.string.st_tier_open_source)
     else -> ""
 }
 
@@ -215,8 +194,9 @@ fun AgentScreen(
     onSetAntigravityEffort: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
-    val selectedProviderTitle = stringResource(agentProviderTitleResource(selectedKind))
+    val selectedProviderTitle = stringResource(selectedKind.titleRes())
     val selectedProviderVerifiedMessage = stringResource(
         R.string.agent_connection_verified,
         selectedProviderTitle,
@@ -300,7 +280,7 @@ fun AgentScreen(
         val supportsPublicDiscovery = selectedKind == ProviderKind.LLM_ROUTER ||
             selectedKind == ProviderKind.OPENCODE_ZEN
         if (effectiveKey.isBlank() && !supportsPublicDiscovery) {
-            status = "Please enter or save an API key first to discover models."
+            status = context.getString(R.string.st_discover_need_key)
             statusOk = false
             statusProviderMessage = null
             newKeyVisible = true
@@ -309,7 +289,7 @@ fun AgentScreen(
         }
         scope.launch {
             isDiscovering = true
-            status = "Discovering models from ${selectedKind.title}…"
+            status = context.getString(R.string.st_discovering_models_from, context.getString(selectedKind.titleRes()))
             statusOk = true
             statusProviderMessage = null
             val kind = selectedKind
@@ -326,14 +306,14 @@ fun AgentScreen(
                 is ModelDiscoveryResult.Success -> {
                     models = result.models
                     if (apiKey.isBlank() && newApiKey.isNotBlank()) {
-                        val keyName = newKeyName.trim().ifBlank { "${kind.title} Key" }
+                        val keyName = newKeyName.trim().ifBlank { context.getString(R.string.st_key_default_name, context.getString(kind.titleRes())) }
                         savedKeys = onAddApiKey(kind, keyName, newApiKey.trim())
                         apiKey = getSavedApiKey(kind)
                         newKeyName = ""
                         newApiKey = ""
                         newKeyVisible = false
                     }
-                    status = "Discovered ${result.models.size} models from ${selectedKind.title}."
+                    status = context.getString(R.string.st_discovered_models_from, result.models.size, context.getString(selectedKind.titleRes()))
                     statusOk = true
                     statusProviderMessage = null
                     showModels = true
@@ -385,16 +365,16 @@ fun AgentScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Select Model", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.st_select_model), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
-                            "${filteredAntigravityModels.size} available for Antigravity",
+                            stringResource(R.string.st_available_for_antigravity, filteredAntigravityModels.size),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     IconButton(onClick = onRefreshAntigravityModels, enabled = !state.antigravityModelsLoading) {
                         if (state.antigravityModelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Refresh, "Refresh models")
+                        else Icon(Icons.Default.Refresh, stringResource(R.string.provider_refresh_models))
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -402,7 +382,7 @@ fun AgentScreen(
                     value = antigravitySearch,
                     onValueChange = { antigravitySearch = it },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
-                    placeholder = { Text("Search model or series") },
+                    placeholder = { Text(stringResource(R.string.st_search_model_or_series)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -411,7 +391,7 @@ fun AgentScreen(
 
                 if (filteredAntigravityModels.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No matching models found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.st_no_matching_models_found), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     LazyColumn(
@@ -496,9 +476,9 @@ fun AgentScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Available Models", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.provider_available_models), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
-                            if (models.isEmpty()) selectedKind.title else "${filteredModels.size} of ${models.size}",
+                            if (models.isEmpty()) selectedKind.localizedTitle() else stringResource(R.string.st_models_filtered_count, filteredModels.size, models.size),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -507,7 +487,7 @@ fun AgentScreen(
                         if (isDiscovering) {
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = PocketOrange)
                         } else {
-                            Icon(Icons.Default.Refresh, "Refresh models")
+                            Icon(Icons.Default.Refresh, stringResource(R.string.provider_refresh_models))
                         }
                     }
                 }
@@ -516,7 +496,7 @@ fun AgentScreen(
                     value = modelSearch,
                     onValueChange = { modelSearch = it },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
-                    placeholder = { Text("Search model or type custom ID") },
+                    placeholder = { Text(stringResource(R.string.st_search_model_or_custom)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -562,7 +542,7 @@ fun AgentScreen(
                             }
                             statusProviderMessage?.let { providerMessage ->
                                 Text(
-                                    "Provider: $providerMessage",
+                                    stringResource(R.string.st_provider_message, providerMessage),
                                     fontSize = 10.sp,
                                     lineHeight = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -585,7 +565,7 @@ fun AgentScreen(
                             CircularProgressIndicator(Modifier.size(32.dp), color = PocketOrange, strokeWidth = 3.dp)
                             Spacer(Modifier.height(14.dp))
                             Text(
-                                "Discovering models from ${selectedKind.title}…",
+                                stringResource(R.string.st_discovering_models_from, selectedKind.localizedTitle()),
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -618,7 +598,7 @@ fun AgentScreen(
                                     Icon(Icons.Default.Check, null, tint = PocketOrange, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(10.dp))
                                     Column(Modifier.weight(1f)) {
-                                        Text("Use custom model ID:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.st_use_custom_model_id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text(modelSearch.trim(), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = PocketOrange)
                                     }
                                 }
@@ -633,13 +613,13 @@ fun AgentScreen(
                         ) {
                             Icon(Icons.Default.AutoAwesome, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Discover Models from API")
+                            Text(stringResource(R.string.st_discover_models_from_api))
                         }
 
-                        val recommended = remember(selectedKind) { defaultModelsForProvider(selectedKind) }
+                        val recommended = remember(selectedKind, context) { defaultModelsForProvider(selectedKind, context) }
                         if (recommended.isNotEmpty()) {
                             Text(
-                                "Recommended Models",
+                                stringResource(R.string.st_recommended_models),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -713,7 +693,7 @@ fun AgentScreen(
                                         Icon(Icons.Default.Check, null, tint = PocketOrange, modifier = Modifier.size(18.dp))
                                         Spacer(Modifier.width(10.dp))
                                         Column(Modifier.weight(1f)) {
-                                            Text("Use custom model ID:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(stringResource(R.string.st_use_custom_model_id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(modelSearch.trim(), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = PocketOrange)
                                         }
                                     }
@@ -753,7 +733,7 @@ fun AgentScreen(
                                             )
                                             if (option.isFree) {
                                                 Spacer(Modifier.width(6.dp))
-                                                Text("FREE", color = Color(0xFF58C99C), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                Text(stringResource(R.string.st_free), color = Color(0xFF58C99C), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                         if (option.displayName != option.id) {
@@ -805,7 +785,7 @@ fun AgentScreen(
                                 if (isAntigravity) {
                                     "Antigravity · ${formatAntigravityModelName(state.antigravityModel)}"
                                 } else {
-                                    "${state.agentKind.title} · ${model.ifBlank { selectedKind.title }}"
+                                    "${state.agentKind.localizedTitle()} · ${model.ifBlank { selectedKind.localizedTitle() }}"
                                 },
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -941,7 +921,7 @@ fun AgentScreen(
                                                 total?.let { append(" / ${formatAgentBytes(it)}") }
                                             }
                                         } else {
-                                            "Processing files"
+                                            stringResource(R.string.st_processing_files)
                                         },
                                         fontSize = 10.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1088,20 +1068,20 @@ fun AgentScreen(
                             newKeyName = ""
                             newApiKey = ""
                             apiKey = getSavedApiKey(selectedKind)
-                            status = "API key added for ${selectedKind.title}."
+                            status = context.getString(R.string.st_api_key_added_for, context.getString(selectedKind.titleRes()))
                             statusOk = true
                         },
                         onActivateKey = { keyId ->
                             savedKeys = onActivateApiKey(selectedKind, keyId)
                             apiKey = getSavedApiKey(selectedKind)
-                            status = "Active API key changed for ${selectedKind.title}."
+                            status = context.getString(R.string.st_active_key_changed_for, context.getString(selectedKind.titleRes()))
                             statusOk = true
                         },
                         onRemoveKey = { keyId ->
                             savedKeys = onRemoveApiKey(selectedKind, keyId)
                             apiKey = getSavedApiKey(selectedKind)
                             keyConnectionStatuses = keyConnectionStatuses - keyId
-                            status = "API key removed from ${selectedKind.title}."
+                            status = context.getString(R.string.st_api_key_removed_from, context.getString(selectedKind.titleRes()))
                             statusOk = true
                         },
                         onOpenModelSheet = {
@@ -1114,10 +1094,10 @@ fun AgentScreen(
                                 val activeKeyId = savedKeys.firstOrNull { it.isActive }?.id
                                 if (activeKeyId != null) {
                                     keyConnectionStatuses = keyConnectionStatuses +
-                                        (activeKeyId to KeyConnectionStatus("Checking connection…"))
+                                        (activeKeyId to KeyConnectionStatus(context.getString(R.string.st_checking_connection)))
                                     status = null
                                 } else {
-                                    status = "Checking connection…"
+                                    status = context.getString(R.string.st_checking_connection)
                                     statusOk = true
                                 }
                                 val kind = selectedKind
@@ -1132,11 +1112,11 @@ fun AgentScreen(
                                 )
                                 if (kind == ProviderKind.CLAUDE) {
                                     onSaveProvider(profile, apiKey.trim())
-                                    status = "Claude subscription token saved securely. Send a message to verify your subscription."
+                                    status = context.getString(R.string.st_claude_token_saved_status)
                                     statusOk = true
                                     activeKeyId?.let {
                                         keyConnectionStatuses = keyConnectionStatuses +
-                                            (it to KeyConnectionStatus("Subscription token saved", true, label = "Saved"))
+                                            (it to KeyConnectionStatus(context.getString(R.string.st_subscription_token_saved), true, label = context.getString(R.string.st_saved)))
                                     }
                                 } else when (val result = onValidateProvider(profile, apiKey.trim(), models)) {
                                     is ConnectionValidation.Success -> {
@@ -1226,7 +1206,7 @@ private fun AgentAntigravityCard(
             Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Google account", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.st_google_account), fontSize = 20.sp, fontWeight = FontWeight.Bold)
             // Google Account Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1245,7 +1225,7 @@ private fun AgentAntigravityCard(
                 Column(Modifier.weight(1f)) {
                     val email = auth.accountEmail
                     Text(
-                        email ?: if (auth.status == AntigravityAuthStatus.SIGNED_IN) "Connected" else "Not signed in",
+                        email ?: if (auth.status == AntigravityAuthStatus.SIGNED_IN) stringResource(R.string.st_connected) else stringResource(R.string.st_not_signed_in),
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1253,14 +1233,14 @@ private fun AgentAntigravityCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        if (auth.status == AntigravityAuthStatus.SIGNED_IN) "Connected with Google" else "Required for Antigravity",
+                        if (auth.status == AntigravityAuthStatus.SIGNED_IN) stringResource(R.string.st_connected_with_google) else stringResource(R.string.st_required_for_antigravity),
                         fontSize = 11.sp,
                         color = if (auth.status == AntigravityAuthStatus.SIGNED_IN) Color(0xFF2E9D72) else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
                     Text(
-                        "Disconnect",
+                        stringResource(R.string.st_disconnect),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
@@ -1282,13 +1262,13 @@ private fun AgentAntigravityCard(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text("Copy Google Sign-in URL")
+                            Text(stringResource(R.string.st_copy_google_signin_url))
                         }
                     }
                     OutlinedTextField(
                         value = code,
                         onValueChange = onCode,
-                        label = { Text("One-time authorization code") },
+                        label = { Text(stringResource(R.string.st_one_time_auth_code)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -1299,7 +1279,7 @@ private fun AgentAntigravityCard(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text("Complete Sign-in")
+                        Text(stringResource(R.string.st_complete_signin))
                     }
                 }
                 AntigravityAuthStatus.SIGNED_OUT, AntigravityAuthStatus.ERROR -> {
@@ -1308,7 +1288,7 @@ private fun AgentAntigravityCard(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text(if (auth.status == AntigravityAuthStatus.ERROR) "Reconnect with Google" else "Sign in with Google")
+                        Text(if (auth.status == AntigravityAuthStatus.ERROR) stringResource(R.string.st_reconnect_google) else stringResource(R.string.agent_google_signin))
                     }
                 }
                 AntigravityAuthStatus.SIGNED_IN -> {}
@@ -1324,7 +1304,7 @@ private fun AgentAntigravityCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "Active Intelligence Model",
+                            stringResource(R.string.st_active_intelligence_model),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1341,7 +1321,7 @@ private fun AgentAntigravityCard(
                                 Spacer(Modifier.width(4.dp))
                             }
                             Text(
-                                "Sync",
+                                stringResource(R.string.st_sync),
                                 fontSize = 11.sp,
                                 color = PocketOrange,
                                 fontWeight = FontWeight.SemiBold,
@@ -1376,7 +1356,7 @@ private fun AgentAntigravityCard(
                             }
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                val currentModel = state.antigravityModel.ifBlank { "Select model" }
+                                val currentModel = state.antigravityModel.ifBlank { stringResource(R.string.st_select_model_placeholder) }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         formatAntigravityModelName(currentModel),
@@ -1398,7 +1378,7 @@ private fun AgentAntigravityCard(
                             Spacer(Modifier.width(6.dp))
                             Icon(
                                 Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Choose model",
+                                contentDescription = stringResource(R.string.st_choose_model),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -1410,17 +1390,17 @@ private fun AgentAntigravityCard(
                 // Reasoning Depth (Effort) Segmented Capsule
                 Column(modifier = Modifier.fillMaxWidth()) {
                     val effortCaption = when (state.antigravityEffort) {
-                        "low" -> "Fast response · light reasoning"
-                        "medium" -> "Balanced speed & logic"
-                        "high" -> "Maximum reasoning depth"
-                        else -> "Balanced speed & logic"
+                        "low" -> stringResource(R.string.st_effort_low_caption)
+                        "medium" -> stringResource(R.string.st_effort_medium_caption)
+                        "high" -> stringResource(R.string.st_effort_high_caption)
+                        else -> stringResource(R.string.st_effort_medium_caption)
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "Reasoning Depth",
+                            stringResource(R.string.st_reasoning_depth),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1458,7 +1438,12 @@ private fun AgentAntigravityCard(
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Text(
-                                            effort.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() },
+                                            when (effort) {
+                                                "low" -> stringResource(R.string.st_effort_low)
+                                                "medium" -> stringResource(R.string.st_effort_medium)
+                                                "high" -> stringResource(R.string.st_effort_high)
+                                                else -> effort
+                                            },
                                             fontSize = 12.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                             color = if (isSelected) Color(0xFF241107) else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1487,7 +1472,7 @@ private fun AgentAntigravityCard(
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(
-                        if (state.apiPingStatus == ApiPingStatus.PINGING) "Testing connection…" else "Test connection",
+                        if (state.apiPingStatus == ApiPingStatus.PINGING) stringResource(R.string.st_testing_connection) else stringResource(R.string.agent_test_connection),
                         color = PocketOrange,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1571,6 +1556,7 @@ private fun AgentProviderCard(
     var addKeyExpanded by rememberSaveable(savedKeys.isEmpty()) { mutableStateOf(savedKeys.isEmpty()) }
     val activeKey = savedKeys.firstOrNull { it.isActive }
     val activeKeyStatus = activeKey?.let { keyConnectionStatuses[it.id] }
+    val context = LocalContext.current
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -1586,8 +1572,8 @@ private fun AgentProviderCard(
 
             PremiumSummaryRow(
                 icon = Icons.Default.Link,
-                title = stringResource(agentProviderTitleResource(selectedKind)),
-                subtitle = stringResource(agentProviderSubtitleResource(selectedKind)),
+                title = stringResource(selectedKind.titleRes()),
+                subtitle = stringResource(selectedKind.subtitleRes()),
                 expanded = connectionExpanded,
                 onClick = { connectionExpanded = !connectionExpanded },
             )
@@ -1615,8 +1601,8 @@ private fun AgentProviderCard(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Column(Modifier.weight(1f)) {
-                                        Text(stringResource(agentProviderTitleResource(kind)), fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                        Text(stringResource(agentProviderSubtitleResource(kind)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                        Text(stringResource(kind.titleRes()), fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                        Text(stringResource(kind.subtitleRes()), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                     }
                                     AgentSelectionDot(selectedKind == kind)
                                 }
@@ -1637,7 +1623,7 @@ private fun AgentProviderCard(
                     icon = Icons.Default.Info,
                     title = stringResource(if (selectedKind == ProviderKind.CUSTOM) R.string.agent_custom_api_settings else R.string.agent_endpoint_protocol),
                     subtitle = buildString {
-                        append(baseUrl.ifBlank { "Base URL required" })
+                        append(baseUrl.ifBlank { stringResource(R.string.st_base_url_required) })
                         if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
                             append(" · ")
                             append(if (selectedKind.fixedProtocol) defaultDshApiForProvider(selectedKind) else dshApi)
@@ -1654,7 +1640,7 @@ private fun AgentProviderCard(
                     ) {
                         if (selectedKind == ProviderKind.CUSTOM) {
                             Text(
-                                "Enter the provider endpoint, then add its API key under Credentials.",
+                                stringResource(R.string.st_custom_endpoint_hint),
                                 fontSize = 11.sp,
                                 lineHeight = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1664,7 +1650,7 @@ private fun AgentProviderCard(
                             value = baseUrl,
                             onValueChange = { if (!selectedKind.fixedBaseUrl) onBaseUrl(it) },
                             label = { Text(stringResource(R.string.provider_base_url)) },
-                            supportingText = if (selectedKind.fixedBaseUrl) ({ Text(stringResource(R.string.provider_fixed_by, stringResource(agentProviderTitleResource(selectedKind)))) }) else null,
+                            supportingText = if (selectedKind.fixedBaseUrl) ({ Text(stringResource(R.string.provider_fixed_by, stringResource(selectedKind.titleRes()))) }) else null,
                             readOnly = selectedKind.fixedBaseUrl,
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
@@ -1674,10 +1660,10 @@ private fun AgentProviderCard(
                             OutlinedTextField(
                                 value = openRouterProviderOrder,
                                 onValueChange = onOpenRouterProviderOrder,
-                                label = { Text("Provider order") },
+                                label = { Text(stringResource(R.string.st_provider_order)) },
                                 placeholder = { Text("exacto, together") },
                                 supportingText = {
-                                    Text("Optional OpenRouter provider slugs, separated by commas and tried in order.")
+                                    Text(stringResource(R.string.st_provider_order_help))
                                 },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
@@ -1688,9 +1674,9 @@ private fun AgentProviderCard(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Column(Modifier.weight(1f)) {
-                                    Text("Allow provider fallbacks", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    Text(stringResource(R.string.st_allow_provider_fallbacks), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                     Text(
-                                        "Turn off to use only the providers listed above.",
+                                        stringResource(R.string.st_allow_provider_fallbacks_help),
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -1748,7 +1734,7 @@ private fun AgentProviderCard(
                 )
             } else {
                 Text(
-                    "Run `claude setup-token` on a computer signed in to your Claude subscription, then save the generated token below.",
+                    stringResource(R.string.st_claude_setup_token_hint),
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1764,7 +1750,7 @@ private fun AgentProviderCard(
                         Text(status, fontSize = 10.sp, lineHeight = 14.sp, color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                     }
                     statusProviderMessage?.let { providerMessage ->
-                        Text("Provider: $providerMessage", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 21.dp, top = 4.dp))
+                        Text(stringResource(R.string.st_provider_message, providerMessage), fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 21.dp, top = 4.dp))
                     }
                 }
             }
@@ -1775,11 +1761,14 @@ private fun AgentProviderCard(
                 icon = Icons.Default.Key,
                 title = stringResource(if (selectedKind == ProviderKind.CLAUDE) R.string.agent_subscription_token else R.string.agent_credentials),
                 subtitle = buildString {
-                    append(activeKey?.name ?: if (selectedKind == ProviderKind.CLAUDE) "No subscription token saved" else "No API key saved")
-                    if (activeKey != null) append(" · Active")
+                    append(activeKey?.name ?: if (selectedKind == ProviderKind.CLAUDE) stringResource(R.string.st_no_subscription_token_saved) else stringResource(R.string.st_no_api_key_saved))
+                    if (activeKey != null) {
+                        append(" · ")
+                        append(stringResource(R.string.st_active))
+                    }
                     activeKeyStatus?.let {
                         append(" · ")
-                        append(when (it.successful) { true -> "Verified"; false -> it.label; null -> "Checking" })
+                        append(when (it.successful) { true -> stringResource(R.string.agent_status_verified); false -> it.label; null -> stringResource(R.string.provider_checking) })
                     }
                 },
                 positive = activeKeyStatus?.successful == true,
@@ -1803,7 +1792,7 @@ private fun AgentProviderCard(
                     )
                     keyStatus.providerMessage?.let { providerMessage ->
                         Text(
-                            "Provider: $providerMessage",
+                            stringResource(R.string.st_provider_message, providerMessage),
                             fontSize = 10.sp,
                             lineHeight = 14.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1819,9 +1808,9 @@ private fun AgentProviderCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (selectedKind == ProviderKind.CLAUDE) "Saved tokens (${savedKeys.size})" else "Saved keys (${savedKeys.size})", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text(if (selectedKind == ProviderKind.CLAUDE) stringResource(R.string.st_saved_tokens_count, savedKeys.size) else stringResource(R.string.st_saved_keys_count, savedKeys.size), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                         Text(
-                            if (addKeyExpanded) "Cancel" else "+ Add key",
+                            if (addKeyExpanded) stringResource(R.string.action_cancel) else stringResource(R.string.st_add_key_plus),
                             fontSize = 11.sp,
                             color = PocketOrange,
                             fontWeight = FontWeight.SemiBold,
@@ -1838,11 +1827,11 @@ private fun AgentProviderCard(
                                 ) {
                                     Column(Modifier.weight(1f)) {
                                         Text(key.name, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                        Text(if (key.isActive) "Active" else "Tap to activate", fontSize = 10.sp, color = if (key.isActive) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(if (key.isActive) stringResource(R.string.st_active) else stringResource(R.string.st_tap_to_activate), fontSize = 10.sp, color = if (key.isActive) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     AgentSelectionDot(key.isActive)
                                     IconButton(onClick = { onRemoveKey(key.id) }) {
-                                        Icon(Icons.Default.DeleteSweep, "Remove", Modifier.size(17.dp))
+                                        Icon(Icons.Default.DeleteSweep, stringResource(R.string.action_remove), Modifier.size(17.dp))
                                     }
                                 }
                                 keyStatus?.let {
@@ -1853,7 +1842,7 @@ private fun AgentProviderCard(
                                         Column(Modifier.weight(1f)) {
                                             Text(it.message, fontSize = 10.sp, lineHeight = 14.sp, color = if (it.successful == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                                             it.providerMessage?.let { providerMessage ->
-                                                Text("Provider: $providerMessage", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(stringResource(R.string.st_provider_message, providerMessage), fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }
@@ -1869,10 +1858,10 @@ private fun AgentProviderCard(
                                 onValueChange = { input ->
                                     if ((input.startsWith("sk-") || input.startsWith("ant-") || input.length > 30) && !input.contains(" ") && newApiKey.isBlank()) {
                                         onNewApiKey(input.trim())
-                                        onNewKeyName("${selectedKind.title} Key")
+                                        onNewKeyName(context.getString(R.string.st_key_default_name, context.getString(selectedKind.titleRes())))
                                     } else onNewKeyName(input)
                                 },
-                                label = { Text(if (selectedKind == ProviderKind.CLAUDE) "Token name" else "Key name") },
+                                label = { Text(if (selectedKind == ProviderKind.CLAUDE) stringResource(R.string.st_token_name) else stringResource(R.string.provider_key_name)) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
@@ -1880,11 +1869,11 @@ private fun AgentProviderCard(
                             OutlinedTextField(
                                 value = newApiKey,
                                 onValueChange = onNewApiKey,
-                                label = { Text(if (selectedKind == ProviderKind.CLAUDE) "Claude setup token" else "API key") },
+                                label = { Text(if (selectedKind == ProviderKind.CLAUDE) stringResource(R.string.provider_claude_token) else stringResource(R.string.provider_api_key)) },
                                 singleLine = true,
                                 visualTransformation = if (newKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                trailingIcon = { IconButton(onClick = onToggleNewKey) { Icon(if (newKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle visibility") } },
+                                trailingIcon = { IconButton(onClick = onToggleNewKey) { Icon(if (newKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, stringResource(R.string.st_toggle_visibility)) } },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
                             )
@@ -1893,7 +1882,7 @@ private fun AgentProviderCard(
                                 enabled = newKeyName.isNotBlank() && newApiKey.isNotBlank(),
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
-                            ) { Text(if (selectedKind == ProviderKind.CLAUDE) "Save token" else "Save API key") }
+                            ) { Text(if (selectedKind == ProviderKind.CLAUDE) stringResource(R.string.st_save_token) else stringResource(R.string.st_save_api_key)) }
                         }
                     }
                 }
@@ -1917,9 +1906,9 @@ private fun AgentProviderCard(
                 }
                 Text(
                     when {
-                        isValidating && selectedKind == ProviderKind.CLAUDE -> "Saving token…"
-                        isValidating -> "Testing connection…"
-                        selectedKind == ProviderKind.CLAUDE -> "Save subscription token"
+                        isValidating && selectedKind == ProviderKind.CLAUDE -> stringResource(R.string.st_saving_token)
+                        isValidating -> stringResource(R.string.st_testing_connection)
+                        selectedKind == ProviderKind.CLAUDE -> stringResource(R.string.st_save_subscription_token)
                         else -> stringResource(R.string.agent_test_connection)
                     },
                     color = PocketOrange,
@@ -1967,7 +1956,7 @@ private fun PremiumSummaryRow(
         }
         Icon(
             if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription = if (expanded) "Collapse" else "Expand",
+            contentDescription = if (expanded) stringResource(R.string.st_collapse) else stringResource(R.string.st_expand),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -2032,10 +2021,10 @@ private fun AgentUpdateBlock(
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(agent.title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(agent.localizedTitle(), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 Text("v${update.installedVersion} → v${update.latestVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Text("UPDATE", color = PocketOrange, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                            Text(stringResource(R.string.st_update_badge), color = PocketOrange, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
                         }
                         if (updating) {
                             state.agentUpdateMessage?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -2047,7 +2036,7 @@ private fun AgentUpdateBlock(
                                 enabled = state.agentUpdating == null && state.agentInstalling == null,
                                 shape = RoundedCornerShape(10.dp),
                             ) {
-                                Text("Update ${agent.title}", fontSize = 12.sp)
+                                Text(stringResource(R.string.st_update_agent, agent.localizedTitle()), fontSize = 12.sp)
                             }
                         }
                     }
@@ -2099,12 +2088,12 @@ private fun AgentSelectionDot(selected: Boolean) {
 }
 
 /** Provides popular default models for providers when discovery hasn't been run or is unavailable. */
-private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> = when (kind) {
+private fun defaultModelsForProvider(kind: ProviderKind, context: android.content.Context): List<DiscoveredModel> = when (kind) {
     ProviderKind.DEEPSEEK -> listOf(
         DiscoveredModel("deepseek-v4-flash", "DeepSeek-V4 Flash"),
     )
     ProviderKind.OPENCODE_ZEN -> listOf(
-        DiscoveredModel(ProviderKind.OPENCODE_ZEN.defaultModel, "OpenCode Zen default"),
+        DiscoveredModel(ProviderKind.OPENCODE_ZEN.defaultModel, context.getString(R.string.md_model_opencode_default)),
     )
     ProviderKind.NVIDIA_NIM -> listOf(
         DiscoveredModel(ProviderKind.NVIDIA_NIM.defaultModel, "Qwen 2.5 Coder 32B"),
@@ -2126,6 +2115,6 @@ private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> 
         DiscoveredModel("moonshot-v1-32k", "Moonshot v1 32K"),
     )
     else -> if (kind.defaultModel.isNotBlank()) listOf(
-        DiscoveredModel(kind.defaultModel, "${kind.title} Default (${kind.defaultModel})")
+        DiscoveredModel(kind.defaultModel, context.getString(R.string.md_model_default, context.getString(kind.titleRes()), kind.defaultModel))
     ) else emptyList()
 }

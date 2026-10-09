@@ -13,6 +13,7 @@ import com.jarves.mh.MainActivity
 import com.jarves.mh.R
 import com.jarves.mh.data.AppPreferences
 import com.jarves.mh.model.DevStack
+import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
@@ -58,7 +59,7 @@ object RuntimeSetupController {
             mutableSnapshot.value = RuntimeSetupSnapshot(
                 status = runCatching { RuntimeSetupStatus.valueOf(json.optString("status")) }
                     .getOrDefault(RuntimeSetupStatus.IDLE),
-                message = json.optString("message", "Preparing your private coding workspace"),
+                message = json.optString("message", AppStrings.get(context, R.string.rt_setup_preparing_workspace)),
                 progress = json.optDouble("progress", 0.0).toFloat(),
                 downloadedBytes = json.optLongOrNull("downloadedBytes"),
                 totalBytes = json.optLongOrNull("totalBytes"),
@@ -74,7 +75,15 @@ object RuntimeSetupController {
     fun begin(context: Context) {
         val previous = mutableSnapshot.value.logs
         val logs = (previous + "— Resuming Mobile Harness setup —").takeLast(MAX_LOG_LINES)
-        set(context, RuntimeSetupSnapshot(status = RuntimeSetupStatus.RUNNING, progress = 0.01f, logs = logs))
+        set(
+            context,
+            RuntimeSetupSnapshot(
+                status = RuntimeSetupStatus.RUNNING,
+                message = AppStrings.get(context, R.string.rt_setup_preparing_workspace),
+                progress = 0.01f,
+                logs = logs,
+            ),
+        )
     }
 
     @Synchronized
@@ -127,7 +136,7 @@ object RuntimeSetupController {
             context,
             current.copy(
                 status = RuntimeSetupStatus.COMPLETE,
-                message = "Mobile Harness is ready",
+                message = AppStrings.get(context, R.string.rt_setup_ready),
                 progress = 1f,
                 indeterminate = false,
                 downloadedBytes = null,
@@ -150,11 +159,11 @@ object RuntimeSetupController {
                 it.message.orEmpty().contains("dpkg --configure -a", true)
         }
         val friendly = when {
-            offline -> "Connect to Wi-Fi or mobile data, then resume setup."
-            interruptedDpkg -> "Android interrupted Linux setup. Mobile Harness will repair it when you try again."
+            offline -> AppStrings.get(context, R.string.rt_setup_offline)
+            interruptedDpkg -> AppStrings.get(context, R.string.rt_setup_dpkg_interrupted)
             else -> error.message.orEmpty().lineSequence().lastOrNull { it.isNotBlank() }
                 ?.take(220)
-                ?: "Mobile Harness could not finish setup."
+                ?: AppStrings.get(context, R.string.rt_setup_failed_generic)
         }
         val current = mutableSnapshot.value
         set(
@@ -176,7 +185,7 @@ object RuntimeSetupController {
             context,
             current.copy(
                 status = RuntimeSetupStatus.CANCELLED,
-                message = "Setup paused",
+                message = AppStrings.get(context, R.string.rt_setup_paused),
                 indeterminate = false,
                 logs = (current.logs + "• Setup paused safely").takeLast(MAX_LOG_LINES),
             ),
@@ -296,7 +305,7 @@ class RuntimeSetupService : Service() {
         val latest = state.logs.lastOrNull().orEmpty().take(180)
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Setting up Mobile Harness")
+            .setContentTitle(AppStrings.get(this, R.string.rt_setup_notification_title))
             .setContentText(latest.ifBlank { state.message })
             .setStyle(NotificationCompat.BigTextStyle().bigText(latest.ifBlank { state.message }))
             .setContentIntent(openAppIntent())
@@ -308,7 +317,7 @@ class RuntimeSetupService : Service() {
         else builder.setProgress(100, (state.progress * 100).toInt().coerceIn(0, 100), false)
         builder.addAction(
             0,
-            "Stop setup",
+            AppStrings.get(this, R.string.rt_setup_stop),
             PendingIntent.getService(
                 this,
                 102,
@@ -321,8 +330,8 @@ class RuntimeSetupService : Service() {
 
     private fun showFinishedNotification(success: Boolean) {
         val state = RuntimeSetupController.snapshot.value
-        val title = if (success) "Mobile Harness is ready" else "Setup needs attention"
-        val detail = if (success) "Your private coding workspace is ready." else state.errorMessage.orEmpty()
+        val title = AppStrings.get(this, if (success) R.string.rt_setup_ready else R.string.rt_setup_needs_attention)
+        val detail = if (success) AppStrings.get(this, R.string.rt_setup_ready_detail) else state.errorMessage.orEmpty()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
@@ -375,8 +384,12 @@ class RuntimeSetupService : Service() {
 
         fun ensureNotificationChannel(context: Context) {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Mobile Harness setup", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Shows download and installation progress for the private coding environment"
+                NotificationChannel(
+                    CHANNEL_ID,
+                    AppStrings.get(context, R.string.rt_setup_channel_name),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = AppStrings.get(context, R.string.rt_setup_channel_description)
                 },
             )
         }

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">Web（JavaScript / TypeScript）</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android（Java / Kotlin）</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">使用 HTML、CSS 和 JS 框架构建网站和 Web 应用。</string>
+    <string name="md_stack_python_description">脚本、自动化、数据处理和 Python 后端。</string>
+    <string name="md_stack_android_description">构建 Android 应用项目并直接安装到这部手机上。</string>
+    <string name="md_stack_cpp_description">快速的编译型程序、算法和系统代码。</string>
+    <string name="md_stack_php_description">使用 PHP 构建网站和应用——经典网站和 Laravel 项目。</string>
+    <string name="md_stack_web_installs">Node.js 和 npm（已包含）</string>
+    <string name="md_stack_python_installs">python3、pip、venv 和构建工具</string>
+    <string name="md_stack_android_installs">JDK 17、ARM64 Android SDK 36、Build Tools 35、Gradle 8.14.3 和离线 Maven 缓存</string>
+    <string name="md_stack_cpp_installs">gcc、g++、make、cmake、gdb</string>
+    <string name="md_stack_php_installs">php-cli、常用扩展和 Composer</string>
+    <string name="md_time_just_now">刚刚</string>
+    <string name="md_time_minutes_ago">%1$d 分钟前</string>
+    <string name="md_time_hours_ago">%1$d 小时前</string>
+    <string name="md_time_yesterday">昨天</string>
+    <string name="md_time_days_ago">%1$d 天前</string>
+    <string name="md_model_default">%1$s 默认（%2$s）</string>
+    <string name="md_model_opencode_default">OpenCode Zen 默认</string>
+    <string name="md_activity_permission_denied">权限被拒绝</string>
+    <string name="md_reason_stopped_by_user">已被用户停止</string>
+    <string name="md_reason_no_api_key">尚未保存 %1$s 的 API 密钥。</string>
+    <string name="md_reason_no_claude_token">尚未保存 Claude 订阅令牌。请在“智能助手 → AI 服务商”中添加。</string>
+    <string name="md_reason_dsh_not_installed">DeepSeek Harness 未安装。请打开“设置 → 编程代理”进行安装。</string>
+    <string name="md_reason_antigravity_not_installed">Antigravity CLI 未安装。请打开“设置 → 编程代理”进行安装。</string>
+    <string name="md_chat_title_attachments">查看附加的文件</string>
+    <string name="md_reason_user_not_found">未找到用户。请检查 API 密钥和服务商账户。</string>
+    <string name="md_reason_key_rejected">服务商拒绝了已保存的 API 密钥。</string>
+    <string name="md_reason_verification_failed">运行环境验证失败。未执行任何未经验证的内容。</string>
+    <string name="md_reason_claude_could_not_start">无法启动 Claude Code 运行环境。</string>
+    <string name="md_reason_claude_reported_error">Claude Code 报告了一个错误</string>
+    <string name="md_reason_agent_exit_code">%1$s 已停止，退出代码 %2$d</string>
+    <string name="md_reason_antigravity_exit_code">Antigravity 已退出，代码 %1$d</string>
+    <string name="md_reason_antigravity_signin">Antigravity 需要 Google 登录。请打开“设置 → 编程代理”。</string>
+    <string name="md_reason_antigravity_no_credits">你的 Antigravity 账户额度已用完。请检查账户方案或等待额度重置。</string>
+    <string name="md_reason_antigravity_time_limit">Antigravity 已达到 60 分钟的任务上限。你的文件已保留。</string>
+    <string name="md_reason_antigravity_model_unavailable">所选的 Antigravity 模型不可用。请在设置中刷新模型。</string>
+    <string name="md_reason_antigravity_failed">Antigravity 无法完成任务。</string>
+    <string name="md_reason_antigravity_cli_missing_short">Antigravity CLI 未安装。</string>
+    <string name="md_reason_dsh_stopped_before_prompt">DeepSeek Harness 在处理提示前已停止</string>
+    <string name="md_reason_dsh_no_key">没有 API 密钥传递到 DeepSeek Harness。请在设置中重新保存服务商密钥。</string>
+    <string name="md_reason_dsh_could_not_start">DeepSeek Harness 无法启动。</string>
+    <string name="md_reason_dsh_unspecified">DeepSeek Harness 报告了未指明的错误</string>
+    <string name="md_reason_dsh_turn_failed">DeepSeek Harness 本轮执行失败</string>
+    <string name="md_reason_dsh_blocked">DeepSeek Harness 被阻止完成任务</string>
+    <string name="md_tool_failed">工具执行失败</string>
+    <string name="md_tool_completed_successfully">已成功完成</string>
+</resources>
