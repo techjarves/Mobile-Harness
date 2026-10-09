@@ -24,7 +24,7 @@
     <string name="ws_stack_desc_cpp">Нативные приложения и инструменты командной строки</string>
     <string name="ws_stack_desc_php">Сайты на PHP и проекты Laravel</string>
     <string name="ws_terminal_linux_title">Терминал Linux</string>
-    <string name="ws_terminal_linux_subtitle">Ubuntu 24.04 · Песочница PRoot</string>
+    <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · Песочница PRoot</string>
     <string name="ws_terminal_clear_output">Очистить вывод</string>
     <string name="ws_terminal_previous_command">Предыдущая команда</string>
     <string name="ws_terminal_next_command">Следующая команда</string>

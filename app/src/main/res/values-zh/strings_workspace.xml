@@ -24,7 +24,7 @@
     <string name="ws_stack_desc_cpp">原生应用和命令行工具</string>
     <string name="ws_stack_desc_php">PHP 网站和 Laravel 项目</string>
     <string name="ws_terminal_linux_title">Linux 终端</string>
-    <string name="ws_terminal_linux_subtitle">Ubuntu 24.04 · PRoot 沙盒</string>
+    <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · PRoot 沙盒</string>
     <string name="ws_terminal_clear_output">清除输出</string>
     <string name="ws_terminal_previous_command">上一条命令</string>
     <string name="ws_terminal_next_command">下一条命令</string>

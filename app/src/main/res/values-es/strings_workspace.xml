@@ -24,7 +24,7 @@
     <string name="ws_stack_desc_cpp">Apps nativas y herramientas de línea de comandos</string>
     <string name="ws_stack_desc_php">Sitios PHP y proyectos Laravel</string>
     <string name="ws_terminal_linux_title">Terminal Linux</string>
-    <string name="ws_terminal_linux_subtitle">Ubuntu 24.04 · Entorno aislado PRoot</string>
+    <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · Entorno aislado PRoot</string>
     <string name="ws_terminal_clear_output">Borrar salida</string>
     <string name="ws_terminal_previous_command">Comando anterior</string>
     <string name="ws_terminal_next_command">Comando siguiente</string>

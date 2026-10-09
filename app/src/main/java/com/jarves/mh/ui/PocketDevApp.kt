@@ -2586,7 +2586,7 @@ private fun QuickTerminalSheet(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var sheetFraction by rememberSaveable { mutableFloatStateOf(0.45f) }
+    var sheetFraction by rememberSaveable { mutableFloatStateOf(0.60f) }
     BackHandler(onBack = onDismiss)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -2625,11 +2625,14 @@ private fun QuickTerminalSheet(
                             startDragImmediately = false,
                         ),
                     shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    tonalElevation = 8.dp,
+                    // Plain theme surface without tonal elevation: the app theme doesn't define
+                    // surfaceContainer* (falls back to M3 lavender) and tonal elevation tints
+                    // every nested Surface orange.
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
                     shadowElevation = 28.dp,
                 ) {
-                    Column(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
                         Box(
                             Modifier
                                 .fillMaxWidth()

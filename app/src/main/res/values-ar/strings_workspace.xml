@@ -24,7 +24,7 @@
     <string name="ws_stack_desc_cpp">التطبيقات الأصلية وأدوات سطر الأوامر</string>
     <string name="ws_stack_desc_php">مواقع PHP ومشاريع Laravel</string>
     <string name="ws_terminal_linux_title">طرفية Linux</string>
-    <string name="ws_terminal_linux_subtitle">Ubuntu 24.04 · بيئة PRoot المعزولة</string>
+    <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · بيئة PRoot المعزولة</string>
     <string name="ws_terminal_clear_output">مسح المخرجات</string>
     <string name="ws_terminal_previous_command">الأمر السابق</string>
     <string name="ws_terminal_next_command">الأمر التالي</string>

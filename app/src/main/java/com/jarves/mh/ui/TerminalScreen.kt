@@ -301,7 +301,8 @@ fun TerminalScreen(
                 AppThemeMode.LIGHT -> false
                 AppThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
-            val terminalBg = if (isDark) Color(0xFF090D14) else MaterialTheme.colorScheme.surface
+            // Neutral console background in light mode; the theme surface is tinted orange.
+            val terminalBg = if (isDark) Color(0xFF090D14) else Color(0xFFF6F8FA)
             val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
             val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
             val outputTextColor = if (isDark) Color(0xFFC9D1D9) else MaterialTheme.colorScheme.onSurface

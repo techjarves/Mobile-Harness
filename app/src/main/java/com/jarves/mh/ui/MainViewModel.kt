@@ -641,15 +641,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(
-        listOf(
-            TerminalOutputLine(
-                command = "uname -a",
-                output = "Linux pocket-dev 6.1.0-arm64 #1 SMP aarch64 GNU/Linux (PRoot Sandbox)",
-                exitCode = 0,
-            ),
-        ),
-    )
+    private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(emptyList())
     val terminalLines: StateFlow<List<TerminalOutputLine>> = _terminalLines.asStateFlow()
 
     private val _isTerminalRunning = MutableStateFlow(false)
