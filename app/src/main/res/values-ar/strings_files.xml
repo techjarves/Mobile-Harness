@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">جديد</string>
+    <string name="fm_new_file">ملف جديد</string>
+    <string name="fm_new_folder">مجلد جديد</string>
+    <string name="fm_upload_here">الرفع هنا</string>
+    <string name="fm_rename">إعادة التسمية</string>
+    <string name="fm_delete">حذف</string>
+    <string name="fm_share">مشاركة</string>
+    <string name="fm_save_copy">حفظ نسخة</string>
+    <string name="fm_more_actions">إجراءات إضافية لـ %1$s</string>
+    <string name="fm_name">الاسم</string>
+    <string name="fm_create">إنشاء</string>
+    <string name="fm_delete_title">حذف %1$s؟</string>
+    <string name="fm_delete_file_desc">سيتم حذف هذا الملف نهائيًا.</string>
+    <string name="fm_delete_folder_desc">سيتم حذف هذا المجلد وكل ما بداخله نهائيًا.</string>
+    <string name="fm_created">تم إنشاء %1$s</string>
+    <string name="fm_renamed">تمت إعادة التسمية إلى %1$s</string>
+    <string name="fm_deleted">تم حذف %1$s</string>
+    <string name="fm_saved_copy">تم حفظ نسخة من %1$s</string>
+    <string name="fm_invalid_name">أدخل اسمًا صالحًا (بدون شرطات مائلة، وليس . أو ..)</string>
+    <string name="fm_exists">%1$s موجود بالفعل</string>
+    <string name="fm_failed">تعذر الإكمال: %1$s</string>
+    <string name="fm_busy">أوقف المهمة أو أمر الطرفية أو البناء أو التصدير الجاري أولًا</string>
+    <string name="fm_share_title">مشاركة %1$s</string>
+    <string name="fm_too_large">حجم %1$s أكبر من 100 ميغابايت</string>
+    <string name="fm_protected">هذا العنصر محمي ولا يمكن تغييره</string>
+    <plurals name="fm_uploaded">
+        <item quantity="zero">لم يتم رفع أي ملف</item>
+        <item quantity="one">تم رفع ملف واحد</item>
+        <item quantity="two">تم رفع ملفين</item>
+        <item quantity="few">تم رفع %1$d ملفات</item>
+        <item quantity="many">تم رفع %1$d ملفًا</item>
+        <item quantity="other">تم رفع %1$d ملف</item>
+    </plurals>
+</resources>

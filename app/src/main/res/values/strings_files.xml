@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">New</string>
+    <string name="fm_new_file">New file</string>
+    <string name="fm_new_folder">New folder</string>
+    <string name="fm_upload_here">Upload here</string>
+    <string name="fm_rename">Rename</string>
+    <string name="fm_delete">Delete</string>
+    <string name="fm_share">Share</string>
+    <string name="fm_save_copy">Save copy</string>
+    <string name="fm_more_actions">More actions for %1$s</string>
+    <string name="fm_name">Name</string>
+    <string name="fm_create">Create</string>
+    <string name="fm_delete_title">Delete %1$s?</string>
+    <string name="fm_delete_file_desc">This file will be permanently deleted.</string>
+    <string name="fm_delete_folder_desc">This folder and everything inside it will be permanently deleted.</string>
+    <string name="fm_created">%1$s created</string>
+    <string name="fm_renamed">Renamed to %1$s</string>
+    <string name="fm_deleted">%1$s deleted</string>
+    <string name="fm_saved_copy">Saved a copy of %1$s</string>
+    <string name="fm_invalid_name">Enter a valid name (no slashes, not . or ..)</string>
+    <string name="fm_exists">%1$s already exists</string>
+    <string name="fm_failed">Could not complete: %1$s</string>
+    <string name="fm_busy">Stop the running task, terminal command, build or export first</string>
+    <string name="fm_share_title">Share %1$s</string>
+    <string name="fm_too_large">%1$s is larger than 100 MB</string>
+    <string name="fm_protected">This item is protected and can\'t be changed</string>
+    <plurals name="fm_uploaded">
+        <item quantity="one">%1$d file uploaded</item>
+        <item quantity="other">%1$d files uploaded</item>
+    </plurals>
+</resources>

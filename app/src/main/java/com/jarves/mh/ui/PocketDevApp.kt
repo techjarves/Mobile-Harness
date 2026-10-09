@@ -117,6 +117,10 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.BatterySaver
@@ -189,6 +193,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -263,6 +269,9 @@ import kotlinx.coroutines.launch
 import androidx.annotation.StringRes
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
 import com.jarves.mh.R
 import com.jarves.mh.ui.theme.AppLanguage
 import com.jarves.mh.ui.theme.AppThemeMode
@@ -396,6 +405,12 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
             onLoadProjectDirectory = viewModel::loadProjectDirectory,
+            onCreateWorkspaceEntry = viewModel::createWorkspaceEntry,
+            onRenameWorkspaceEntry = viewModel::renameWorkspaceEntry,
+            onDeleteWorkspaceEntry = viewModel::deleteWorkspaceEntry,
+            onUploadToWorkspace = viewModel::uploadToWorkspace,
+            onShareWorkspaceFile = viewModel::shareWorkspaceFile,
+            onSaveWorkspaceFileCopy = viewModel::saveWorkspaceFileCopy,
             onOpenFile = viewModel::openFile,
             onCloseFile = viewModel::closeFile,
             onBeginFileEdit = viewModel::beginFileEdit,
@@ -4271,6 +4286,7 @@ private fun ReadOnlyProjectScreen(
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
@@ -4323,6 +4339,12 @@ private fun WorkspaceScreen(
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
     onLoadProjectDirectory: (String) -> Unit,
+    onCreateWorkspaceEntry: (String, String, Boolean) -> Unit,
+    onRenameWorkspaceEntry: (String, String) -> Unit,
+    onDeleteWorkspaceEntry: (String) -> Unit,
+    onUploadToWorkspace: (String, List<Uri>) -> Unit,
+    onShareWorkspaceFile: (String) -> Unit,
+    onSaveWorkspaceFileCopy: (String, Uri) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onCloseFile: () -> Unit,
     onBeginFileEdit: () -> Unit,
@@ -4387,6 +4409,23 @@ private fun WorkspaceScreen(
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
         onResult = onAddAttachments,
+    )
+    var pendingUploadParent by rememberSaveable { mutableStateOf<String?>(null) }
+    val uploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris ->
+            pendingUploadParent?.let { parent -> onUploadToWorkspace(parent, uris) }
+            pendingUploadParent = null
+        },
+    )
+    var pendingCopyPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val saveCopyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*"),
+        onResult = { uri ->
+            val path = pendingCopyPath
+            if (uri != null && path != null) onSaveWorkspaceFileCopy(path, uri)
+            pendingCopyPath = null
+        },
     )
     var pendingPhotoUri by rememberSaveable { mutableStateOf<String?>(null) }
     val takePhotoLauncher = rememberLauncherForActivityResult(
@@ -4575,11 +4614,13 @@ private fun WorkspaceScreen(
                                 },
                             ),
                         )
+                        // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)} · ${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()}",
+                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
@@ -4686,6 +4727,20 @@ private fun WorkspaceScreen(
                     onSelectAll = { exportSelection = ExportSelection() },
                     onDownloadSelection = {
                         exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
+                    },
+                    fileOpsEnabled = !state.isRunning && !state.projectTerminalRunning &&
+                        !state.androidBuildRunning && !state.projectExportRunning,
+                    onCreateEntry = onCreateWorkspaceEntry,
+                    onRenameEntry = onRenameWorkspaceEntry,
+                    onDeleteEntry = onDeleteWorkspaceEntry,
+                    onUploadInto = { parent ->
+                        pendingUploadParent = parent
+                        uploadLauncher.launch(arrayOf("*/*"))
+                    },
+                    onShareFile = onShareWorkspaceFile,
+                    onSaveFileCopy = { path ->
+                        pendingCopyPath = path
+                        saveCopyLauncher.launch(path.substringAfterLast('/'))
                     },
                 )
                 WorkspaceTab.TERMINAL -> TerminalScreen(
@@ -5492,6 +5547,13 @@ private fun FileViewerScreen(
         )
     }
 
+    // Code palette follows the app theme (light or dark) instead of a fixed dark scheme.
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val codeBackground = if (darkTheme) Color(0xFF0D1117) else MaterialTheme.colorScheme.surface
+    val codeText = if (darkTheme) Color(0xFFE2E8F0) else MaterialTheme.colorScheme.onSurface
+    val gutterText = if (darkTheme) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+    val toolbarBackground = if (darkTheme) Color(0xFF161B22) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -5513,17 +5575,20 @@ private fun FileViewerScreen(
                             if (file.saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.Save, stringResource(R.string.save_file))
                         }
-                    } else if (!file.content.isNullOrEmpty()) {
-                        IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(file.content))
-                            copied = true
-                            scope.launch { delay(2000); copied = false }
-                        }) {
-                            Icon(
-                                if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                                stringResource(R.string.copy_file_contents),
-                                tint = if (copied) PocketOrange else MaterialTheme.colorScheme.onSurface,
-                            )
+                    } else if (file.content != null) {
+                        // Empty files (e.g. just created) can still be edited; there is just nothing to copy.
+                        if (file.content.isNotEmpty()) {
+                            IconButton(onClick = {
+                                clipboard.setText(AnnotatedString(file.content))
+                                copied = true
+                                scope.launch { delay(2000); copied = false }
+                            }) {
+                                Icon(
+                                    if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                    stringResource(R.string.copy_file_contents),
+                                    tint = if (copied) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
                         }
                         if (file.readOnlyReason == null) {
                             IconButton(onClick = onBeginEdit, enabled = editingAllowed) {
@@ -5555,9 +5620,10 @@ private fun FileViewerScreen(
                 file.editing -> {
                     val vertical = rememberScrollState()
                     val horizontal = rememberScrollState()
-                    Column(Modifier.fillMaxSize().background(Color(0xFF0D1117))) {
+                    Column(Modifier.fillMaxSize().background(codeBackground)) {
+                        CompositionLocalProvider(LocalContentColor provides codeText) {
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                            Modifier.fillMaxWidth().background(toolbarBackground).padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             IconButton(
@@ -5605,6 +5671,7 @@ private fun FileViewerScreen(
                                     if (matches.isEmpty()) "0/0" else "${currentMatch + 1}/${matches.size}",
                                     Modifier.padding(horizontal = 8.dp),
                                     fontSize = 12.sp,
+                                    color = codeText,
                                 )
                                 IconButton(onClick = {
                                     if (matches.isNotEmpty()) {
@@ -5620,6 +5687,8 @@ private fun FileViewerScreen(
                                 }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.next_match)) }
                             }
                         }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         Row(
                             Modifier.fillMaxSize().verticalScroll(vertical),
                             verticalAlignment = Alignment.Top,
@@ -5630,7 +5699,7 @@ private fun FileViewerScreen(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontSize = 13.sp,
                                 lineHeight = 20.sp,
-                                color = Color(0xFF4A5568),
+                                color = gutterText,
                                 textAlign = TextAlign.End,
                             )
                             BasicTextField(
@@ -5652,8 +5721,9 @@ private fun FileViewerScreen(
                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                     fontSize = 13.sp,
                                     lineHeight = 20.sp,
-                                    color = Color(0xFFE2E8F0),
+                                    color = codeText,
                                 ),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             )
                         }
                     }
@@ -5679,7 +5749,7 @@ private fun FileViewerScreen(
                         contentPadding = PaddingValues(0.dp),
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF0D1117)),
+                            .background(codeBackground),
                     ) {
                         val lines = file.content.lines()
                         items(lines.size) { idx ->
@@ -5698,7 +5768,7 @@ private fun FileViewerScreen(
                                         .padding(start = 8.dp, end = 6.dp),
                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                     fontSize = 12.sp,
-                                    color = Color(0xFF4A5568),
+                                    color = gutterText,
                                     textAlign = TextAlign.End,
                                 )
                                 Text(
@@ -5709,7 +5779,7 @@ private fun FileViewerScreen(
                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                     fontSize = 13.sp,
                                     lineHeight = 19.sp,
-                                    color = Color(0xFFE2E8F0),
+                                    color = codeText,
                                 )
                             }
                         }
@@ -5729,6 +5799,7 @@ private fun FileViewerScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FilesTab(
     files: List<WorkspaceEntry>,
@@ -5747,8 +5818,18 @@ private fun FilesTab(
     onToggleSelection: (WorkspaceEntry) -> Unit,
     onSelectAll: () -> Unit,
     onDownloadSelection: () -> Unit,
+    fileOpsEnabled: Boolean = false,
+    onCreateEntry: (parentPath: String, name: String, isDirectory: Boolean) -> Unit = { _, _, _ -> },
+    onRenameEntry: (path: String, newName: String) -> Unit = { _, _ -> },
+    onDeleteEntry: (path: String) -> Unit = {},
+    onUploadInto: (parentPath: String) -> Unit = {},
+    onShareFile: (path: String) -> Unit = {},
+    onSaveFileCopy: (path: String) -> Unit = {},
 ) {
     var expandedDirectories by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var nameDialog by remember { mutableStateOf<FileNameDialog?>(null) }
+    var deleteTarget by remember { mutableStateOf<WorkspaceEntry?>(null) }
+    var rootMenuOpen by remember { mutableStateOf(false) }
     LaunchedEffect(files.map { it.path }) {
         val directories = files.asSequence().filter { it.isDirectory }.map { it.path }.toSet()
         expandedDirectories = expandedDirectories.filter { it in directories }
@@ -5804,6 +5885,20 @@ private fun FilesTab(
                             Text(stringResource(R.string.collapse_all), fontSize = 11.sp)
                         }
                     }
+                    if (!selectionMode) {
+                        Box {
+                            IconButton(onClick = { rootMenuOpen = true }, enabled = fileOpsEnabled) {
+                                Icon(Icons.Default.Add, stringResource(R.string.fm_new))
+                            }
+                            DropdownMenu(expanded = rootMenuOpen, onDismissRequest = { rootMenuOpen = false }) {
+                                FolderActionItems(
+                                    onNewFile = { rootMenuOpen = false; nameDialog = FileNameDialog.Create("", isDirectory = false) },
+                                    onNewFolder = { rootMenuOpen = false; nameDialog = FileNameDialog.Create("", isDirectory = true) },
+                                    onUpload = { rootMenuOpen = false; onUploadInto("") },
+                                )
+                            }
+                        }
+                    }
                     if (!selectionMode && !loading && files.any { !it.isDirectory }) {
                         IconButton(onClick = onEnterSelection, enabled = exportEnabled) {
                             Icon(Icons.Default.Download, stringResource(R.string.export_project_zip))
@@ -5838,10 +5933,13 @@ private fun FilesTab(
             item { EmptyState(Icons.Default.Folder, stringResource(R.string.workspace_no_files), stringResource(R.string.workspace_no_files_description)) }
         }
         items(visibleFiles, key = { it.path }) { entry ->
+            var entryMenuOpen by remember { mutableStateOf(false) }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .combinedClickable(
+                        onLongClick = { if (!selectionMode && fileOpsEnabled) entryMenuOpen = true },
+                    ) {
                         if (selectionMode) {
                             onToggleSelection(entry)
                         } else if (entry.isDirectory) {
@@ -5901,13 +5999,53 @@ private fun FilesTab(
                 if (!entry.isDirectory) {
                     Spacer(Modifier.width(8.dp))
                     Text(formatFileSize(entry.sizeBytes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                }
+                if (!selectionMode) {
+                    Box {
+                        IconButton(
+                            onClick = { entryMenuOpen = true },
+                            enabled = fileOpsEnabled,
+                            modifier = Modifier.size(32.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                stringResource(R.string.fm_more_actions, entry.name),
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        DropdownMenu(expanded = entryMenuOpen, onDismissRequest = { entryMenuOpen = false }) {
+                            if (entry.isDirectory) {
+                                FolderActionItems(
+                                    onNewFile = { entryMenuOpen = false; nameDialog = FileNameDialog.Create(entry.path, isDirectory = false) },
+                                    onNewFolder = { entryMenuOpen = false; nameDialog = FileNameDialog.Create(entry.path, isDirectory = true) },
+                                    onUpload = { entryMenuOpen = false; onUploadInto(entry.path) },
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.fm_share)) },
+                                    leadingIcon = { Icon(Icons.Default.Share, null) },
+                                    onClick = { entryMenuOpen = false; onShareFile(entry.path) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.fm_save_copy)) },
+                                    leadingIcon = { Icon(Icons.Default.Download, null) },
+                                    onClick = { entryMenuOpen = false; onSaveFileCopy(entry.path) },
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.fm_rename)) },
+                                leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, null) },
+                                onClick = { entryMenuOpen = false; nameDialog = FileNameDialog.Rename(entry.path, entry.name) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.fm_delete), color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = { entryMenuOpen = false; deleteTarget = entry },
+                            )
+                        }
+                    }
                 }
             }
             if (!entry.isDirectory) {
@@ -5933,6 +6071,97 @@ private fun FilesTab(
             }
         }
     }
+
+    nameDialog?.let { dialog ->
+        var name by remember(dialog) {
+            val initial = (dialog as? FileNameDialog.Rename)?.currentName.orEmpty()
+            // Preselect the stem so typing replaces the name but keeps the extension.
+            mutableStateOf(TextFieldValue(initial, TextRange(0, initial.substringBeforeLast('.', initial).length)))
+        }
+        val focusRequester = remember { FocusRequester() }
+        LaunchedEffect(dialog) { focusRequester.requestFocus() }
+        val title = when (dialog) {
+            is FileNameDialog.Create -> stringResource(if (dialog.isDirectory) R.string.fm_new_folder else R.string.fm_new_file)
+            is FileNameDialog.Rename -> stringResource(R.string.fm_rename)
+        }
+        val confirm = {
+            when (dialog) {
+                is FileNameDialog.Create -> onCreateEntry(dialog.parentPath, name.text, dialog.isDirectory)
+                is FileNameDialog.Rename -> onRenameEntry(dialog.path, name.text)
+            }
+            nameDialog = null
+        }
+        AlertDialog(
+            onDismissRequest = { nameDialog = null },
+            title = { Text(title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val parent = when (dialog) {
+                        is FileNameDialog.Create -> dialog.parentPath
+                        is FileNameDialog.Rename -> dialog.path.substringBeforeLast('/', "")
+                    }
+                    Text(
+                        "/" + parent,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text(stringResource(R.string.fm_name)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (name.text.isNotBlank()) confirm() }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = confirm, enabled = name.text.isNotBlank()) {
+                    Text(stringResource(if (dialog is FileNameDialog.Rename) R.string.fm_rename else R.string.fm_create))
+                }
+            },
+            dismissButton = { TextButton(onClick = { nameDialog = null }) { Text(stringResource(R.string.action_cancel)) } },
+        )
+    }
+    deleteTarget?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text(stringResource(R.string.fm_delete_title, entry.name)) },
+            text = { Text(stringResource(if (entry.isDirectory) R.string.fm_delete_folder_desc else R.string.fm_delete_file_desc)) },
+            confirmButton = {
+                TextButton(onClick = { onDeleteEntry(entry.path); deleteTarget = null }) {
+                    Text(stringResource(R.string.fm_delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.action_cancel)) } },
+        )
+    }
+}
+
+private sealed interface FileNameDialog {
+    data class Create(val parentPath: String, val isDirectory: Boolean) : FileNameDialog
+    data class Rename(val path: String, val currentName: String) : FileNameDialog
+}
+
+@Composable
+private fun FolderActionItems(onNewFile: () -> Unit, onNewFolder: () -> Unit, onUpload: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.fm_new_file)) },
+        leadingIcon = { Icon(Icons.Default.NoteAdd, null) },
+        onClick = onNewFile,
+    )
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.fm_new_folder)) },
+        leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
+        onClick = onNewFolder,
+    )
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.fm_upload_here)) },
+        leadingIcon = { Icon(Icons.Default.Upload, null) },
+        onClick = onUpload,
+    )
 }
 
 /** Creates an empty file in the app cache for the camera app to write into, shared via FileProvider. */

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">新建</string>
+    <string name="fm_new_file">新建文件</string>
+    <string name="fm_new_folder">新建文件夹</string>
+    <string name="fm_upload_here">上传到此处</string>
+    <string name="fm_rename">重命名</string>
+    <string name="fm_delete">删除</string>
+    <string name="fm_share">分享</string>
+    <string name="fm_save_copy">保存副本</string>
+    <string name="fm_more_actions">%1$s 的更多操作</string>
+    <string name="fm_name">名称</string>
+    <string name="fm_create">创建</string>
+    <string name="fm_delete_title">删除 %1$s？</string>
+    <string name="fm_delete_file_desc">此文件将被永久删除。</string>
+    <string name="fm_delete_folder_desc">此文件夹及其中的所有内容将被永久删除。</string>
+    <string name="fm_created">已创建 %1$s</string>
+    <string name="fm_renamed">已重命名为 %1$s</string>
+    <string name="fm_deleted">已删除 %1$s</string>
+    <string name="fm_saved_copy">已保存 %1$s 的副本</string>
+    <string name="fm_invalid_name">请输入有效名称（不含斜杠，且不能是 . 或 ..）</string>
+    <string name="fm_exists">%1$s 已存在</string>
+    <string name="fm_failed">无法完成：%1$s</string>
+    <string name="fm_busy">请先停止正在运行的任务、终端命令、构建或导出</string>
+    <string name="fm_share_title">分享 %1$s</string>
+    <string name="fm_too_large">%1$s 超过 100 MB</string>
+    <string name="fm_protected">此项目受保护，无法更改</string>
+    <plurals name="fm_uploaded">
+        <item quantity="other">已上传 %1$d 个文件</item>
+    </plurals>
+</resources>

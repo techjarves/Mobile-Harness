@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">नया</string>
+    <string name="fm_new_file">नई फ़ाइल</string>
+    <string name="fm_new_folder">नया फ़ोल्डर</string>
+    <string name="fm_upload_here">यहाँ अपलोड करें</string>
+    <string name="fm_rename">नाम बदलें</string>
+    <string name="fm_delete">हटाएँ</string>
+    <string name="fm_share">शेयर करें</string>
+    <string name="fm_save_copy">कॉपी सेव करें</string>
+    <string name="fm_more_actions">%1$s के लिए और कार्रवाइयाँ</string>
+    <string name="fm_name">नाम</string>
+    <string name="fm_create">बनाएँ</string>
+    <string name="fm_delete_title">%1$s हटाएँ?</string>
+    <string name="fm_delete_file_desc">यह फ़ाइल स्थायी रूप से हटा दी जाएगी।</string>
+    <string name="fm_delete_folder_desc">यह फ़ोल्डर और इसके अंदर की हर चीज़ स्थायी रूप से हटा दी जाएगी।</string>
+    <string name="fm_created">%1$s बनाया गया</string>
+    <string name="fm_renamed">नाम बदलकर %1$s किया गया</string>
+    <string name="fm_deleted">%1$s हटाया गया</string>
+    <string name="fm_saved_copy">%1$s की कॉपी सेव की गई</string>
+    <string name="fm_invalid_name">मान्य नाम डालें (स्लैश नहीं, . या .. नहीं)</string>
+    <string name="fm_exists">%1$s पहले से मौजूद है</string>
+    <string name="fm_failed">पूरा नहीं हो सका: %1$s</string>
+    <string name="fm_busy">पहले चल रहा टास्क, टर्मिनल कमांड, बिल्ड या एक्सपोर्ट रोकें</string>
+    <string name="fm_share_title">%1$s शेयर करें</string>
+    <string name="fm_too_large">%1$s 100 MB से बड़ी है</string>
+    <string name="fm_protected">यह आइटम सुरक्षित है और बदला नहीं जा सकता</string>
+    <plurals name="fm_uploaded">
+        <item quantity="one">%1$d फ़ाइल अपलोड हुई</item>
+        <item quantity="other">%1$d फ़ाइलें अपलोड हुईं</item>
+    </plurals>
+</resources>

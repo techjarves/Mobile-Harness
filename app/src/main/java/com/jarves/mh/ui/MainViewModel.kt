@@ -4199,8 +4199,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun safeWorkspaceDirectory(project: Project, relativePath: String): File? {
         val root = projectWorkspaceRoot(project).canonicalFile
         if (relativePath.isBlank()) return root.takeIf(File::isDirectory)
-        val directory = safeWorkspaceFile(project, relativePath) ?: return null
-        return directory.takeIf(File::isDirectory)
+        return safeWorkspacePath(project, relativePath)?.takeIf(File::isDirectory)
     }
 
     private fun folderMetadataKey(projectId: String, path: String): String = "$projectId:${path.trim('/')}"
@@ -4265,6 +4264,226 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    // ---- Manual file management (Files tab) ----
+
+    /** Resolves a workspace path (file or folder) inside the project root, rejecting symlinks and traversal. */
+    private fun safeWorkspacePath(project: Project, relativePath: String): File? {
+        val root = projectWorkspaceRoot(project).canonicalFile
+        val clean = relativePath.replace('\\', '/').trim('/')
+        if (clean.isBlank()) return root
+        if (isClaudeRuntimeMetadata(clean)) return null
+        var cursor = root
+        for (segment in clean.split('/')) {
+            if (segment.isBlank() || segment == "." || segment == "..") return null
+            cursor = File(cursor, segment)
+            if (Files.isSymbolicLink(cursor.toPath())) return null
+        }
+        val canonical = runCatching { cursor.canonicalFile }.getOrNull() ?: return null
+        return canonical.takeIf { it.toPath().startsWith(root.toPath()) }
+    }
+
+    private fun isValidEntryName(name: String): Boolean =
+        name.isNotBlank() && name != "." && name != ".." && name.length <= 255 &&
+            name.none { it == '/' || it == '\\' || it == '\u0000' } &&
+            !isClaudeRuntimeMetadata(name)
+
+    private fun fileOpsBlocked(): Boolean {
+        val current = _state.value
+        val busy = current.isRunning || current.projectTerminalRunning || current.androidBuildRunning ||
+            current.projectExportRunning
+        if (busy) _state.update { it.copy(toastMessage = str(R.string.fm_busy)) }
+        return busy
+    }
+
+    private fun parentPathOf(path: String): String = path.trim('/').substringBeforeLast('/', "")
+
+    private fun childPath(parent: String, name: String): String =
+        parent.trim('/').let { if (it.isBlank()) name else "$it/$name" }
+
+    /** Reloads one folder after a change; drops stale entries under a removed path first. */
+    private fun reloadWorkspaceFolder(project: Project, parent: String, removedPath: String? = null) {
+        invalidateFolderMetadata(project.id, listOfNotNull(parent, removedPath))
+        if (removedPath != null) {
+            _state.update { current ->
+                current.copy(
+                    workspaceFiles = current.workspaceFiles.filterNot {
+                        it.path == removedPath || it.path.startsWith("$removedPath/")
+                    },
+                )
+            }
+        }
+        loadProjectDirectory(parent)
+        if (parent.isNotBlank()) {
+            val grandParent = parentPathOf(parent)
+            invalidateFolderMetadata(project.id, listOf(grandParent))
+            loadProjectDirectory(grandParent)
+        }
+    }
+
+    private fun runFileOperation(
+        project: Project,
+        reloadParent: String,
+        removedPath: String? = null,
+        operation: () -> String,
+    ) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching(operation) }
+            if (_state.value.activeProject?.id != project.id) return@launch
+            result
+                .onSuccess { message -> _state.update { it.copy(toastMessage = message) } }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(toastMessage = str(R.string.fm_failed, error.message ?: str(R.string.vm_unknown_error)))
+                    }
+                }
+            reloadWorkspaceFolder(project, reloadParent, removedPath.takeIf { result.isSuccess })
+        }
+    }
+
+    fun createWorkspaceEntry(parentPath: String, name: String, isDirectory: Boolean) {
+        val project = _state.value.activeProject ?: return
+        val trimmed = name.trim()
+        if (!isValidEntryName(trimmed)) {
+            _state.update { it.copy(toastMessage = str(R.string.fm_invalid_name)) }
+            return
+        }
+        if (fileOpsBlocked()) return
+        runFileOperation(project, parentPath) {
+            val parent = safeWorkspacePath(project, parentPath)?.takeIf(File::isDirectory)
+                ?: error(str(R.string.fm_protected))
+            val target = File(parent, trimmed)
+            check(!target.exists()) { str(R.string.fm_exists, trimmed) }
+            val created = if (isDirectory) target.mkdir() else target.createNewFile()
+            check(created) { str(R.string.fm_protected) }
+            str(R.string.fm_created, trimmed)
+        }
+    }
+
+    fun renameWorkspaceEntry(path: String, newName: String) {
+        val project = _state.value.activeProject ?: return
+        val trimmed = newName.trim()
+        if (!isValidEntryName(trimmed)) {
+            _state.update { it.copy(toastMessage = str(R.string.fm_invalid_name)) }
+            return
+        }
+        if (trimmed == path.substringAfterLast('/')) return
+        if (fileOpsBlocked()) return
+        val parentPath = parentPathOf(path)
+        runFileOperation(project, parentPath, removedPath = path) {
+            val source = safeWorkspacePath(project, path)?.takeIf { it.exists() && path.isNotBlank() }
+                ?: error(str(R.string.fm_protected))
+            val target = File(source.parentFile, trimmed)
+            // Allow case-only renames on case-insensitive storage.
+            check(!target.exists() || target.canonicalPath.equals(source.canonicalPath, ignoreCase = true)) {
+                str(R.string.fm_exists, trimmed)
+            }
+            Files.move(source.toPath(), target.toPath())
+            str(R.string.fm_renamed, trimmed)
+        }
+    }
+
+    fun deleteWorkspaceEntry(path: String) {
+        val project = _state.value.activeProject ?: return
+        if (path.isBlank() || fileOpsBlocked()) return
+        val name = path.substringAfterLast('/')
+        runFileOperation(project, parentPathOf(path), removedPath = path) {
+            val target = safeWorkspacePath(project, path)?.takeIf(File::exists) ?: error(str(R.string.fm_protected))
+            check(target != projectWorkspaceRoot(project).canonicalFile) { str(R.string.fm_protected) }
+            // deleteRecursively does not follow symlinks out of the folder; it deletes the link itself.
+            check(target.deleteRecursively()) { str(R.string.fm_protected) }
+            str(R.string.fm_deleted, name)
+        }
+    }
+
+    fun uploadToWorkspace(parentPath: String, uris: List<Uri>) {
+        val project = _state.value.activeProject ?: return
+        if (uris.isEmpty() || fileOpsBlocked()) return
+        val resolver = getApplication<Application>().contentResolver
+        runFileOperation(project, parentPath) {
+            val parent = safeWorkspacePath(project, parentPath)?.takeIf(File::isDirectory)
+                ?: error(str(R.string.fm_protected))
+            var uploaded = 0
+            uris.forEach { uri ->
+                var displayName = "upload"
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }
+                            ?.let { displayName = cursor.getString(it) ?: displayName }
+                    }
+                }
+                val safeName = sanitizeAttachmentName(displayName)
+                val stem = safeName.substringBeforeLast('.', safeName)
+                val extension = safeName.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$it" }
+                var destination = File(parent, safeName)
+                var suffix = 2
+                while (destination.exists()) destination = File(parent, "$stem-${suffix++}$extension")
+                var copied = 0L
+                try {
+                    resolver.openInputStream(uri)?.buffered()?.use { input ->
+                        destination.outputStream().buffered().use { output ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                copied += count
+                                check(copied <= MAX_UPLOAD_BYTES) { str(R.string.fm_too_large, displayName) }
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    } ?: error(str(R.string.vm_read_named_failed, displayName))
+                } catch (error: Throwable) {
+                    destination.delete()
+                    throw error
+                }
+                uploaded++
+            }
+            AppStrings.context(getApplication()).resources.getQuantityString(R.plurals.fm_uploaded, uploaded, uploaded)
+        }
+    }
+
+    fun shareWorkspaceFile(path: String) {
+        val project = _state.value.activeProject ?: return
+        runCatching {
+            val file = safeWorkspaceFile(project, path) ?: error(str(R.string.fm_protected))
+            val app = getApplication<Application>()
+            val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", file)
+            val mimeType = android.webkit.MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(file.extension.lowercase())
+                ?: "application/octet-stream"
+            app.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }, str(R.string.fm_share_title, file.name)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { error ->
+            _state.update { it.copy(toastMessage = str(R.string.fm_failed, error.message ?: str(R.string.vm_unknown_error))) }
+        }
+    }
+
+    fun saveWorkspaceFileCopy(path: String, destination: Uri) {
+        val project = _state.value.activeProject ?: return
+        val resolver = getApplication<Application>().contentResolver
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val file = safeWorkspaceFile(project, path) ?: error(str(R.string.fm_protected))
+                    resolver.openOutputStream(destination, "wt")?.use { output ->
+                        file.inputStream().buffered().use { it.copyTo(output) }
+                    } ?: error(str(R.string.fm_protected))
+                    file.name
+                }
+            }
+            _state.update {
+                it.copy(
+                    toastMessage = result.fold(
+                        onSuccess = { name -> str(R.string.fm_saved_copy, name) },
+                        onFailure = { error -> str(R.string.fm_failed, error.message ?: str(R.string.vm_unknown_error)) },
+                    ),
+                )
+            }
+        }
     }
 
     fun addChatAttachments(uris: List<Uri>) {
@@ -5121,6 +5340,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_PROCESS_OUTPUT_BYTES = 512 * 1024
         private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
+        private const val MAX_UPLOAD_BYTES = 100L * 1024L * 1024L
         private const val MAX_IMPORTED_PROJECT_BYTES = 8L * 1024L * 1024L * 1024L
         private const val MAX_IMPORTED_ZIP_ENTRIES = 100_000
         private const val LEGACY_GITHUB_TOKEN_KEY = "GITHUB_APP"

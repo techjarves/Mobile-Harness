@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">Создать</string>
+    <string name="fm_new_file">Новый файл</string>
+    <string name="fm_new_folder">Новая папка</string>
+    <string name="fm_upload_here">Загрузить сюда</string>
+    <string name="fm_rename">Переименовать</string>
+    <string name="fm_delete">Удалить</string>
+    <string name="fm_share">Поделиться</string>
+    <string name="fm_save_copy">Сохранить копию</string>
+    <string name="fm_more_actions">Другие действия для %1$s</string>
+    <string name="fm_name">Имя</string>
+    <string name="fm_create">Создать</string>
+    <string name="fm_delete_title">Удалить %1$s?</string>
+    <string name="fm_delete_file_desc">Этот файл будет удалён без возможности восстановления.</string>
+    <string name="fm_delete_folder_desc">Эта папка и всё её содержимое будут удалены без возможности восстановления.</string>
+    <string name="fm_created">%1$s создан</string>
+    <string name="fm_renamed">Переименовано в %1$s</string>
+    <string name="fm_deleted">%1$s удалён</string>
+    <string name="fm_saved_copy">Копия %1$s сохранена</string>
+    <string name="fm_invalid_name">Введите допустимое имя (без косых черт, не . и не ..)</string>
+    <string name="fm_exists">%1$s уже существует</string>
+    <string name="fm_failed">Не удалось выполнить: %1$s</string>
+    <string name="fm_busy">Сначала остановите текущую задачу, команду терминала, сборку или экспорт</string>
+    <string name="fm_share_title">Поделиться %1$s</string>
+    <string name="fm_too_large">%1$s больше 100 МБ</string>
+    <string name="fm_protected">Этот элемент защищён и не может быть изменён</string>
+    <plurals name="fm_uploaded">
+        <item quantity="one">Загружен %1$d файл</item>
+        <item quantity="few">Загружено %1$d файла</item>
+        <item quantity="many">Загружено %1$d файлов</item>
+        <item quantity="other">Загружено %1$d файла</item>
+    </plurals>
+</resources>

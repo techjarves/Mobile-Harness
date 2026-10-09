@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">Nuevo</string>
+    <string name="fm_new_file">Nuevo archivo</string>
+    <string name="fm_new_folder">Nueva carpeta</string>
+    <string name="fm_upload_here">Subir aquí</string>
+    <string name="fm_rename">Cambiar nombre</string>
+    <string name="fm_delete">Eliminar</string>
+    <string name="fm_share">Compartir</string>
+    <string name="fm_save_copy">Guardar copia</string>
+    <string name="fm_more_actions">Más acciones para %1$s</string>
+    <string name="fm_name">Nombre</string>
+    <string name="fm_create">Crear</string>
+    <string name="fm_delete_title">¿Eliminar %1$s?</string>
+    <string name="fm_delete_file_desc">Este archivo se eliminará permanentemente.</string>
+    <string name="fm_delete_folder_desc">Esta carpeta y todo su contenido se eliminarán permanentemente.</string>
+    <string name="fm_created">%1$s creado</string>
+    <string name="fm_renamed">Renombrado a %1$s</string>
+    <string name="fm_deleted">%1$s eliminado</string>
+    <string name="fm_saved_copy">Se guardó una copia de %1$s</string>
+    <string name="fm_invalid_name">Introduce un nombre válido (sin barras, ni . ni ..)</string>
+    <string name="fm_exists">%1$s ya existe</string>
+    <string name="fm_failed">No se pudo completar: %1$s</string>
+    <string name="fm_busy">Detén primero la tarea, el comando de terminal, la compilación o la exportación en curso</string>
+    <string name="fm_share_title">Compartir %1$s</string>
+    <string name="fm_too_large">%1$s supera los 100 MB</string>
+    <string name="fm_protected">Este elemento está protegido y no se puede cambiar</string>
+    <plurals name="fm_uploaded">
+        <item quantity="one">%1$d archivo subido</item>
+        <item quantity="other">%1$d archivos subidos</item>
+    </plurals>
+</resources>
