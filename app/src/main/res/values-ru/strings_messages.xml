@@ -186,4 +186,6 @@
         <item quantity="many">Удалось добавить ещё только %1$d файлов</item>
         <item quantity="other">Удалось добавить ещё только %1$d файла</item>
     </plurals>
+    <string name="vm_claude_hello">Просим Claude Code ответить…</string>
+    <string name="vm_claude_working">Подписка Claude работает!</string>
 </resources>

@@ -183,4 +183,6 @@
         <item quantity="many">Solo se pudieron añadir %1$d archivos más</item>
         <item quantity="other">Solo se pudieron añadir %1$d archivos más</item>
     </plurals>
+    <string name="vm_claude_hello">Pidiendo a Claude Code que responda…</string>
+    <string name="vm_claude_working">¡La suscripción de Claude funciona!</string>
 </resources>

@@ -2230,7 +2230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     installedAgentVersions = installer.installedAgentVersions(),
                 )
             }
-            pingApi()
+            autoPingApi()
             checkForAppUpdate()
         } else {
             showStartupError(result.exceptionOrNull() ?: IllegalStateException(str(R.string.vm_initialization_failed)))
@@ -2347,7 +2347,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.onboardingComplete = true
         _state.update { it.copy(onboardingComplete = true, provider = saved, startupStage = StartupStage.READY) }
         refreshActiveApiKey(profile.kind)
-        pingApi()
+        autoPingApi()
     }
 
     fun finishAntigravityOnboarding() {
@@ -2827,12 +2827,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /**
+     * Background check at startup/after setup. Skips Claude subscriptions: their test boots Claude
+     * Code (about a minute of heavy work on older phones), so it only runs when the user taps Test.
+     */
+    private fun autoPingApi() {
+        val profile = _state.value.provider
+        if (_state.value.agentKind == AgentKind.CLAUDE_CODE && profile.kind == ProviderKind.CLAUDE) return
+        pingApi()
+    }
+
     fun pingApi() {
         if (_state.value.agentKind == AgentKind.ANTIGRAVITY) {
             testAntigravityConnection()
             return
         }
         val profile = _state.value.provider
+        if (_state.value.agentKind == AgentKind.CLAUDE_CODE && profile.kind == ProviderKind.CLAUDE) {
+            testClaudeSubscription(profile)
+            return
+        }
         if (profile.baseUrl.isBlank() || profile.model.isBlank()) return
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_ping_sending)) }
@@ -2855,6 +2869,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = result.message)
                 }
             }
+        }
+    }
+
+    /** Claude subscriptions have no HTTP endpoint to ping, so ask Claude Code itself for a one-word reply. */
+    private fun testClaudeSubscription(profile: ProviderProfile) {
+        if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_claude_hello)) }
+        viewModelScope.launch {
+            runCatching { claudeRuntime.hello(profile) }
+                .onSuccess {
+                    _state.update { it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = str(R.string.vm_claude_working)) }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            apiPingStatus = ApiPingStatus.FAILED,
+                            apiPingMessage = error.message?.replace(Regex("\\s+"), " ")?.trim()?.take(240)
+                                ?: str(R.string.vm_unknown_error),
+                        )
+                    }
+                }
         }
     }
 

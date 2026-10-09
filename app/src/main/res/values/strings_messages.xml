@@ -180,4 +180,6 @@
         <item quantity="one">Only %1$d more file could be added</item>
         <item quantity="other">Only %1$d more files could be added</item>
     </plurals>
+    <string name="vm_claude_hello">Asking Claude Code to reply…</string>
+    <string name="vm_claude_working">Claude subscription works!</string>
 </resources>

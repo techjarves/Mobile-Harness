@@ -177,4 +177,6 @@
     <plurals name="vm_more_files_can_be_added">
         <item quantity="other">只能再添加 %1$d 个文件</item>
     </plurals>
+    <string name="vm_claude_hello">正在请求 Claude Code 回复…</string>
+    <string name="vm_claude_working">Claude 订阅可用！</string>
 </resources>

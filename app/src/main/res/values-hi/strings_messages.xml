@@ -180,4 +180,6 @@
         <item quantity="one">केवल %1$d और फ़ाइल जोड़ी जा सकी</item>
         <item quantity="other">केवल %1$d और फ़ाइलें जोड़ी जा सकीं</item>
     </plurals>
+    <string name="vm_claude_hello">Claude Code से जवाब माँगा जा रहा है…</string>
+    <string name="vm_claude_working">Claude सब्सक्रिप्शन काम कर रहा है!</string>
 </resources>

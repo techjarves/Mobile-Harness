@@ -43,7 +43,14 @@ internal fun List<ChatMessage>.recentWithinCharacterBudget(maxCharacters: Int): 
 
 object RuntimeLaunchConfigBuilder {
     fun build(profile: ProviderProfile, authToken: String? = null, localGatewayUrl: String? = null): RuntimeLaunchConfig {
-        val environment = linkedMapOf("DISABLE_AUTOUPDATER" to "1")
+        val environment = linkedMapOf(
+            "DISABLE_AUTOUPDATER" to "1",
+            // Skip telemetry, error reporting and other background network calls. Each one costs
+            // noticeable startup time inside PRoot, and none are needed on device.
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
+            "DISABLE_TELEMETRY" to "1",
+            "DISABLE_ERROR_REPORTING" to "1",
+        )
         when (profile.kind.protocol) {
             com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN -> {
                 require(!authToken.isNullOrBlank()) { "Enter a Claude subscription token first" }

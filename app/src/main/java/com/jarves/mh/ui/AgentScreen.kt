@@ -1002,6 +1002,7 @@ fun AgentScreen(
                     )
                 } else {
                     AgentProviderCard(
+                        onTest = onPing,
                         state = state,
                         selectedKind = selectedKind,
                         baseUrl = baseUrl,
@@ -1512,6 +1513,7 @@ private fun AgentAntigravityCard(
 
 @Composable
 private fun AgentProviderCard(
+    onTest: () -> Unit = {},
     state: AppUiState,
     selectedKind: ProviderKind,
     baseUrl: String,
@@ -1914,6 +1916,48 @@ private fun AgentProviderCard(
                     color = PocketOrange,
                     fontWeight = FontWeight.SemiBold,
                 )
+            }
+            // Claude subscriptions can't be pinged over HTTP; this runs a one-word Claude Code prompt.
+            if (selectedKind == ProviderKind.CLAUDE && savedKeys.isNotEmpty() && state.provider.kind == ProviderKind.CLAUDE) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onTest,
+                    enabled = state.apiPingStatus != ApiPingStatus.PINGING && !isValidating,
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.7f)),
+                ) {
+                    if (state.apiPingStatus == ApiPingStatus.PINGING) {
+                        CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = PocketOrange)
+                    } else {
+                        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = PocketOrange)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(if (state.apiPingStatus == ApiPingStatus.PINGING) R.string.st_testing_connection else R.string.agent_test_connection),
+                        color = PocketOrange,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                state.apiPingMessage?.takeIf { state.apiPingStatus != ApiPingStatus.IDLE }?.let { message ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (state.apiPingStatus == ApiPingStatus.FAILED) Icons.Default.Warning else Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else Color(0xFF2E9D72),
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            message,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
             }
         }
     }

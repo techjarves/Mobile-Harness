@@ -192,4 +192,6 @@
         <item quantity="many">أمكن إضافة %1$d ملفاً إضافياً فقط</item>
         <item quantity="other">أمكن إضافة %1$d ملف إضافي فقط</item>
     </plurals>
+    <string name="vm_claude_hello">جارٍ طلب رد من Claude Code…</string>
+    <string name="vm_claude_working">اشتراك Claude يعمل!</string>
 </resources>
