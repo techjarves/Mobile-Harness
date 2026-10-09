@@ -97,7 +97,7 @@ class ProviderApiClient(private val context: Context? = null) {
         openRouterProviderOrder: String = "",
         openRouterAllowFallbacks: Boolean = true,
     ): ConnectionValidation = withContext(Dispatchers.IO) {
-        if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
+        if (baseUrl.isBlank() || model.isBlank()) {
             return@withContext ConnectionValidation.Failure(text(R.string.rt_api_required_fields, "Base URL, model, and API key are required."))
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
@@ -163,6 +163,9 @@ class ProviderApiClient(private val context: Context? = null) {
         connectTimeoutMs: Int = 12_000,
         readTimeoutMs: Int = 20_000,
     ): HttpResult {
+        if (!LocalNetwork.isPlainHttpAllowed(endpoint)) {
+            return HttpResult(0, "", text(R.string.rt_api_http_public, "Plain http:// is only allowed for local network addresses. Use https:// for this server."))
+        }
         return runCatching {
             val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = method

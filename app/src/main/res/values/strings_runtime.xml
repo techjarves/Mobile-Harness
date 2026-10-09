@@ -137,4 +137,5 @@
     <string name="rt_update_package_mismatch">Update package name does not match Mobile Harness</string>
     <string name="rt_update_version_mismatch">Update version does not match its manifest</string>
     <string name="rt_update_signature_mismatch">Update is not signed with the installed app\'s signing key</string>
+    <string name="rt_api_http_public">Plain http:// is only allowed for local network addresses (like 192.168.x.x, 10.x.x.x, Tailscale or .local). Use https:// for this server.</string>
 </resources>

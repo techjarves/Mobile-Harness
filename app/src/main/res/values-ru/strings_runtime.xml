@@ -137,4 +137,5 @@
     <string name="rt_update_package_mismatch">Имя пакета обновления не совпадает с Mobile Harness</string>
     <string name="rt_update_version_mismatch">Версия обновления не совпадает с манифестом</string>
     <string name="rt_update_signature_mismatch">Обновление не подписано ключом установленного приложения</string>
+    <string name="rt_api_http_public">Незашифрованный http:// разрешён только для адресов локальной сети (например, 192.168.x.x, 10.x.x.x, Tailscale или .local). Для этого сервера используйте https://.</string>
 </resources>

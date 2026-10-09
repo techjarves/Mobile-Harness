@@ -137,4 +137,5 @@
     <string name="rt_update_package_mismatch">El nombre del paquete de la actualización no coincide con Mobile Harness</string>
     <string name="rt_update_version_mismatch">La versión de la actualización no coincide con su manifiesto</string>
     <string name="rt_update_signature_mismatch">La actualización no está firmada con la clave de firma de la app instalada</string>
+    <string name="rt_api_http_public">http:// sin cifrar solo se permite para direcciones de la red local (como 192.168.x.x, 10.x.x.x, Tailscale o .local). Usa https:// para este servidor.</string>
 </resources>

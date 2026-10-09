@@ -137,4 +137,5 @@
     <string name="rt_update_package_mismatch">更新包名称与 Mobile Harness 不匹配</string>
     <string name="rt_update_version_mismatch">更新版本与其清单不一致</string>
     <string name="rt_update_signature_mismatch">更新未使用已安装应用的签名密钥签名</string>
+    <string name="rt_api_http_public">未加密的 http:// 仅允许用于局域网地址（如 192.168.x.x、10.x.x.x、Tailscale 或 .local）。此服务器请使用 https://。</string>
 </resources>

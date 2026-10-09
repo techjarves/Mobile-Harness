@@ -137,4 +137,5 @@
     <string name="rt_update_package_mismatch">اسم حزمة التحديث لا يطابق Mobile Harness</string>
     <string name="rt_update_version_mismatch">إصدار التحديث لا يطابق ملف البيان الخاص به</string>
     <string name="rt_update_signature_mismatch">التحديث غير موقّع بمفتاح توقيع التطبيق المثبّت</string>
+    <string name="rt_api_http_public">يُسمح باستخدام http:// غير المشفّر فقط لعناوين الشبكة المحلية (مثل 192.168.x.x أو 10.x.x.x أو Tailscale أو .local). استخدم https:// لهذا الخادم.</string>
 </resources>

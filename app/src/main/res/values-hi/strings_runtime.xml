@@ -137,4 +137,5 @@
     <string name="rt_update_package_mismatch">अपडेट का पैकेज नाम Mobile Harness से मेल नहीं खाता</string>
     <string name="rt_update_version_mismatch">अपडेट संस्करण उसके मैनिफ़ेस्ट से मेल नहीं खाता</string>
     <string name="rt_update_signature_mismatch">अपडेट इंस्टॉल ऐप की साइनिंग कुंजी से साइन नहीं है</string>
+    <string name="rt_api_http_public">सादा http:// केवल लोकल नेटवर्क पतों (जैसे 192.168.x.x, 10.x.x.x, Tailscale या .local) के लिए अनुमत है। इस सर्वर के लिए https:// का उपयोग करें।</string>
 </resources>

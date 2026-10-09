@@ -41,6 +41,13 @@ internal fun List<ChatMessage>.recentWithinCharacterBudget(maxCharacters: Int): 
     return selected.toList()
 }
 
+/**
+ * Self-hosted Custom API servers (llama.cpp, LM Studio, Strata…) often need no key, but the agent
+ * CLIs refuse to start without one. Send a harmless placeholder that such servers ignore.
+ */
+internal fun localServerPlaceholderKey(profile: ProviderProfile): String =
+    if (profile.kind == com.jarves.mh.model.ProviderKind.CUSTOM) "no-key-required" else ""
+
 object RuntimeLaunchConfigBuilder {
     fun build(profile: ProviderProfile, authToken: String? = null, localGatewayUrl: String? = null): RuntimeLaunchConfig {
         val environment = linkedMapOf(
@@ -65,7 +72,9 @@ object RuntimeLaunchConfigBuilder {
                 environment["ANTHROPIC_MODEL"] = profile.model
             }
             com.jarves.mh.model.ProviderProtocol.ANTHROPIC_GATEWAY -> {
-                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trimEnd('/')
+                // Claude Code appends /v1/messages itself; accept base URLs entered with or
+                // without /v1 so the agent hits the same endpoint as Test connection.
+                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trim().trimEnd('/').removeSuffix("/v1")
                 environment["ANTHROPIC_MODEL"] = profile.model
             }
             com.jarves.mh.model.ProviderProtocol.OPENROUTER -> {

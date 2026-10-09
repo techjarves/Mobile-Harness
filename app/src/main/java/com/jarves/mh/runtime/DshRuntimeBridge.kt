@@ -71,7 +71,7 @@ class DshRuntimeBridge(
         lastThinkingUpdateAt = 0L
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
         pushForegroundProgress(R.string.rt_bridge_starting, "DeepSeek Harness")
-        val secret = secretFor(provider).orEmpty()
+        val secret = secretFor(provider).orEmpty().ifBlank { localServerPlaceholderKey(provider) }
         if (secret.isBlank()) {
             eventBus.emit(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
             return@withContext sessionId
