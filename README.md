@@ -32,8 +32,8 @@
 ---
 
 <p align="center">
-  <a href="https://youtu.be/QzAau52Z7yQ" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.youtube.com/vi/QzAau52Z7yQ/maxresdefault.jpg" alt="Mobile Harness Walkthrough and Live Product Demo" width="920" />
+  <a href="https://youtu.be/x5T56timmQw" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.youtube.com/vi/x5T56timmQw/maxresdefault.jpg" alt="Mobile Harness Walkthrough and Live Product Demo" width="920" />
   </a>
   <br />
   <sub>Watch the product walkthrough and demo &nbsp;|&nbsp; <i>Setting up Ubuntu, connecting Claude Code, and building an app on Android</i></sub>
