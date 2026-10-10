@@ -65,6 +65,7 @@ import com.jarves.mh.runtime.RuntimeSetupController
 import com.jarves.mh.runtime.RuntimeSetupService
 import com.jarves.mh.runtime.RuntimeSetupSnapshot
 import com.jarves.mh.runtime.RuntimeSetupStatus
+import com.jarves.mh.runtime.readHeadBytes
 import com.jarves.mh.runtime.readTailText
 import com.jarves.mh.runtime.supportsArm64Runtime
 import com.jarves.mh.runtime.AndroidAppInstaller
@@ -4017,7 +4018,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ?: return@withContext OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.UNSAFE)
                 runCatching {
                     val tooLarge = file.length() > MAX_EDITABLE_FILE_BYTES
-                    val bytes = if (tooLarge) file.inputStream().use { it.readNBytes(MAX_EDITABLE_FILE_BYTES.toInt()) } else file.readBytes()
+                    val bytes = if (tooLarge) file.readHeadBytes(MAX_EDITABLE_FILE_BYTES.toInt()) else file.readBytes()
                     if (bytes.any { it == 0.toByte() }) {
                         OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.BINARY)
                     } else {

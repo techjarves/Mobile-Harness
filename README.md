@@ -10,7 +10,7 @@
 
   <br />
 
-  [![Release v1.0.4](https://img.shields.io/badge/Release-v1.0.4-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/techjarves/Mobile-Harness/releases/tag/v1.0.4)
+  [![Release v1.0.5](https://img.shields.io/badge/Release-v1.0.5-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/techjarves/Mobile-Harness/releases/tag/v1.0.5)
   [![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#system-requirements)
   [![ARM64](https://img.shields.io/badge/CPU-ARM64-5B8DEF?style=flat-square)](#system-requirements)
   [![MIT License](https://img.shields.io/badge/License-MIT-8B7CF6?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
@@ -18,8 +18,8 @@
 
   <br />
 
-  [**Download Online APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-online-v1.0.4.apk) &nbsp;•&nbsp;
-  [**Download Offline APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-offline-v1.0.4.apk) &nbsp;•&nbsp;
+  [**Download Online APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.5/mobile-harness-online-v1.0.5.apk) &nbsp;•&nbsp;
+  [**Download Offline APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.5/mobile-harness-offline-v1.0.5.apk) &nbsp;•&nbsp;
   [**Watch Walkthrough (3 min)**](https://youtu.be/QzAau52Z7yQ) &nbsp;•&nbsp;
   [**Quickstart Guide**](#quickstart) &nbsp;•&nbsp;
   [**Architecture**](#architecture) &nbsp;•&nbsp;
@@ -60,17 +60,17 @@
   <tr>
     <td width="50%" valign="top" align="center">
       <h3>Online Edition</h3>
-      <p><strong>87.4 MB · Recommended</strong></p>
+      <p><strong>89.1 MB · Recommended</strong></p>
       <p>Start with the smaller APK. Core, Python, and Android runtime bundles are downloaded only when needed.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-online-v1.0.4.apk">
+      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.5/mobile-harness-online-v1.0.5.apk">
         <img src="https://img.shields.io/badge/Download-Online_APK-F28C52?style=for-the-badge&logo=android&logoColor=white" alt="Download Online APK" />
       </a>
     </td>
     <td width="50%" valign="top" align="center">
       <h3>Offline Edition</h3>
-      <p><strong>887.7 MB · Everything included</strong></p>
+      <p><strong>889.4 MB · Everything included</strong></p>
       <p>Includes the Core, Python, and Android runtime bundles for setup with limited or unavailable internet.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.4/mobile-harness-offline-v1.0.4.apk">
+      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.5/mobile-harness-offline-v1.0.5.apk">
         <img src="https://img.shields.io/badge/Download-Offline_APK-5B8DEF?style=for-the-badge&logo=android&logoColor=white" alt="Download Offline APK" />
       </a>
     </td>
@@ -170,7 +170,7 @@ Download the latest signed release APK from [GitHub Releases](https://github.com
 
 ```text
 Target Architecture : ARM64 (arm64-v8a)
-Package Version     : v1.0.4
+Package Version     : v1.0.5
 Minimum OS Level    : Android 9.0 (API 28)
 ```
 

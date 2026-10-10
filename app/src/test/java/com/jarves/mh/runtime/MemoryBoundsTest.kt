@@ -9,6 +9,19 @@ import org.junit.Test
 
 class MemoryBoundsTest {
     @Test
+    fun headReaderStopsAtByteLimit() {
+        val directory = Files.createTempDirectory("mh-head-test").toFile()
+        try {
+            val file = directory.resolve("large.txt")
+            file.writeText("0123456789")
+
+            assertEquals("0123", file.readHeadBytes(4).toString(Charsets.UTF_8))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun tailReaderNeverLoadsEarlierOutput() {
         val directory = Files.createTempDirectory("mh-tail-test").toFile()
         try {

@@ -1,0 +1,3 @@
+Build Android projects directly on-device with improved diagnostics and reliability.
+Use the app in English, Spanish, Chinese, Arabic, Hindi, or Russian.
+Manage and edit project files, attach camera photos, test Claude subscriptions, and connect to self-hosted model servers.
