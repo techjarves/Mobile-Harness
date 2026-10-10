@@ -1,17 +1,17 @@
 {
-  "versionCode": 6,
-  "versionName": "1.0.5",
-  "notes": "Adds a complete Android development workflow, six-language localization, file management and editing, camera attachments, improved agent reliability, Claude subscription testing, and connections to self-hosted model servers.",
+  "versionCode": 7,
+  "versionName": "1.0.6",
+  "notes": "Repairs a damaged internal Linux runtime without deleting projects, agent settings, or the Linux home directory. Includes safe rollback and interrupted-repair recovery.",
   "artifacts": {
     "online": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.5/mobile-harness-online-v1.0.5.apk",
-      "sha256": "2e4775ee025ffda3227d200f2df6989a77d1747fa78487679ca5dc1ae3b1ea73",
-      "sizeBytes": 89078480
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.6/mobile-harness-online-v1.0.6.apk",
+      "sha256": "79551b55e39b29bbd017e80d2aad134da3967867a9347e2fce2b4ac2bef5800d",
+      "sizeBytes": 89082468
     },
     "offline": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.5/mobile-harness-offline-v1.0.5.apk",
-      "sha256": "59b8eb17ede125a67407582b6353cf96e5bd1848c1fa69318487f763343c503b",
-      "sizeBytes": 889377493
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.6/mobile-harness-offline-v1.0.6.apk",
+      "sha256": "a2513ed2b3ac7599b457156dc89fcb1a5f23f772642a9563eac3ca0160f92240",
+      "sizeBytes": 889383237
     }
   }
 }

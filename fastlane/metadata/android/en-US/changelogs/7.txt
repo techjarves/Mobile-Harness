@@ -1,0 +1,2 @@
+Repair a damaged internal Linux runtime without deleting projects, agent settings, or the Linux home directory.
+Add safe rollback and recovery when a runtime repair is interrupted.
