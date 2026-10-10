@@ -158,7 +158,19 @@ class RuntimeInstaller(private val context: Context) {
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
 
-        if (!File(rootfs, "usr/bin/bash").exists() || rootfsMarker.readTextOrNull() != ROOTFS_VERSION) {
+        val staging = File(runtimeDir, "ubuntu.installing")
+        val repairBackup = File(runtimeDir, "ubuntu.repair-backup")
+        RootfsRepair.reconcileInterruptedSwap(
+            rootfs = rootfs,
+            staging = staging,
+            backup = repairBackup,
+            validate = ::isValidCoreRootfs,
+        )
+        val layoutBroken = rootfs.isDirectory && !ensureRootfsCompatibilityLinks()
+        if (layoutBroken ||
+            !File(rootfs, "usr/bin/bash").exists() ||
+            rootfsMarker.readTextOrNull() != ROOTFS_VERSION
+        ) {
             onProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_runtime), 0.03f))
             val archive = obtainRuntimeBundle(
                 CORE_BUNDLE,
@@ -168,15 +180,16 @@ class RuntimeInstaller(private val context: Context) {
                 onProgress,
             )
             onProgress(RuntimeInstallProgress(str(R.string.rt_install_unpacking_core), 0.28f))
-            val staging = File(runtimeDir, "ubuntu.installing")
             staging.deleteRecursively()
             staging.mkdirs()
             extractZstdTar(archive, staging)
             stripMacosMetadataArtifacts(staging)
-            require(File(staging, "usr/bin/bash").isFile) { "Core bundle is missing Bash" }
-            rootfs.deleteRecursively()
-            check(staging.renameTo(rootfs)) { "Could not activate the Linux environment" }
-            check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
+            RootfsRepair.activate(
+                rootfs = rootfs,
+                staging = staging,
+                backup = repairBackup,
+                validate = ::isValidCoreRootfs,
+            )
             writeResolver()
             if (archive.parentFile == downloads) archive.delete()
         }
@@ -1397,8 +1410,8 @@ class RuntimeInstaller(private val context: Context) {
      * making every ELF executable misleadingly fail with ENOENT. Restore only
      * the known Ubuntu compatibility links and never replace real directories.
      */
-    private fun ensureRootfsCompatibilityLinks(): Boolean {
-        if (!rootfs.isDirectory) return false
+    private fun ensureRootfsCompatibilityLinks(targetRootfs: File = rootfs): Boolean {
+        if (!targetRootfs.isDirectory) return false
         val links = mapOf(
             "bin" to "usr/bin",
             "lib" to "usr/lib",
@@ -1406,7 +1419,7 @@ class RuntimeInstaller(private val context: Context) {
         )
         return runCatching {
             links.forEach { (name, destination) ->
-                val link = File(rootfs, name)
+                val link = File(targetRootfs, name)
                 val path = link.toPath()
                 if (java.nio.file.Files.isSymbolicLink(path)) {
                     if (java.nio.file.Files.readSymbolicLink(path).toString() != destination) {
@@ -1419,13 +1432,18 @@ class RuntimeInstaller(private val context: Context) {
                     Os.symlink(destination, link.absolutePath)
                 }
             }
-            File(rootfs, "usr/bin/env").canExecute() &&
-                File(rootfs, "usr/bin/bash").canExecute() &&
-                File(rootfs, "lib/ld-linux-aarch64.so.1").exists()
+            File(targetRootfs, "usr/bin/env").canExecute() &&
+                File(targetRootfs, "usr/bin/bash").canExecute() &&
+                File(targetRootfs, "lib/ld-linux-aarch64.so.1").exists()
         }.onFailure {
             android.util.Log.e("RuntimeInstaller", "Could not repair Linux compatibility links", it)
         }.getOrDefault(false)
     }
+
+    private fun isValidCoreRootfs(targetRootfs: File): Boolean =
+        ensureRootfsCompatibilityLinks(targetRootfs) &&
+            File(targetRootfs, "usr/bin/bash").isFile &&
+            File(targetRootfs, ".pocket-rootfs-version").readTextOrNull() == ROOTFS_VERSION
 
     private fun actionableProcessError(output: String, fallback: String): String {
         val lines = output.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
