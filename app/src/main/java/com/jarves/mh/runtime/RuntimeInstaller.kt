@@ -202,8 +202,11 @@ class RuntimeInstaller(private val context: Context) {
         migrateLegacyClaudeMarker()
         ensureSettingsAndHooks()
 
-        // Node.js and Git are always available in the Core runtime. Python,
-        // C/C++, PHP, and Android remain opt-in stacks during onboarding.
+        // Native npm packages used by common developer tools (including Graft's
+        // Tree-sitter bindings) need a working compiler on Linux ARM64. Install
+        // the C/C++ toolchain with Core so a user does not hit node-gyp errors
+        // merely because they did not know to select an optional developer stack.
+        // Other language and Android stacks remain opt-in.
         val coreNeeded = !File(rootfs, "usr/bin/git").exists() || !isSupportedCoreToolsVersion()
         if (coreNeeded) {
             installNodeIfNeeded(proot, 0.58f, 0.66f, onProgress)
@@ -225,7 +228,8 @@ class RuntimeInstaller(private val context: Context) {
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
         }
 
-        val missingStacks = selectedStacks.filterNot(::isStackInstalled)
+        val requiredStacks = selectedStacks + DevStack.CPP
+        val missingStacks = requiredStacks.filterNot(::isStackInstalled)
         missingStacks.forEachIndexed { index, stack ->
             val slice = 0.26f / maxOf(1, missingStacks.size)
             val from = 0.72f + index * slice
@@ -732,7 +736,7 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.ANDROID -> removeAndroidStack()
             DevStack.CPP -> aptRemove(
                 runtime.proot,
-                listOf("build-essential", "gcc", "g++", "make", "cmake", "gdb"),
+                listOf("build-essential", "gcc", "g++", "gcc-10", "g++-10", "make", "cmake", "gdb"),
                 0.45f,
                 onProgress,
             )
@@ -846,7 +850,7 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.CPP -> {
                 aptInstall(
                     proot,
-                    listOf("build-essential", "cmake", "gdb"),
+                    listOf("build-essential", "gcc-10", "g++-10", "python3", "make", "cmake", "gdb"),
                     str(R.string.rt_install_cpp),
                     from,
                     onProgress,
@@ -1179,13 +1183,20 @@ class RuntimeInstaller(private val context: Context) {
 
     fun isStackInstalled(stack: DevStack): Boolean {
         if (readDevStackState()[stack.name] != true) return false
-        if (stack != DevStack.ANDROID) return true
-        return File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION &&
-            File(rootfs, "root/android-sdk/platforms/android-36/android.jar").isFile &&
-            File(rootfs, "root/android-sdk/build-tools/35.0.0/aapt2").isFile &&
-            File(rootfs, "opt/gradle/gradle-8.14.3/bin/gradle").isFile &&
-            File(rootfs, "root/maven/localMvnRepository").let { it.isDirectory && !it.list().isNullOrEmpty() } &&
-            File(rootfs, "root/.gradle/init.d/pocketdev-android.gradle").isFile
+        return when (stack) {
+            DevStack.CPP ->
+                File(rootfs, "usr/bin/gcc-10").canExecute() &&
+                    File(rootfs, "usr/bin/g++-10").canExecute() &&
+                    File(rootfs, "usr/bin/python3").canExecute()
+            DevStack.ANDROID ->
+                File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION &&
+                    File(rootfs, "root/android-sdk/platforms/android-36/android.jar").isFile &&
+                    File(rootfs, "root/android-sdk/build-tools/35.0.0/aapt2").isFile &&
+                    File(rootfs, "opt/gradle/gradle-8.14.3/bin/gradle").isFile &&
+                    File(rootfs, "root/maven/localMvnRepository").let { it.isDirectory && !it.list().isNullOrEmpty() } &&
+                    File(rootfs, "root/.gradle/init.d/pocketdev-android.gradle").isFile
+            else -> true
+        }
     }
 
     private fun readDevStackState(): MutableMap<String, Boolean> {
@@ -1586,7 +1597,7 @@ class RuntimeInstaller(private val context: Context) {
             environment = buildMap {
                 put("HOME", "/root")
                 val androidReady = File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION
-                val basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                val basePath = "/usr/local/lib/nodejs/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 if (androidReady) {
                     put("ANDROID_HOME", "/root/android-sdk")
                     put("ANDROID_SDK_ROOT", "/root/android-sdk")
@@ -1596,6 +1607,18 @@ class RuntimeInstaller(private val context: Context) {
                     put("PATH", "/opt/gradle/gradle-8.14.3/bin:/root/android-sdk/build-tools/35.0.0:/root/android-sdk/cmdline-tools/latest/bin:$basePath")
                 } else {
                     put("PATH", basePath)
+                }
+                // node-gyp and similar native-addon builders need a predictable Python/compiler.
+                // The C/C++ stack installs GCC 10, which supports the C++20 mode required by
+                // Node 24's V8 headers. These defaults apply to every fresh terminal process;
+                // per-command environment assignments can still override them.
+                if (File(rootfs, "usr/bin/python3").canExecute()) {
+                    put("PYTHON", "/usr/bin/python3")
+                }
+                if (File(rootfs, "usr/bin/gcc-10").canExecute() && File(rootfs, "usr/bin/g++-10").canExecute()) {
+                    put("CC", "/usr/bin/gcc-10")
+                    put("CXX", "/usr/bin/g++-10")
+                    put("CXXFLAGS", "-std=gnu++20")
                 }
                 put("LANG", "C.UTF-8")
                 put("TERM", "xterm-256color")
