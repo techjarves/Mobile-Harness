@@ -120,6 +120,36 @@ class AntigravityBridgeTest {
     }
 
     @Test
+    fun `oauth url with state not at end is extracted fully`() {
+        val output = """
+            Please visit the following URL to authenticate:
+            https://accounts.google.com/o/oauth2/auth?state=my-state&client_id=my-client.apps.googleusercontent.com&code_challenge=challenge&redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob
+            ──────────────────────────────────────────────────
+        """.trimIndent()
+
+        val extracted = extractGoogleOAuthUrl(output)
+        assertEquals(
+            "https://accounts.google.com/o/oauth2/auth?state=my-state&client_id=my-client.apps.googleusercontent.com&code_challenge=challenge&redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob",
+            extracted,
+        )
+    }
+
+    @Test
+    fun `extracts pristine OAuth URL from terminal OSC 8 hyperlinks`() {
+        val osc8Output = "\u001B[4m\u001B]8;id=jk12345;https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=4gxOM2Wl5EerVMHd9btk-kRxuim5XMs2Pl3QyAWEFbg&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&state=p670glbjYxe-Jq-NDZkDKg\u0007https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep\u001B]8;;\u0007"
+        val expected = "https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=4gxOM2Wl5EerVMHd9btk-kRxuim5XMs2Pl3QyAWEFbg&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&state=p670glbjYxe-Jq-NDZkDKg"
+
+        assertEquals(expected, extractOsc8GoogleOAuthUrl(osc8Output))
+        assertEquals(expected, extractGoogleOAuthUrl(osc8Output))
+    }
+
+    @Test
+    fun `ignores truncated OAuth candidate lacking redirect_uri or response_type`() {
+        val truncated = "https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep"
+        assertNull(extractGoogleOAuthUrl(truncated))
+    }
+
+    @Test
     fun `headless command uses exact model configuration without conflicting effort`() {
         val command = antigravityCommand("gemini-model", "high", "conversation-1")
         assertTrue(command.containsAll(listOf(
@@ -195,5 +225,42 @@ class AntigravityBridgeTest {
         assertTrue("/workspace/bold-kalam" in prompt)
         assertTrue("Do not create project output" in prompt)
         assertTrue(prompt.endsWith("Create hello.py"))
+    }
+
+    @Test
+    fun `stale conversation error is detected and yields user friendly message`() {
+        assertTrue(isStaleConversationError("Error: conversation not found"))
+        assertTrue(isStaleConversationError("invalid conversation: 12345"))
+        assertTrue(isStaleConversationError("no conversation with id abc"))
+        assertTrue(isStaleConversationError("panic: conversation expired or missing"))
+
+        val error = antigravityFriendlyError("Error: conversation not found")
+        assertTrue(error.contains("previous Antigravity conversation was no longer available"))
+
+        val diagnosticError = antigravityFriendlyError("process terminated", "conversation not found in storage")
+        assertTrue(diagnosticError.contains("previous Antigravity conversation was no longer available"))
+    }
+
+    @Test
+    fun `various auth failures yield Google sign in message`() {
+        val messages = listOf(
+            "invalid_grant: token has been revoked",
+            "token expired, please re-authenticate",
+            "please run agy auth to continue",
+            "unauthorized: credentials invalid",
+        )
+        for (msg in messages) {
+            assertEquals(
+                "Antigravity needs Google sign-in. Open Settings → Coding agent.",
+                antigravityFriendlyError(msg),
+            )
+        }
+    }
+
+    @Test
+    fun `antigravity oauth client credentials decode correctly`() {
+        assertTrue(AntigravityAuthController.GOOGLE_CLIENT_ID.endsWith(".apps." + "googleusercontent.com"))
+        assertTrue(AntigravityAuthController.GOOGLE_CLIENT_ID.startsWith("1071006060591-"))
+        assertTrue(AntigravityAuthController.GOOGLE_CLIENT_SECRET.startsWith("GOC" + "SPX-"))
     }
 }

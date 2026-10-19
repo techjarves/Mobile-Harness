@@ -11,14 +11,27 @@ val testSecrets = Properties().apply {
     val secretsFile = rootProject.file("test-secrets.properties")
     if (secretsFile.isFile) secretsFile.inputStream().use(::load)
 }
+val signingProperties = Properties().apply {
+    val signingFile = rootProject.file("signing.properties")
+    if (signingFile.isFile) signingFile.inputStream().use(::load)
+}
 val playBuild = providers.gradleProperty("playBuild").orNull?.toBoolean() == true ||
     providers.gradleProperty("playFeasibility").orNull?.toBoolean() == true
 val privacyPolicyUrl = providers.gradleProperty("privacyPolicyUrl").orNull
     ?: "https://github.com/techjarves/Mobile-Harness/blob/main/PRIVACY.md"
 val uploadStorePath = providers.environmentVariable("MH_UPLOAD_STORE_FILE").orNull
+    ?: providers.gradleProperty("mhUploadStoreFile").orNull
+    ?: signingProperties.getProperty("storeFile")
 val uploadStorePassword = providers.environmentVariable("MH_UPLOAD_STORE_PASSWORD").orNull
+    ?: providers.gradleProperty("mhUploadStorePassword").orNull
+    ?: signingProperties.getProperty("storePassword")
 val uploadKeyAlias = providers.environmentVariable("MH_UPLOAD_KEY_ALIAS").orNull
+    ?: providers.gradleProperty("mhUploadKeyAlias").orNull
+    ?: signingProperties.getProperty("keyAlias")
 val uploadKeyPassword = providers.environmentVariable("MH_UPLOAD_KEY_PASSWORD").orNull
+    ?: providers.gradleProperty("mhUploadKeyPassword").orNull
+    ?: signingProperties.getProperty("keyPassword")
+val useDebugSigningForRelease = providers.gradleProperty("useDebugSigningForRelease").orNull?.toBoolean() == true
 val hasUploadSigning = listOf(
     uploadStorePath,
     uploadStorePassword,
@@ -63,7 +76,9 @@ android {
     signingConfigs {
         if (hasUploadSigning) {
             create("upload") {
-                storeFile = rootProject.file(checkNotNull(uploadStorePath))
+                val rawPath = checkNotNull(uploadStorePath)
+                val resolved = File(rawPath).let { if (it.isAbsolute) it else rootProject.file(rawPath) }
+                storeFile = resolved
                 storePassword = checkNotNull(uploadStorePassword)
                 keyAlias = checkNotNull(uploadKeyAlias)
                 keyPassword = checkNotNull(uploadKeyPassword)
@@ -132,6 +147,8 @@ android {
             isMinifyEnabled = false
             if (hasUploadSigning) {
                 signingConfig = signingConfigs.getByName("upload")
+            } else if (useDebugSigningForRelease) {
+                signingConfig = signingConfigs.getByName("debug")
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -144,7 +161,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions.jvmTarget = "17"
     buildFeatures {
         compose = true
         buildConfig = true
@@ -158,6 +174,12 @@ android {
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true
     androidResources.noCompress += "zst"
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 tasks.matching { it.name.startsWith("mergeOffline") && it.name.endsWith("Assets") }

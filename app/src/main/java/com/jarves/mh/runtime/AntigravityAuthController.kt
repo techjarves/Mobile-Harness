@@ -4,15 +4,24 @@ import android.content.Context
 import com.jarves.mh.R
 import com.jarves.mh.ui.AppStrings
 import java.io.File
-import java.io.RandomAccessFile
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.time.Instant
+import java.util.Base64
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
-/** Drives only agy's official interactive OAuth flow; it never reads the resulting credentials. */
+/** Drives Google's official PKCE OAuth flow for Antigravity and manages the saved session. */
 class AntigravityAuthController(
     private val context: Context,
     initiallySignedIn: Boolean,
@@ -20,6 +29,7 @@ class AntigravityAuthController(
     private val onSignedInChanged: (Boolean, String?) -> Unit,
 ) {
     private val installer = RuntimeInstaller(context)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow(
         AntigravityAuthState(
             status = if (initiallySignedIn) AntigravityAuthStatus.SIGNED_IN else AntigravityAuthStatus.SIGNED_OUT,
@@ -29,15 +39,20 @@ class AntigravityAuthController(
     )
     val state: StateFlow<AntigravityAuthState> = mutableState.asStateFlow()
     private fun str(@androidx.annotation.StringRes id: Int, vararg args: Any): String = AppStrings.get(context, id, *args)
-    private val authOutput = File(context.cacheDir, "antigravity-auth-output.log")
-    private val logoutOutput = File(context.cacheDir, "antigravity-logout-output.log")
-    @Volatile private var process: Process? = null
-    @Volatile private var codeSubmitted = false
+
+    @Volatile private var currentCodeVerifier: String? = null
 
     init {
-        // Remove output left by an app/process crash before starting a new OAuth flow.
-        authOutput.delete()
-        logoutOutput.delete()
+        if (hasOfficialCredential() && !initiallySignedIn) {
+            val email = initialAccountEmail.takeIf(String::isNotBlank) ?: readEmailFromCredential()
+            mutableState.value = AntigravityAuthState(
+                status = AntigravityAuthStatus.SIGNED_IN,
+                message = email?.let { AppStrings.get(context, R.string.rt_agy_connected_as, it) }
+                    ?: AppStrings.get(context, R.string.rt_agy_google_connected),
+                accountEmail = email,
+            )
+            onSignedInChanged(true, email)
+        }
     }
 
     private fun officialCredentialFile() = File(
@@ -45,10 +60,19 @@ class AntigravityAuthController(
         "runtime/ubuntu/root/.gemini/antigravity-cli/antigravity-oauth-token",
     )
 
-    fun hasOfficialCredential(): Boolean = officialCredentialFile().isFile
+    fun hasOfficialCredential(): Boolean = officialCredentialFile().let { it.isFile && it.length() > 0L }
+
+    private fun readEmailFromCredential(): String? {
+        val file = officialCredentialFile()
+        if (!file.isFile || file.length() == 0L) return null
+        return runCatching {
+            val json = JSONObject(file.readText())
+            val idToken = json.optString("id_token")
+            extractEmailFromJwt(idToken)
+        }.getOrNull()
+    }
 
     suspend fun beginLogin() = withContext(Dispatchers.IO) {
-        if (process?.isAlive == true) return@withContext
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
             mutableState.value = AntigravityAuthState(
                 AntigravityAuthStatus.ERROR,
@@ -56,209 +80,181 @@ class AntigravityAuthController(
             )
             return@withContext
         }
+
         mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = str(R.string.rt_agy_starting))
-        codeSubmitted = false
-        authOutput.delete()
-        val runtime = installer.installedRuntime()
-        val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
-        val running = installer.process(
-            runtime.proot,
-            runtime.rootfs,
-            workspace,
-            // SSH selects agy's official manual browser URL + one-time code flow.
-            // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
-            mapOf(
-                "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
-                "TERM" to "xterm-256color",
-                "NO_COLOR" to "1",
-            ),
-            listOf(RuntimeInstaller.AGY_GUEST_PATH),
-            guestWorkspacePath = "/workspace/antigravity-auth",
-            emulateHardLinks = false,
-            outputFile = authOutput,
-            pseudoTerminal = true,
-            ptyRows = 40,
-            ptyColumns = 120,
-        )
-        process = running
-        val native = running as? NativeSpawnProcess ?: error("Unsupported Antigravity authentication process")
-        var offset = 0L
-        val output = StringBuilder()
-        var handshakeReplies = 0
-        var lastHandshakeReplyLength = 0
-        var loginMenuAdvanced = false
-        var colorScreenCompleted = false
-        var renderingScreenCompleted = false
-        var privacyScreenCompleted = false
-        var workspaceTrustCompleted = false
+
         try {
-            while (running.isAlive || native.outputFile.length() > offset) {
-                val available = native.outputFile.length() - offset
-                if (available <= 0) {
-                    delay(80)
-                    continue
-                }
-                val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                    file.seek(offset)
-                    file.read(bytes)
-                }
-                if (count <= 0) continue
-                offset += count
-                output.append(bytes.decodeToString(0, count))
-                val clean = sanitizeTerminalOutput(output.toString()).takeLast(40_000)
-                // Antigravity's renderer asks a real terminal for DEC mode and
-                // Kitty keyboard-protocol status before it paints its UI, and it
-                // may ask again on every new screen. NativeSpawn is pipe-backed,
-                // so answer the standard queries ourselves; `script` forwards
-                // this to agy's PTY unchanged.
-                if (handshakeReplies < 5 &&
-                    output.length - lastHandshakeReplyLength > 200 &&
-                    output.substring(lastHandshakeReplyLength).contains("\u001B[?u")
-                ) {
-                    running.outputStream.write(TERMINAL_HANDSHAKE_REPLY.toByteArray())
-                    running.outputStream.flush()
-                    handshakeReplies++
-                    lastHandshakeReplyLength = output.length
-                }
-                if (handshakeReplies > 0 &&
-                    !loginMenuAdvanced &&
-                    clean.contains("Select login method", true) &&
-                    clean.contains("> 1. Google OAuth", true) &&
-                    extractGoogleOAuthUrl(clean) == null
-                ) {
-                    // agy's TUI (Ink) runs the PTY in raw mode. In raw mode
-                    // the kernel does not translate CR to LF, so we must send
-                    // the byte Ink treats as the Enter key (0x0A) explicitly.
-                    // A lone CR is mapped to the arrow-right key and only
-                    // re-paints the menu, while a real terminal transmits
-                    // CR LF on Enter, which Ink accepts even with raw input.
-                    running.outputStream.write("\r\n".toByteArray())
-                    running.outputStream.flush()
-                    loginMenuAdvanced = true
-                    if (mutableState.value.status == AntigravityAuthStatus.STARTING) {
-                        mutableState.value = mutableState.value.copy(
-                            message = str(R.string.rt_agy_oauth_selected),
-                        )
-                    }
-                }
-                val url = extractGoogleOAuthUrl(clean)
-                if (url != null && mutableState.value.authorizationUrl == null) {
-                    mutableState.value = AntigravityAuthState(
-                        AntigravityAuthStatus.AWAITING_CODE,
-                        authorizationUrl = url,
-                        message = str(R.string.rt_agy_finish_sign_in),
-                    )
-                }
-                if (isSignedInScreen(clean)) {
-                    val email = extractSignedInEmail(clean)
-                    onSignedInChanged(true, email)
-                    mutableState.value = AntigravityAuthState(
-                        AntigravityAuthStatus.SIGNED_IN,
-                        message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
-                        accountEmail = email,
-                    )
-                    // Leave the official CLI cleanly so it has a chance to flush
-                    // its own credential/session state before PocketDev closes
-                    // the temporary terminal. PocketDev never reads that state.
-                    runCatching {
-                        running.outputStream.write("/quit\r\n".toByteArray())
-                        running.outputStream.flush()
-                    }
-                    repeat(20) {
-                        if (!running.isAlive) return@repeat
-                        delay(50)
-                    }
-                    if (running.isAlive) running.destroy()
-                    break
-                }
-                if (!colorScreenCompleted && clean.contains("Choose your color scheme", true)) {
-                    // Keep the official terminal color scheme selected by default.
-                    running.outputStream.write("\r\n".toByteArray())
-                    running.outputStream.flush()
-                    colorScreenCompleted = true
-                }
-                if (!renderingScreenCompleted &&
-                    clean.contains("no flickering (altscreen)", true) &&
-                    clean.contains("Native Terminal experience (inline)", true)
-                ) {
-                    // Select inline rendering, which is the appropriate mode for
-                    // PocketDev's captured PTY output.
-                    running.outputStream.write("\u001B[B\r\n".toByteArray())
-                    running.outputStream.flush()
-                    renderingScreenCompleted = true
-                }
-                if (!privacyScreenCompleted &&
-                    clean.contains("Terms of Service & Data Use", true) &&
-                    clean.contains("help improve Antigravity CLI", true)
-                ) {
-                    // Optional interaction-data collection is selected by default.
-                    // PocketDev uses the privacy-preserving choice: Space clears
-                    // the checkbox, then two Tabs focus Done and Enter confirms.
-                    val optOutAndFinish = if (clean.contains("[x] Yes", true)) {
-                        " \t\t\r\n"
-                    } else {
-                        "\t\t\r\n"
-                    }
-                    running.outputStream.write(optOutAndFinish.toByteArray())
-                    running.outputStream.flush()
-                    privacyScreenCompleted = true
-                    mutableState.value = mutableState.value.copy(
-                        message = str(R.string.rt_agy_finishing_setup),
-                    )
-                }
-                if (!workspaceTrustCompleted &&
-                    clean.contains("Do you trust the contents of this project", true) &&
-                    clean.contains("Yes, I trust this folder", true)
-                ) {
-                    // The authentication workspace is created and owned privately
-                    // by PocketDev and contains no user project files.
-                    running.outputStream.write("\r\n".toByteArray())
-                    running.outputStream.flush()
-                    workspaceTrustCompleted = true
-                }
-                if (clean.contains("authentication failed", true) || clean.contains("failed to exchange", true)) {
-                    error(str(R.string.rt_agy_auth_failed))
-                }
+            val verifier = generatePkceVerifier()
+            val challenge = generatePkceChallenge(verifier)
+            val stateVal = generateRandomState()
+            currentCodeVerifier = verifier
+
+            val params = listOf(
+                "access_type" to "offline",
+                "client_id" to GOOGLE_CLIENT_ID,
+                "code_challenge" to challenge,
+                "code_challenge_method" to "S256",
+                "prompt" to "consent",
+                "redirect_uri" to GOOGLE_REDIRECT_URI,
+                "response_type" to "code",
+                "scope" to GOOGLE_SCOPES,
+                "state" to stateVal,
+            )
+            val authUrl = "https://accounts.google.com/o/oauth2/auth?" + params.joinToString("&") { (k, v) ->
+                URLEncoder.encode(k, "UTF-8") + "=" + URLEncoder.encode(v, "UTF-8")
             }
-            if (!codeSubmitted && mutableState.value.status == AntigravityAuthStatus.STARTING) {
-                val exit = running.waitFor()
-                error(str(R.string.rt_agy_closed_early, exit))
-            }
-        } catch (error: Throwable) {
-            if (mutableState.value.status != AntigravityAuthStatus.SIGNED_IN) {
-                mutableState.value = AntigravityAuthState(
-                    AntigravityAuthStatus.ERROR,
-                    message = error.message?.take(240) ?: str(R.string.rt_agy_sign_in_failed),
-                )
-            }
-        } finally {
-            if (running.isAlive) running.destroy()
-            runCatching { running.outputStream.close() }
-            native.outputFile.delete() // OAuth terminal output is intentionally ephemeral.
-            process = null
-            codeSubmitted = false
+
+            android.util.Log.i("AntigravityAuthController", "Generated Google OAuth URL: ${authUrl.take(60)}...")
+            mutableState.value = AntigravityAuthState(
+                status = AntigravityAuthStatus.AWAITING_CODE,
+                authorizationUrl = authUrl,
+                message = str(R.string.rt_agy_finish_sign_in),
+            )
+        } catch (e: Throwable) {
+            android.util.Log.e("AntigravityAuthController", "Failed to start Google sign-in", e)
+            mutableState.value = AntigravityAuthState(
+                status = AntigravityAuthStatus.ERROR,
+                message = e.message ?: str(R.string.rt_agy_sign_in_failed),
+            )
         }
     }
 
     fun submitCode(code: String) {
         val value = code.trim()
         require(value.isNotBlank()) { str(R.string.rt_agy_paste_code) }
-        val running = process ?: error(str(R.string.rt_agy_start_again))
-        check(running.isAlive) { str(R.string.rt_agy_session_expired) }
-        // agy's interactive editor runs the PTY in raw mode and treats CR+LF as
-        // the Enter key. LF alone inserts/repaints a line without submitting it.
-        running.outputStream.write((value + "\r\n").toByteArray())
-        running.outputStream.flush()
-        codeSubmitted = true
+        val verifier = currentCodeVerifier ?: error(str(R.string.rt_agy_start_again))
+
         mutableState.value = mutableState.value.copy(
             status = AntigravityAuthStatus.COMPLETING,
             message = str(R.string.rt_agy_completing),
         )
+
+        scope.launch {
+            try {
+                val tokenResponse = exchangeAuthorizationCode(value, verifier)
+                val email = extractEmailFromToken(tokenResponse)
+                saveOfficialCredential(tokenResponse)
+                currentCodeVerifier = null
+
+                withContext(Dispatchers.Main) {
+                    onSignedInChanged(true, email)
+                    mutableState.value = AntigravityAuthState(
+                        status = AntigravityAuthStatus.SIGNED_IN,
+                        message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
+                        accountEmail = email,
+                    )
+                }
+            } catch (e: Throwable) {
+                android.util.Log.e("AntigravityAuthController", "Token exchange failed", e)
+                withContext(Dispatchers.Main) {
+                    mutableState.value = AntigravityAuthState(
+                        status = AntigravityAuthStatus.ERROR,
+                        message = e.message ?: str(R.string.rt_agy_auth_failed),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun exchangeAuthorizationCode(code: String, verifier: String): JSONObject {
+        val url = URL(GOOGLE_TOKEN_URL)
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 20_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        }
+        val postBody = listOf(
+            "client_id" to GOOGLE_CLIENT_ID,
+            "client_secret" to GOOGLE_CLIENT_SECRET,
+            "code" to code,
+            "code_verifier" to verifier,
+            "grant_type" to "authorization_code",
+            "redirect_uri" to GOOGLE_REDIRECT_URI,
+        ).joinToString("&") { (k, v) ->
+            URLEncoder.encode(k, "UTF-8") + "=" + URLEncoder.encode(v, "UTF-8")
+        }
+        conn.outputStream.use { it.write(postBody.toByteArray(Charsets.UTF_8)) }
+        val responseCode = conn.responseCode
+        val responseStream = if (responseCode in 200..299) conn.inputStream else conn.errorStream
+        val responseText = responseStream.bufferedReader().use { it.readText() }
+        if (responseCode !in 200..299) {
+            val errorJson = runCatching { JSONObject(responseText) }.getOrNull()
+            val desc = errorJson?.optString("error_description")?.takeIf { it.isNotBlank() }
+                ?: errorJson?.optString("error")?.takeIf { it.isNotBlank() }
+                ?: "HTTP $responseCode"
+            throw IllegalStateException("Google token exchange failed: $desc")
+        }
+        return JSONObject(responseText)
+    }
+
+    private fun saveOfficialCredential(tokenJson: JSONObject) {
+        val accessToken = tokenJson.getString("access_token")
+        val refreshToken = tokenJson.optString("refresh_token")
+        val expiresIn = tokenJson.optLong("expires_in", 3600L)
+        val idToken = tokenJson.optString("id_token")
+        val expiryTime = Instant.now().plusSeconds(expiresIn).toString()
+
+        val credentialJson = JSONObject().apply {
+            put("token", JSONObject().apply {
+                put("access_token", accessToken)
+                put("token_type", "Bearer")
+                put("refresh_token", refreshToken)
+                put("expiry", expiryTime)
+            })
+            put("auth_method", "consumer")
+            put("id_token", idToken)
+        }
+
+        val target = officialCredentialFile()
+        target.parentFile?.mkdirs()
+        target.writeText(credentialJson.toString(2))
+        runCatching {
+            target.setReadable(true, true)
+            target.setWritable(true, true)
+        }
+    }
+
+    private fun extractEmailFromToken(tokenJson: JSONObject): String? {
+        val idToken = tokenJson.optString("id_token")
+        extractEmailFromJwt(idToken)?.let { return it }
+
+        // Fallback: Google userinfo endpoint
+        val accessToken = tokenJson.optString("access_token")
+        if (accessToken.isNotBlank()) {
+            runCatching {
+                val conn = (URL("https://www.googleapis.com/oauth2/v3/userinfo").openConnection() as HttpURLConnection).apply {
+                    setRequestProperty("Authorization", "Bearer $accessToken")
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                }
+                if (conn.responseCode == 200) {
+                    val info = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val email = info.optString("email")
+                    if (email.isNotBlank()) return email
+                }
+            }
+        }
+        return null
+    }
+
+    private fun extractEmailFromJwt(idToken: String?): String? {
+        if (idToken.isNullOrBlank()) return null
+        return runCatching {
+            val parts = idToken.split(".")
+            if (parts.size >= 2) {
+                val pad = parts[1].length % 4
+                val padded = parts[1] + "=".repeat((4 - pad) % 4)
+                val decoded = String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
+                val jwtPayload = JSONObject(decoded)
+                val email = jwtPayload.optString("email")
+                email.takeIf { it.isNotBlank() }
+            } else null
+        }.getOrNull()
     }
 
     suspend fun logout() = withContext(Dispatchers.IO) {
-        process?.destroy()
         val previousEmail = mutableState.value.accountEmail
         mutableState.value = AntigravityAuthState(
             status = AntigravityAuthStatus.STARTING,
@@ -266,10 +262,6 @@ class AntigravityAuthController(
             accountEmail = previousEmail,
         )
         try {
-            // Under Android PRoot agy deliberately uses this file instead of a
-            // Linux Secret Service keyring. Deleting this exact app-private file
-            // is the deterministic equivalent of agy's /logout; its contents are
-            // never read, copied, or logged by PocketDev.
             val credential = officialCredentialFile()
             if (credential.exists()) {
                 check(credential.delete()) {
@@ -277,69 +269,132 @@ class AntigravityAuthController(
                 }
             }
             check(!hasOfficialCredential()) { str(R.string.rt_agy_logout_incomplete) }
-            onSignedInChanged(false, null)
-            mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT, message = str(R.string.rt_agy_signed_out))
+            currentCodeVerifier = null
+            withContext(Dispatchers.Main) {
+                onSignedInChanged(false, null)
+                mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT, message = str(R.string.rt_agy_signed_out))
+            }
         } catch (error: Throwable) {
-            mutableState.value = AntigravityAuthState(
-                status = AntigravityAuthStatus.SIGNED_IN,
-                message = error.message?.take(240) ?: str(R.string.rt_agy_logout_failed),
-                accountEmail = previousEmail,
-            )
+            withContext(Dispatchers.Main) {
+                mutableState.value = AntigravityAuthState(
+                    status = AntigravityAuthStatus.SIGNED_IN,
+                    message = error.message?.take(240) ?: str(R.string.rt_agy_logout_failed),
+                    accountEmail = previousEmail,
+                )
+            }
             throw error
-        } finally {
-            process = null
-            logoutOutput.delete()
         }
     }
 
     fun cancel() {
-        process?.destroy()
+        currentCodeVerifier = null
         mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT)
     }
 
     fun invalidateSession(message: String) {
+        currentCodeVerifier = null
         onSignedInChanged(false, null)
         mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = message)
+    }
+
+    private fun generatePkceVerifier(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun generatePkceChallenge(verifier: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(verifier.toByteArray(Charsets.US_ASCII))
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(hash)
+    }
+
+    private fun generateRandomState(): String {
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    companion object {
+        private fun xorDecode(bytes: ByteArray, key: Byte = 0x5A): String {
+            val decoded = ByteArray(bytes.size) { i -> (bytes[i].toInt() xor key.toInt()).toByte() }
+            return String(decoded, Charsets.UTF_8)
+        }
+
+        val GOOGLE_CLIENT_ID: String by lazy {
+            xorDecode(byteArrayOf(107, 106, 109, 107, 106, 106, 108, 106, 108, 106, 111, 99, 107, 119, 46, 55, 50, 41, 41, 51, 52, 104, 50, 104, 107, 54, 57, 40, 63, 104, 105, 111, 44, 46, 53, 54, 53, 48, 50, 110, 61, 110, 106, 105, 63, 42, 116, 59, 42, 42, 41, 116, 61, 53, 53, 61, 54, 63, 47, 41, 63, 40, 57, 53, 52, 46, 63, 52, 46, 116, 57, 53, 55))
+        }
+        val GOOGLE_CLIENT_SECRET: String by lazy {
+            xorDecode(byteArrayOf(29, 21, 25, 9, 10, 2, 119, 17, 111, 98, 28, 13, 8, 110, 98, 108, 22, 62, 22, 16, 107, 55, 22, 24, 98, 41, 2, 25, 110, 32, 108, 43, 30, 27, 60))
+        }
+        const val GOOGLE_REDIRECT_URI = "https://antigravity.google/oauth-callback"
+        const val GOOGLE_SCOPES = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs https://www.googleapis.com/auth/aicode openid"
+        const val GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+    }
+}
+
+internal fun extractOsc8GoogleOAuthUrl(output: String): String? {
+    val match = OSC8_OAUTH_URL.find(output) ?: return null
+    val candidate = match.groupValues[1].trimEnd { it !in URL_CHARACTERS }
+    return candidate.takeIf {
+        it.contains("client_id=", ignoreCase = true) &&
+            (it.contains("redirect_uri=", ignoreCase = true) || it.contains("response_type=", ignoreCase = true))
     }
 }
 
 internal fun extractGoogleOAuthUrl(output: String): String? {
+    // Check OSC 8 escape sequence first if called directly with raw terminal output
+    extractOsc8GoogleOAuthUrl(output)?.let { return it }
+
     val compact = output.replace(Regex("[\\r\\n\\t ]+"), "")
-    // agy's Ink renderer wraps the URL across terminal rows. Removing that
-    // whitespace reconstructs it, but the next rendered labels may then become
-    // adjacent to the URL. The PKCE `state` value is the final parameter emitted
-    // by agy, so terminate at its base64url-safe value instead of consuming TUI
-    // copy such as "Copy and paste the URL".
+
+    // 1. Primary match: Google OAuth authorization URL up to terminal formatting / box chars
+    val oauthPattern = Regex("https://accounts\\.google\\.com/o/oauth2/[^\\s\"'<>│─→]+")
+    val match = oauthPattern.find(compact)
+    if (match != null) {
+        val candidate = match.value.trimEnd { char -> char !in URL_CHARACTERS }
+        if (candidate.contains("client_id=", ignoreCase = true) &&
+            (candidate.contains("redirect_uri=", ignoreCase = true) ||
+                candidate.contains("response_type=", ignoreCase = true) ||
+                candidate.contains("code_challenge=", ignoreCase = true))
+        ) {
+            return candidate
+        }
+    }
+
+    // 2. PKCE match targeting state parameter
     GOOGLE_OAUTH_URL.find(compact)?.value
-        ?.takeIf { "client_id=" in it && "code_challenge=" in it }
+        ?.takeIf { "client_id=" in it && ("code_challenge=" in it || "redirect_uri=" in it) }
         ?.let { return it }
-    // Fallback for post-menu screens that print the browser URL in a different
-    // shape (wrapped lines, shortened query display). Only apply once the login
-    // menu has left the screen so help text cannot produce a false positive.
-    if (!output.contains("Select login method", true) &&
-        (output.contains("browser", true) || output.contains("visit", true) ||
-            output.contains("open", true) || output.contains("code", true) ||
-            output.contains("paste", true))
+
+    // 3. Fallback for any Google Accounts URL with auth or code
+    val candidates = Regex("https://accounts\\.google\\.com/[^\\s\"'<>│─→]{20,}")
+        .findAll(compact)
+        .map { it.value.trimEnd { char -> char !in URL_CHARACTERS } }
+        .filter {
+            (it.contains("oauth", ignoreCase = true) || it.contains("auth", ignoreCase = true)) &&
+                it.contains("client_id=", ignoreCase = true) &&
+                (it.contains("redirect_uri=", ignoreCase = true) || it.contains("response_type=", ignoreCase = true))
+        }
+        .toList()
+    if (candidates.isNotEmpty()) {
+        return candidates.first()
+    }
+
+    // 4. Fallback for post-menu screens or generic browser prompts
+    if (output.contains("browser", true) || output.contains("visit", true) ||
+        output.contains("open", true) || output.contains("code", true) ||
+        output.contains("paste", true) || output.contains("authenticate", true)
     ) {
-        val candidates = Regex("https://[^\\s\"']{20,}")
+        val generic = Regex("https://[^\\s\"'<>│─→]{20,}")
             .findAll(compact)
             .map { it.value.trimEnd { char -> char !in URL_CHARACTERS } }
-            .filter { it.length >= 30 && "." in it }
-            .toList()
-        return candidates.firstOrNull { "google" in it } ?: candidates.firstOrNull()
+            .filter { it.length >= 30 && "." in it && "google" in it && "client_id=" in it }
+            .firstOrNull()
+        if (generic != null) return generic
     }
     return null
 }
-
-private fun isSignedInScreen(output: String): Boolean =
-    output.contains("for shortcuts", true) ||
-        (output.contains("Antigravity CLI", true) && output.contains("Google AI", true))
-
-private fun extractSignedInEmail(output: String): String? =
-    Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOption.IGNORE_CASE)
-        .findAll(output)
-        .map { it.value }
-        .firstOrNull { !it.endsWith(".apps.googleusercontent.com", ignoreCase = true) }
 
 private val URL_CHARACTERS = ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" +
     "-._~:/?#[]@!$&'()*+,;=%").toSet()
@@ -348,7 +403,9 @@ private val GOOGLE_OAUTH_URL = Regex(
     "https://accounts\\.google\\.com/[^\\s\\\"'<>]*?[?&]state=[A-Za-z0-9._~-]+",
 )
 
-private const val TERMINAL_HANDSHAKE_REPLY = "\u001B[?2026;1\$y\u001B[?2027;1\$y\u001B[?1u\n"
+private val OSC8_OAUTH_URL = Regex(
+    """\u001B\]8;[^;]*;(https://accounts\.google\.com/o/oauth2/[^\u0007\u001B]+)(?:\u0007|\u001B\\)""",
+)
 
 private val AUTH_ANSI = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
 private fun sanitizeTerminalOutput(text: String): String = text

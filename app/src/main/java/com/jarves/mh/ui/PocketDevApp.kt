@@ -519,11 +519,17 @@ private fun AntigravityOnboardingScreen(
                 }
                 AntigravityAuthStatus.STARTING -> {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.ws_agy_starting_login))
+                    Text(
+                        state.antigravityAuth.message?.takeIf(String::isNotBlank)
+                            ?: stringResource(R.string.ws_agy_starting_login),
+                    )
                 }
                 AntigravityAuthStatus.COMPLETING -> {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.ws_agy_completing_signin))
+                    Text(
+                        state.antigravityAuth.message?.takeIf(String::isNotBlank)
+                            ?: stringResource(R.string.ws_agy_completing_signin),
+                    )
                 }
                 AntigravityAuthStatus.AWAITING_CODE -> {
                     Text(stringResource(R.string.ws_agy_signin_opened))

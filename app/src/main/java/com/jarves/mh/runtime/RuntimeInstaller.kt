@@ -1549,6 +1549,7 @@ class RuntimeInstaller(private val context: Context) {
         // Self-heal devices whose Android tools were installed by an older app
         // version before the global AAPT2 override was persisted.
         writeAndroidGradleConfiguration(rootfs)
+        writeResolver()
         ensureWorkspaceTrust(guestWorkspacePath)
         val bridge = File(context.filesDir, "runtime-bridge").apply { mkdirs() }
         val args = buildList {

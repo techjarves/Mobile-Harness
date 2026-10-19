@@ -28,6 +28,7 @@ app/build/
 # Local configuration file (SDK location, local keys, etc.)
 local.properties
 test-secrets.properties
+signing.properties
 
 # Log Files
 *.log

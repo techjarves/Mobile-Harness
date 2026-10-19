@@ -1,0 +1,200 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.0.8)'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+      custom_notes:
+        description: 'Custom release notes (optional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android SDK Environment
+        run: |
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+
+      - name: Cache Android NDK and CMake
+        id: cache-ndk-cmake
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/28.2.13676358
+            /usr/local/lib/android/sdk/cmake/3.22.1
+          key: ${{ runner.os }}-ndk-28.2.13676358-cmake-3.22.1
+
+      - name: Install Android NDK, CMake, and Build Tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;35.0.0"
+          if [ "${{ steps.cache-ndk-cmake.outputs.cache-hit }}" != "true" ]; then
+            echo "Installing NDK and CMake..."
+            sdkmanager --install "ndk;28.2.13676358" "cmake;3.22.1"
+          fi
+
+      - name: Download bundled runtime dependency
+        run: bash scripts/download-runtime-bundle.sh
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Determine Version and Tag
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="v1.0.7-$(git rev-parse --short HEAD)"
+          fi
+          CLEAN_VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+          echo "Building for Tag: $TAG (Version: $CLEAN_VERSION)"
+
+      - name: Setup Keystore & Build Release APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MH_UPLOAD_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.MH_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MH_UPLOAD_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.MH_UPLOAD_KEY_PASSWORD }}
+        run: |
+          EXTRA_GRADLE_ARGS=""
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "==> Decoding upload keystore from secrets..."
+            KEYSTORE_FILE="$RUNNER_TEMP/upload.jks"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_FILE"
+            export MH_UPLOAD_STORE_FILE="$KEYSTORE_FILE"
+            export MH_UPLOAD_STORE_PASSWORD="$KEYSTORE_PASSWORD"
+            export MH_UPLOAD_KEY_ALIAS="${KEY_ALIAS:-mobile-harness-upload}"
+            export MH_UPLOAD_KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+          else
+            echo "==> No production upload keystore configured in secrets; using debug signing fallback for release..."
+            EXTRA_GRADLE_ARGS="-PuseDebugSigningForRelease=true"
+          fi
+
+          ./gradlew assembleOnlineRelease assembleOnlineDebug $EXTRA_GRADLE_ARGS \
+            -PappVersionName="${{ steps.ver.outputs.version }}" \
+            --console=plain --stacktrace
+
+      - name: Package Release Assets & Generate Update Manifest
+        id: package
+        run: |
+          mkdir -p release-artifacts
+          TAG="${{ steps.ver.outputs.tag }}"
+          VER="${{ steps.ver.outputs.version }}"
+          REPO="${{ github.repository }}"
+
+          RELEASE_SRC="app/build/outputs/apk/online/release/app-online-release.apk"
+          DEBUG_SRC="app/build/outputs/apk/online/debug/app-online-debug.apk"
+
+          ONLINE_RELEASE_APK="release-artifacts/mobile-harness-online-${TAG}.apk"
+          ONLINE_DEBUG_APK="release-artifacts/mobile-harness-online-debug-${TAG}.apk"
+
+          cp "$RELEASE_SRC" "$ONLINE_RELEASE_APK"
+          cp "$DEBUG_SRC" "$ONLINE_DEBUG_APK"
+
+          SHA_RELEASE=$(sha256sum "$ONLINE_RELEASE_APK" | awk '{print $1}')
+          SIZE_RELEASE=$(stat -c%s "$ONLINE_RELEASE_APK")
+
+          SHA_DEBUG=$(sha256sum "$ONLINE_DEBUG_APK" | awk '{print $1}')
+          SIZE_DEBUG=$(stat -c%s "$ONLINE_DEBUG_APK")
+
+          # Write checksums file
+          (cd release-artifacts && sha256sum *.apk > checksums.txt)
+
+          # Generate standard Mobile Harness update manifest
+          cat > release-artifacts/mobile-harness-update.json <<JSON
+          {
+            "versionCode": 8,
+            "versionName": "${VER}",
+            "notes": "Mobile Harness ${TAG} release built with Antigravity OAuth and session stability fixes.",
+            "artifacts": {
+              "online": {
+                "url": "https://github.com/${REPO}/releases/download/${TAG}/mobile-harness-online-${TAG}.apk",
+                "sha256": "${SHA_RELEASE}",
+                "sizeBytes": ${SIZE_RELEASE}
+              }
+            }
+          }
+          JSON
+
+          echo "release_sha=$SHA_RELEASE" >> $GITHUB_OUTPUT
+          echo "debug_sha=$SHA_DEBUG" >> $GITHUB_OUTPUT
+
+      - name: Generate Release Notes
+        id: notes
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          VER="${{ steps.ver.outputs.version }}"
+          CUSTOM_NOTES="${{ github.event.inputs.custom_notes }}"
+
+          cat > release-notes.md <<EOF
+          ## Mobile Harness ${TAG}
+
+          ${CUSTOM_NOTES:-Automated release build for Mobile Harness featuring Antigravity OAuth session management stability fixes and enhanced build configurations.}
+
+          ### Fixes & Enhancements
+          - **Antigravity OAuth & Session**: Prevents startup authentication loops, resolves terminal handshake menu deadlocks, recognizes modern CLI welcome screens, and introduces automatic stale conversation recovery.
+          - **Release Signing**: Flexible keystore resolution via Gradle properties, environment variables, or debug signing fallback for cross-platform workflows.
+          - **Build System**: Kotlin 2.2 compilerOptions migration and Linux/macOS cross-platform release automation.
+
+          ### Downloads & Checksums
+          | File | Size | SHA-256 |
+          | --- | --- | --- |
+          | \`mobile-harness-online-${TAG}.apk\` | $(numfmt --to=iec-i --suffix=B $(stat -c%s release-artifacts/mobile-harness-online-${TAG}.apk)) | \`${{ steps.package.outputs.release_sha }}\` |
+          | \`mobile-harness-online-debug-${TAG}.apk\` | $(numfmt --to=iec-i --suffix=B $(stat -c%s release-artifacts/mobile-harness-online-debug-${TAG}.apk)) | \`${{ steps.package.outputs.debug_sha }}\` |
+          | \`mobile-harness-update.json\` | In-app update channel manifest | See below |
+
+          *Requirements: ARM64 device running Android 9.0 (API 28) or higher.*
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Mobile Harness ${{ steps.ver.outputs.tag }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          files: |
+            release-artifacts/*.apk
+            release-artifacts/mobile-harness-update.json
+            release-artifacts/checksums.txt

@@ -585,10 +585,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        if (antigravityAuthController.hasOfficialCredential() &&
-            (!preferences.antigravitySignedIn || preferences.antigravityAccountEmail.isBlank())
-        ) {
-            viewModelScope.launch { antigravityAuthController.beginLogin() }
+        if (antigravityAuthController.hasOfficialCredential()) {
+            if (!preferences.antigravitySignedIn) {
+                preferences.antigravitySignedIn = true
+            }
+            _state.update { current ->
+                if (current.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
+                    current.copy(
+                        antigravityAuth = AntigravityAuthState(
+                            status = AntigravityAuthStatus.SIGNED_IN,
+                            message = preferences.antigravityAccountEmail.takeIf(String::isNotBlank)?.let { str(R.string.vm_connected_as, it) }
+                                ?: str(R.string.rt_agy_google_connected),
+                            accountEmail = preferences.antigravityAccountEmail.takeIf(String::isNotBlank),
+                        ),
+                    )
+                } else current
+            }
         }
         if (!preferences.legacySeededCredentialRemoved) {
             vault.remove(ProviderKind.CUSTOM.name)

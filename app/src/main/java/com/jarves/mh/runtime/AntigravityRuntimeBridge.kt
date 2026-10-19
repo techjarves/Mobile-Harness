@@ -180,7 +180,7 @@ class AntigravityRuntimeBridge(
     private val model: () -> String,
     private val effort: () -> String,
     private val conversationId: (String) -> String?,
-    private val saveConversationId: (String, String) -> Unit,
+    private val saveConversationId: (String, String?) -> Unit,
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
     private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
@@ -360,7 +360,7 @@ class AntigravityRuntimeBridge(
                 .put("event", "user")
                 .put("message", JSONObject().put("content", antigravityWorkspacePrompt(projectSlug, prompt)))
                 .toString() + "\n"
-            process.outputStream.write(request.toByteArray())
+            process.outputStream.write(request.toByteArray(Charsets.UTF_8))
             process.outputStream.flush()
             process.outputStream.close()
 
@@ -404,7 +404,13 @@ class AntigravityRuntimeBridge(
                                 eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.response))
                             }
                             resultSeen = true
-                        } else throw AntigravitySessionException(friendlyError(event.error ?: event.status))
+                        } else {
+                            val err = event.error ?: event.status
+                            if (isStaleConversationError(err)) {
+                                saveConversationId(projectId, null)
+                            }
+                            throw AntigravitySessionException(friendlyError(err))
+                        }
                     }
                     null -> Unit
                 }
@@ -468,10 +474,14 @@ class AntigravityRuntimeBridge(
             finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
         }.onFailure {
             val diagnostic = recentAntigravityDiagnostic(sessionStartedAtMillis)
+            val rawError = it.message.orEmpty()
+            if (isStaleConversationError(rawError) || isStaleConversationError(diagnostic.orEmpty())) {
+                saveConversationId(projectId, null)
+            }
             val message = if (userStopRequested) {
                 "Stopped by user"
             } else {
-                antigravityFriendlyError(it.message.orEmpty(), diagnostic)
+                antigravityFriendlyError(rawError, diagnostic)
             }
             emitFailure(sessionId, message)
             if (userStopRequested) cancelForegroundRuntime()
@@ -636,6 +646,17 @@ class AntigravityRuntimeBridge(
     }
 }
 
+internal fun isStaleConversationError(raw: String?): Boolean {
+    val value = raw.orEmpty()
+    return value.contains("conversation not found", ignoreCase = true) ||
+        value.contains("no conversation", ignoreCase = true) ||
+        value.contains("invalid conversation", ignoreCase = true) ||
+        value.contains("unknown conversation", ignoreCase = true) ||
+        value.contains("conversation expired", ignoreCase = true) ||
+        value.contains("conversation has been deleted", ignoreCase = true) ||
+        value.contains("failed to resume conversation", ignoreCase = true)
+}
+
 internal fun antigravityFriendlyError(raw: String, diagnostic: String = ""): String {
     val value = "$raw $diagnostic".replace(Regex("\\s+"), " ").trim()
     return when {
@@ -644,8 +665,16 @@ internal fun antigravityFriendlyError(raw: String, diagnostic: String = ""): Str
         value.contains("authentication required", true) ||
             value.contains("authentication failed", true) ||
             value.contains("not signed in", true) ||
-            value.contains("not logged in", true) ->
+            value.contains("not logged in", true) ||
+            value.contains("not logged into", true) ||
+            value.contains("invalid_grant", true) ||
+            value.contains("token expired", true) ||
+            value.contains("unauthorized", true) ||
+            value.contains("please run agy auth", true) ||
+            value.contains("login required", true) ->
             "Antigravity needs Google sign-in. Open Settings → Coding agent."
+        isStaleConversationError(value) ->
+            "The previous Antigravity conversation was no longer available. A new conversation will start on the next request."
         value.contains("out of credits", true) || value.contains("quota", true) ->
             "Your Antigravity account is out of credits. Check the account plan or wait for credits to reset."
         value.contains("timed out", true) || value.contains("timeout", true) ->

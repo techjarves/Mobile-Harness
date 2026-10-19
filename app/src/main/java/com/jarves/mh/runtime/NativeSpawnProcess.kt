@@ -78,8 +78,19 @@ internal class NativeSpawnProcess private constructor(
                 Thread({
                     runCatching {
                         ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.adoptFd(outputFd)).use { source ->
-                            FileOutputStream(outputFile, false).use { destination -> source.copyTo(destination) }
+                            FileOutputStream(outputFile, false).use { destination ->
+                                val buffer = ByteArray(2048)
+                                while (true) {
+                                    val count = source.read(buffer)
+                                    if (count < 0) break
+                                    destination.write(buffer, 0, count)
+                                    destination.flush()
+                                    runCatching { destination.fd.sync() }
+                                }
+                            }
                         }
+                    }.onFailure {
+                        android.util.Log.e("NativeSpawnProcess", "PTY output pump error", it)
                     }
                 }, "pocket-pty-output").apply {
                     isDaemon = true

@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, dev, 'fix/**', 'feat/**' ]
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and Build Debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android SDK Environment
+        run: |
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+
+      - name: Cache Android NDK and CMake
+        id: cache-ndk-cmake
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/28.2.13676358
+            /usr/local/lib/android/sdk/cmake/3.22.1
+          key: ${{ runner.os }}-ndk-28.2.13676358-cmake-3.22.1
+
+      - name: Install Android NDK, CMake, and Build Tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;35.0.0"
+          if [ "${{ steps.cache-ndk-cmake.outputs.cache-hit }}" != "true" ]; then
+            echo "Installing NDK and CMake..."
+            sdkmanager --install "ndk;28.2.13676358" "cmake;3.22.1"
+          fi
+
+      - name: Download bundled runtime dependency
+        run: bash scripts/download-runtime-bundle.sh
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Run Unit Tests
+        run: ./gradlew testOnlineDebugUnitTest --console=plain --stacktrace
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: Assemble Online Debug APK
+        run: ./gradlew assembleOnlineDebug --console=plain --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-harness-online-debug
+          path: app/build/outputs/apk/online/debug/*.apk
+          if-no-files-found: error

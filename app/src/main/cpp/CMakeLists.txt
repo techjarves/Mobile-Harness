@@ -12,7 +12,7 @@ set(TALLOC_ROOT "${PROJECT_ROOT}/third_party/talloc")
 
 add_library(pocketspawn SHARED pocket_spawn.c)
 
-add_library(talloc SHARED "${TALLOC_ROOT}/talloc.c")
+add_library(talloc STATIC "${TALLOC_ROOT}/talloc.c")
 target_include_directories(talloc PUBLIC "${TALLOC_ROOT}")
 target_compile_definitions(talloc PRIVATE
     _GNU_SOURCE
@@ -21,12 +21,11 @@ target_compile_definitions(talloc PRIVATE
     TALLOC_BUILD_VERSION_MINOR=4
     TALLOC_BUILD_VERSION_RELEASE=3
 )
-set_target_properties(talloc PROPERTIES OUTPUT_NAME talloc SOVERSION 2)
 
-add_library(android-shmem SHARED "${SHM_ROOT}/shmem.c")
+add_library(android-shmem STATIC "${SHM_ROOT}/shmem.c")
 target_include_directories(android-shmem PUBLIC "${SHM_ROOT}")
 target_compile_definitions(android-shmem PRIVATE _PATH_TMP="/data/data/com.jarves.mh/cache/")
-target_link_libraries(android-shmem PRIVATE log android)
+target_link_libraries(android-shmem PUBLIC log android)
 
 set(PROOT_SOURCES
     cli/cli.c cli/proot.c cli/note.c
@@ -104,6 +103,7 @@ target_compile_definitions(proot PRIVATE
     ARG_MAX=131072
     WITH_LIBANDROID_SHMEM
     PROOT_UNBUNDLE_LOADER="."
+    SIGRTMAX=SIGRTMIN
 )
 target_compile_options(proot PRIVATE
     -Wall -Wextra -O2
@@ -111,7 +111,7 @@ target_compile_options(proot PRIVATE
     "SHELL:-include ${SHM_ROOT}/shm.h"
 )
 target_link_options(proot PRIVATE "-Wl,-z,noexecstack")
-target_link_libraries(proot PRIVATE talloc android-shmem)
+target_link_libraries(proot PRIVATE talloc android-shmem log android)
 set_target_properties(proot PROPERTIES OUTPUT_NAME "proot-bin" SUFFIX "")
 
 # AGP packages shared-library targets but not executable targets. Each carrier
@@ -132,6 +132,6 @@ add_custom_command(TARGET prootloader-carrier POST_BUILD
 
 # The loader is copied verbatim into libprootloader.so, so it needs the same
 # flexible-page-size alignment as the shared-library carrier targets.
-foreach(target pocketspawn talloc android-shmem prootloader proot proot-carrier prootloader-carrier)
+foreach(target pocketspawn prootloader proot proot-carrier prootloader-carrier)
     target_link_options(${target} PRIVATE "-Wl,-z,max-page-size=16384")
 endforeach()
