@@ -52,6 +52,10 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_antigravity_model", "") ?: ""
         set(value) { preferences.edit().putString("agent_antigravity_model", value).apply() }
 
+    var cursorModel: String
+        get() = preferences.getString("agent_cursor_model", "") ?: ""
+        set(value) { preferences.edit().putString("agent_cursor_model", value).apply() }
+
     var antigravityEffort: String
         get() = preferences.getString("agent_antigravity_effort", "high") ?: "high"
         set(value) { preferences.edit().putString("agent_antigravity_effort", value).apply() }
@@ -428,10 +432,13 @@ class AppPreferences(private val context: Context) {
         if (!file.exists()) return emptyList()
         return runCatching {
             val arr = JSONArray(file.readText())
+            val seenIds = mutableSetOf<String>()
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
+                val rawId = obj.optString("id").ifBlank { java.util.UUID.randomUUID().toString() }
+                val id = if (seenIds.add(rawId)) rawId else "$rawId-${java.util.UUID.randomUUID()}"
                 ChatMessage(
-                    id = obj.getString("id"),
+                    id = id,
                     fromUser = obj.getBoolean("fromUser"),
                     text = obj.getString("text"),
                     createdAt = runCatching { Instant.parse(obj.getString("createdAt")) }

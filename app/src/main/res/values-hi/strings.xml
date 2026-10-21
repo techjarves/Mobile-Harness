@@ -209,4 +209,26 @@
 <string name="project_type">प्रोजेक्ट प्रकार</string><string name="project_type_general">सामान्य</string><string name="project_type_general_desc">कोई भी कोडिंग प्रोजेक्ट</string><string name="project_type_compose">Compose</string><string name="project_type_compose_desc">आधुनिक Android UI</string><string name="project_type_xml">XML</string><string name="project_type_xml_desc">पारंपरिक Android UI</string>
 <string name="android_estimated_remaining">लगभग %1$s शेष</string><string name="android_finishing_build">बिल्ड पूरा हो रहा है…</string><string name="android_estimating_build">बिल्ड समय सीखा जा रहा है…</string><string name="android_usually_takes">आमतौर पर लगभग %1$s</string>
 <string name="diagnostics_title">डेवलपर डायग्नोस्टिक्स</string><string name="diagnostics_subtitle">परफ़ॉर्मेंस, प्रोसेस और रनटाइम स्टोरेज</string><string name="diagnostics_refresh">डायग्नोस्टिक्स रीफ़्रेश करें</string><string name="diagnostics_memory">मेमोरी</string><string name="diagnostics_app_memory">ऐप मेमोरी</string><string name="diagnostics_java_heap">Java हीप</string><string name="diagnostics_processes">सक्रिय प्रोसेस</string><string name="diagnostics_no_processes">कोई डेवलपमेंट प्रोसेस नहीं चल रही</string><string name="diagnostics_stop_inactive">निष्क्रिय प्रोसेस रोकें</string><string name="diagnostics_buffers">ऐप बफ़र</string><string name="diagnostics_messages">चैट संदेश</string><string name="diagnostics_live_activity">लाइव गतिविधि पंक्तियाँ</string><string name="diagnostics_terminal_buffer">टर्मिनल टेक्स्ट</string><string name="diagnostics_build_log">बिल्ड लॉग</string><string name="diagnostics_logcat_lines">लॉग पंक्तियाँ</string><string name="diagnostics_file_entries">लोड की गई फ़ाइलें</string><string name="diagnostics_runtime_cache">रनटाइम आउटपुट कैश</string><string name="diagnostics_cached_output">कैश किया आउटपुट</string><string name="diagnostics_clear_cache">अस्थायी आउटपुट साफ़ करें</string><string name="diagnostics_cache_disabled">सक्रिय काम पूरा होने के बाद उपलब्ध।</string><string name="diagnostics_recent_exit">हाल की ऐप समस्या</string><string name="diagnostics_no_recent_exit">कोई हाल का क्रैश या ANR नहीं</string><string name="diagnostics_inactive_stopped">निष्क्रिय प्रोसेस रोक दी गईं</string><string name="diagnostics_cache_busy">साफ़ करने से पहले सक्रिय काम पूरा होने दें</string><string name="diagnostics_cache_cleared">अस्थायी आउटपुट साफ़ किया गया</string>
+
+    <string name="agent_title_cursor">Cursor CLI</string>
+    <string name="agent_subtitle_cursor">Cursor\'s coding agent · Cursor account API key</string>
+    <string name="md_reason_cursor_not_installed">Cursor CLI is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_reason_cursor_needs_key">Cursor CLI needs an API key. Open Settings → Coding agent.</string>
+    <string name="md_reason_cursor_quota">The Cursor account has hit its usage limit. Check the plan, or wait and try again.</string>
+    <string name="md_reason_cursor_network">Cursor CLI could not reach Cursor. Check the internet connection and try again.</string>
+    <string name="md_reason_cursor_timeout">Cursor CLI timed out. Files already written were kept.</string>
+    <string name="md_reason_cursor_incompatible">Cursor CLI is incompatible with this runtime build. Reinstall the pinned version from Settings.</string>
+    <string name="md_reason_cursor_failed">Cursor CLI could not complete the task.</string>
+    <string name="md_reason_cursor_no_space">Not enough free storage for Cursor CLI. Free at least 1.2 GB and install again.</string>
+    <string name="md_reason_cursor_bundle">Cursor CLI package is not ready to download. Its checksum has not been published yet.</string>
+    <string name="settings_cursor_key_hint">Paste a user API key from the Cursor dashboard.</string>
+    <string name="settings_cursor_force_warning">Cursor tasks run tools without asking for approval on each command. Use this only on projects you trust. Account limits still apply.</string>
+    <string name="settings_cursor_billing_note">Create the key at Cursor Dashboard, API Keys. Usage is billed to that Cursor account. Paste the key itself, not a Bearer header. Prompts go directly to Cursor. Mobile Harness does not add its own relay.</string>
+    <string name="settings_cursor_key_removed">The local Cursor API key was removed.</string>
+    <string name="settings_cursor_replace_key">Replace</string>
+    <string name="settings_cursor_model_using">Using model: %1$s</string>
+    <string name="settings_cursor_model_default">Account default</string>
+    <string name="settings_cursor_model_switch">The highlighted model is used for the next task. Tap another model to switch.</string>
+    <string name="settings_cursor_model_hint">Type a model id</string>
+    <string name="settings_cursor_model_use">Use model</string>
 </resources>

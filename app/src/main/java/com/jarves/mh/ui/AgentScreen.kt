@@ -66,10 +66,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -192,6 +194,10 @@ fun AgentScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    onSaveCursorKey: (String) -> Unit = {},
+    onRemoveCursorKey: () -> Unit = {},
+    onRefreshCursorModels: () -> Unit = {},
+    onSetCursorModel: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -852,6 +858,7 @@ fun AgentScreen(
                                     AgentKind.ANTIGRAVITY -> "Antigravity"
                                     AgentKind.DEEPSEEK_HARNESS -> "DeepSeek"
                                     AgentKind.CLAUDE_CODE -> "Claude Code"
+                                    AgentKind.CURSOR_CLI -> "Cursor"
                                 }
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
@@ -947,6 +954,7 @@ fun AgentScreen(
                                 AgentKind.CLAUDE_CODE -> R.string.agent_title_claude
                                 AgentKind.DEEPSEEK_HARNESS -> R.string.agent_title_deepseek
                                 AgentKind.ANTIGRAVITY -> R.string.agent_title_antigravity
+                                AgentKind.CURSOR_CLI -> R.string.agent_title_cursor
                             },
                         )
                         Spacer(Modifier.height(8.dp))
@@ -988,6 +996,15 @@ fun AgentScreen(
             item {
                 if (!viewedAgentInstalled || viewedAgent != state.agentKind) {
                     // Installation/selection guidance is shown directly below the tabs.
+                } else if (state.agentKind == AgentKind.CURSOR_CLI) {
+                    AgentCursorCard(
+                        state = state,
+                        onSaveKey = onSaveCursorKey,
+                        onRemoveKey = onRemoveCursorKey,
+                        onRefreshModels = onRefreshCursorModels,
+                        onSetModel = onSetCursorModel,
+                        onTest = onPing,
+                    )
                 } else if (state.agentKind == AgentKind.ANTIGRAVITY) {
                     AgentAntigravityCard(
                         state = state,
@@ -2191,4 +2208,116 @@ private fun defaultModelsForProvider(kind: ProviderKind, context: android.conten
     else -> if (kind.defaultModel.isNotBlank()) listOf(
         DiscoveredModel(kind.defaultModel, context.getString(R.string.md_model_default, context.getString(kind.titleRes()), kind.defaultModel))
     ) else emptyList()
+}
+
+@Composable
+private fun AgentCursorCard(
+    state: AppUiState,
+    onSaveKey: (String) -> Unit,
+    onRemoveKey: () -> Unit,
+    onRefreshModels: () -> Unit,
+    onSetModel: (String) -> Unit,
+    onTest: () -> Unit,
+) {
+    var draft by rememberSaveable { mutableStateOf("") }
+    var visible by rememberSaveable { mutableStateOf(false) }
+    var typedModel by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(state.cursorHasKey) {
+        if (state.cursorHasKey && state.cursorModels.isEmpty() && !state.cursorModelsLoading) onRefreshModels()
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(stringResource(R.string.agent_title_cursor), fontWeight = FontWeight.Bold)
+        Text(
+            stringResource(R.string.settings_cursor_billing_note),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            stringResource(R.string.settings_cursor_force_warning),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.error,
+        )
+        if (state.cursorHasKey) {
+            Text(stringResource(R.string.settings_cursor_key_hint), fontSize = 12.sp)
+            Text("••••••••", fontFamily = FontFamily.Monospace)
+        }
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            label = { Text(stringResource(R.string.settings_cursor_key_hint)) },
+            singleLine = true,
+            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { visible = !visible }) {
+                    Text(if (visible) "Hide" else "Show")
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    onSaveKey(draft)
+                    draft = ""
+                },
+                enabled = draft.isNotBlank(),
+            ) { Text(if (state.cursorHasKey) stringResource(R.string.settings_cursor_replace_key) else stringResource(R.string.action_save)) }
+            if (state.cursorHasKey) {
+                OutlinedButton(onClick = onRemoveKey) { Text(stringResource(R.string.action_remove)) }
+            }
+            OutlinedButton(onClick = onTest, enabled = state.cursorHasKey && state.apiPingStatus != ApiPingStatus.PINGING) {
+                Text(stringResource(R.string.action_test))
+            }
+        }
+        Text(
+            stringResource(
+                R.string.settings_cursor_model_using,
+                state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
+            ),
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            stringResource(R.string.settings_cursor_model_switch),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = typedModel,
+                onValueChange = { typedModel = it },
+                label = { Text(stringResource(R.string.settings_cursor_model_hint)) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            IconButton(onClick = onRefreshModels, enabled = !state.cursorModelsLoading && state.cursorHasKey) {
+                if (state.cursorModelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.Refresh, stringResource(R.string.provider_refresh_models))
+            }
+        }
+        Button(
+            onClick = {
+                onSetModel(typedModel)
+                typedModel = ""
+            },
+            enabled = typedModel.isNotBlank(),
+        ) { Text(stringResource(R.string.settings_cursor_model_use)) }
+        state.cursorModels.forEach { modelId ->
+            val selected = modelId == state.cursorModel
+            Text(
+                if (selected) "● $modelId" else modelId,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSetModel(modelId) }
+                    .padding(vertical = 8.dp),
+            )
+        }
+        state.apiPingMessage?.let { message ->
+            Text(message, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

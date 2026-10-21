@@ -356,6 +356,14 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onToggleTheme = viewModel::toggleTheme,
             onRetry = viewModel::retryStartup,
         )
+        state.startupStage == StartupStage.MODEL_SETUP && state.agentKind == AgentKind.CURSOR_CLI ->
+            CursorOnboardingScreen(
+                state = state,
+                onSaveKey = viewModel::saveCursorKey,
+                onContinue = viewModel::finishCursorOnboarding,
+                onSelectAgent = viewModel::chooseOnboardingAgent,
+                onToggleTheme = viewModel::toggleTheme,
+            )
         state.startupStage == StartupStage.MODEL_SETUP && state.agentKind == AgentKind.ANTIGRAVITY ->
             AntigravityOnboardingScreen(
                 state = state,
@@ -1520,6 +1528,7 @@ private const val CORE_RUNTIME_DOWNLOAD_MB = 69
 private const val CLAUDE_RUNTIME_DOWNLOAD_MB = 72
 private const val DSH_RUNTIME_DOWNLOAD_MB = 27
 private const val AGY_RUNTIME_DOWNLOAD_MB = 40
+private const val CURSOR_RUNTIME_DOWNLOAD_MB = 174
 private const val PYTHON_RUNTIME_DOWNLOAD_MB = 55
 private const val ANDROID_RUNTIME_DOWNLOAD_MB = 570
 
@@ -1563,6 +1572,7 @@ private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind):
             AgentKind.CLAUDE_CODE -> CLAUDE_RUNTIME_DOWNLOAD_MB
             AgentKind.DEEPSEEK_HARNESS -> DSH_RUNTIME_DOWNLOAD_MB
             AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
+            AgentKind.CURSOR_CLI -> CURSOR_RUNTIME_DOWNLOAD_MB
         } +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
@@ -1652,11 +1662,13 @@ private fun AgentChoiceRow(
         AgentKind.CLAUDE_CODE -> Color(0xFFD97757)
         AgentKind.DEEPSEEK_HARNESS -> Color(0xFF4D6BFE)
         AgentKind.ANTIGRAVITY -> Color(0xFF4285F4)
+        AgentKind.CURSOR_CLI -> Color(0xFF94A3B8)
     }
     val mark = when (agent) {
         AgentKind.CLAUDE_CODE -> "CC"
         AgentKind.DEEPSEEK_HARNESS -> "DS"
         AgentKind.ANTIGRAVITY -> "AG"
+        AgentKind.CURSOR_CLI -> "CU"
     }
     Row(
         modifier = Modifier
@@ -2535,6 +2547,10 @@ private fun RootScreenHost(
                     onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
                     onSetAntigravityModel = viewModel::setAntigravityModel,
                     onSetAntigravityEffort = viewModel::setAntigravityEffort,
+                    onSaveCursorKey = viewModel::saveCursorKey,
+                    onRemoveCursorKey = viewModel::removeCursorKey,
+                    onRefreshCursorModels = viewModel::refreshCursorModels,
+                    onSetCursorModel = viewModel::setCursorModel,
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
@@ -2563,6 +2579,10 @@ private fun RootScreenHost(
                     onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
                     onSetAntigravityModel = viewModel::setAntigravityModel,
                     onSetAntigravityEffort = viewModel::setAntigravityEffort,
+                    onSaveCursorKey = viewModel::saveCursorKey,
+                    onRemoveCursorKey = viewModel::removeCursorKey,
+                    onRefreshCursorModels = viewModel::refreshCursorModels,
+                    onSetCursorModel = viewModel::setCursorModel,
                     initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
@@ -2670,6 +2690,61 @@ private fun QuickTerminalSheet(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CursorOnboardingScreen(
+    state: AppUiState,
+    onSaveKey: (String) -> Unit,
+    onContinue: () -> Unit,
+    onSelectAgent: (AgentKind) -> Unit,
+    onToggleTheme: () -> Unit,
+) {
+    var draft by rememberSaveable { mutableStateOf("") }
+    var showAgentPicker by rememberSaveable { mutableStateOf(false) }
+    if (showAgentPicker) {
+        AgentSwitchSheet(
+            selected = AgentKind.CURSOR_CLI,
+            onSelect = { agent ->
+                showAgentPicker = false
+                onSelectAgent(agent)
+            },
+            onDismiss = { showAgentPicker = false },
+        )
+    }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(stringResource(R.string.agent_title_cursor), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.settings_cursor_billing_note), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.settings_cursor_force_warning), color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            label = { Text(stringResource(R.string.settings_cursor_key_hint)) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { onSaveKey(draft); draft = "" },
+            enabled = draft.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(stringResource(R.string.action_save)) }
+        Button(
+            onClick = onContinue,
+            enabled = state.cursorHasKey,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(stringResource(R.string.provider_save_continue)) }
+        TextButton(onClick = { showAgentPicker = true }) {
+            Text(stringResource(R.string.agent_choose_title))
+        }
+        TextButton(onClick = onToggleTheme) { Text(stringResource(R.string.theme_toggle)) }
     }
 }
 
@@ -4094,6 +4169,8 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
     val providerLabel = when {
         state.agentKind == AgentKind.ANTIGRAVITY ->
             state.antigravityModel.ifBlank { agentTitle }
+        state.agentKind == AgentKind.CURSOR_CLI ->
+            state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) }
         state.provider.model.isNotBlank() -> state.provider.model
         state.provider.baseUrl.isNotBlank() -> {
             runCatching { java.net.URI(state.provider.baseUrl).host ?: providerTitle }
@@ -4617,7 +4694,7 @@ private fun WorkspaceScreen(
                         )
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                            "${if (state.agentKind == AgentKind.ANTIGRAVITY || state.agentKind == AgentKind.CURSOR_CLI) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -6175,6 +6252,16 @@ private fun createCameraPhotoUri(context: Context): Uri {
     return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
 }
 
+/** LazyColumn keys must be unique. Older chats can contain two interrupted snapshots with the same id. */
+private fun uniqueMessageKeys(ids: List<String>): List<String> {
+    val seen = HashMap<String, Int>(ids.size)
+    return ids.map { id ->
+        val count = seen.getOrDefault(id, 0)
+        seen[id] = count + 1
+        if (count == 0) id else "$id#$count"
+    }
+}
+
 @Composable
 private fun ChatTab(
     messages: List<ChatMessage>,
@@ -6225,7 +6312,12 @@ private fun ChatTab(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(messages, key = { it.id }) { message ->
+                val messageKeys = uniqueMessageKeys(messages.map { it.id })
+                items(
+                    count = messages.size,
+                    key = { index -> messageKeys[index] },
+                ) { index ->
+                    val message = messages[index]
                     if (message.workItems.isNotEmpty()) {
                         WorkBlockCard(message)
                     } else {

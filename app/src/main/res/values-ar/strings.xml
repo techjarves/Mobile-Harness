@@ -215,4 +215,26 @@
 <string name="project_type">نوع المشروع</string><string name="project_type_general">عام</string><string name="project_type_general_desc">لأي مشروع برمجي</string><string name="project_type_compose">Compose</string><string name="project_type_compose_desc">واجهة Android حديثة</string><string name="project_type_xml">XML</string><string name="project_type_xml_desc">واجهة Android تقليدية</string>
 <string name="android_estimated_remaining">متبقٍ نحو %1$s</string><string name="android_finishing_build">جارٍ إنهاء البناء…</string><string name="android_estimating_build">جارٍ تعلّم مدة البناء…</string><string name="android_usually_takes">عادةً نحو %1$s</string>
 <string name="diagnostics_title">تشخيصات المطور</string><string name="diagnostics_subtitle">الأداء والعمليات وتخزين بيئة التشغيل</string><string name="diagnostics_refresh">تحديث التشخيصات</string><string name="diagnostics_memory">الذاكرة</string><string name="diagnostics_app_memory">ذاكرة التطبيق</string><string name="diagnostics_java_heap">ذاكرة Java</string><string name="diagnostics_processes">العمليات النشطة</string><string name="diagnostics_no_processes">لا توجد عملية تطوير قيد التشغيل</string><string name="diagnostics_stop_inactive">إيقاف العمليات غير النشطة</string><string name="diagnostics_buffers">المخازن المؤقتة</string><string name="diagnostics_messages">رسائل المحادثة</string><string name="diagnostics_live_activity">صفوف النشاط المباشر</string><string name="diagnostics_terminal_buffer">نص الطرفية</string><string name="diagnostics_build_log">سجل البناء</string><string name="diagnostics_logcat_lines">أسطر السجل</string><string name="diagnostics_file_entries">إدخالات الملفات المحملة</string><string name="diagnostics_runtime_cache">ذاكرة مخرجات التشغيل</string><string name="diagnostics_cached_output">المخرجات المخزنة</string><string name="diagnostics_clear_cache">مسح المخرجات المؤقتة</string><string name="diagnostics_cache_disabled">يتاح بعد انتهاء العمل النشط.</string><string name="diagnostics_recent_exit">مشكلة حديثة في التطبيق</string><string name="diagnostics_no_recent_exit">لا يوجد تعطل أو عدم استجابة حديث</string><string name="diagnostics_inactive_stopped">تم إيقاف العمليات غير النشطة</string><string name="diagnostics_cache_busy">انتظر انتهاء العمل النشط قبل المسح</string><string name="diagnostics_cache_cleared">تم مسح مخرجات التشغيل المؤقتة</string>
+
+    <string name="agent_title_cursor">Cursor CLI</string>
+    <string name="agent_subtitle_cursor">Cursor\'s coding agent · Cursor account API key</string>
+    <string name="md_reason_cursor_not_installed">Cursor CLI is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_reason_cursor_needs_key">Cursor CLI needs an API key. Open Settings → Coding agent.</string>
+    <string name="md_reason_cursor_quota">The Cursor account has hit its usage limit. Check the plan, or wait and try again.</string>
+    <string name="md_reason_cursor_network">Cursor CLI could not reach Cursor. Check the internet connection and try again.</string>
+    <string name="md_reason_cursor_timeout">Cursor CLI timed out. Files already written were kept.</string>
+    <string name="md_reason_cursor_incompatible">Cursor CLI is incompatible with this runtime build. Reinstall the pinned version from Settings.</string>
+    <string name="md_reason_cursor_failed">Cursor CLI could not complete the task.</string>
+    <string name="md_reason_cursor_no_space">Not enough free storage for Cursor CLI. Free at least 1.2 GB and install again.</string>
+    <string name="md_reason_cursor_bundle">Cursor CLI package is not ready to download. Its checksum has not been published yet.</string>
+    <string name="settings_cursor_key_hint">Paste a user API key from the Cursor dashboard.</string>
+    <string name="settings_cursor_force_warning">Cursor tasks run tools without asking for approval on each command. Use this only on projects you trust. Account limits still apply.</string>
+    <string name="settings_cursor_billing_note">Create the key at Cursor Dashboard, API Keys. Usage is billed to that Cursor account. Paste the key itself, not a Bearer header. Prompts go directly to Cursor. Mobile Harness does not add its own relay.</string>
+    <string name="settings_cursor_key_removed">The local Cursor API key was removed.</string>
+    <string name="settings_cursor_replace_key">Replace</string>
+    <string name="settings_cursor_model_using">Using model: %1$s</string>
+    <string name="settings_cursor_model_default">Account default</string>
+    <string name="settings_cursor_model_switch">The highlighted model is used for the next task. Tap another model to switch.</string>
+    <string name="settings_cursor_model_hint">Type a model id</string>
+    <string name="settings_cursor_model_use">Use model</string>
 </resources>

@@ -2,6 +2,7 @@ package com.jarves.mh.runtime
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.os.StatFs
 import android.system.Os
 import com.jarves.mh.BuildConfig
 import com.jarves.mh.R
@@ -74,6 +75,7 @@ class RuntimeInstaller(private val context: Context) {
     private val devStacksFile = File(rootfs, ".pocket-dev-stacks.json")
     private val dshMarker = File(rootfs, ".pocket-dsh-version")
     private val agyMarker = File(rootfs, ".pocket-agy-version")
+    private val cursorMarker = File(rootfs, "root/.pocket-cursor-version")
     private val githubCliMarker = File(rootfs, ".pocket-github-cli-version")
     private val dshAndroidCompatibilityMarker = File(rootfs, ".pocket-dsh-android-compat-version")
     private val macosMetadataRepairMarker = File(rootfs, ".pocket-macos-metadata-repair")
@@ -236,6 +238,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
+            com.jarves.mh.model.AgentKind.CURSOR_CLI -> ensureCursorInstalled(proot, 0.985f, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
@@ -255,6 +258,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
+            com.jarves.mh.model.AgentKind.CURSOR_CLI -> ensureCursorInstalled(runtime.proot, 0.05f, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, agent.localizedTitle(context)), 1f))
     }
@@ -274,6 +278,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> isInstalled() &&
                 File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() &&
                 !agyMarker.readTextOrNull().isNullOrBlank()
+            com.jarves.mh.model.AgentKind.CURSOR_CLI -> isCursorInstalled()
         }
     }
 
@@ -362,6 +367,11 @@ class RuntimeInstaller(private val context: Context) {
             ?.trim()
             ?.takeIf { it.isNotEmpty() && File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() }
             ?.let { put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, it) }
+
+        cursorMarker.readTextOrNull()
+            ?.trim()
+            ?.takeIf { it == CURSOR_VERSION && isAgentInstalled(com.jarves.mh.model.AgentKind.CURSOR_CLI) }
+            ?.let { put(com.jarves.mh.model.AgentKind.CURSOR_CLI, it) }
     }
 
     /** Checks each installed agent against its own authoritative release source. */
@@ -402,6 +412,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> updateClaude(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> updateDsh(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> updateAgy(runtime, expectedVersion, onProgress)
+            com.jarves.mh.model.AgentKind.CURSOR_CLI -> updateCursor(runtime, expectedVersion, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_version_ready, agent.localizedTitle(context), expectedVersion), 1f, event = RuntimeInstallEvent.COMPLETED))
     }
@@ -602,6 +613,190 @@ class RuntimeInstaller(private val context: Context) {
         require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
             "Antigravity CLI installation is incomplete"
         }
+    }
+
+    private fun isCursorInstalled(): Boolean {
+        if (!isInstalled()) return false
+        if (cursorMarker.readTextOrNull() != CURSOR_VERSION) return false
+        val versionDir = File(rootfs, "root/.local/share/cursor-agent/versions/$CURSOR_VERSION")
+        if (!File(versionDir, "node").canExecute() || !File(versionDir, "index.js").canRead()) return false
+        val launcher = File(rootfs, CURSOR_GUEST_PATH.removePrefix("/"))
+        val path = launcher.toPath()
+        return java.nio.file.Files.isSymbolicLink(path) || (launcher.isFile && launcher.canExecute())
+    }
+
+    private fun removePartialCursorInstall() {
+        val launcher = File(rootfs, CURSOR_GUEST_PATH.removePrefix("/"))
+        if (java.nio.file.Files.isSymbolicLink(launcher.toPath()) || launcher.exists()) launcher.delete()
+        File(rootfs, "root/.local/share/cursor-agent/versions/$CURSOR_VERSION").deleteRecursively()
+        cursorMarker.delete()
+    }
+
+    private fun requireCursorFreeSpace() {
+        val free = StatFs(context.filesDir.absolutePath).availableBytes
+        check(free >= CURSOR_MIN_FREE_BYTES) { str(R.string.md_reason_cursor_no_space) }
+    }
+
+    private fun writeCursorCliConfig() {
+        val config = File(rootfs, "root/.cursor/cli-config.json")
+        if (config.isFile) return
+        config.parentFile?.mkdirs()
+        config.writeText(CURSOR_CLI_CONFIG)
+    }
+
+    private suspend fun ensureCursorInstalled(
+        proot: File,
+        fraction: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+        force: Boolean = false,
+    ) {
+        if (!force && isAgentInstalled(com.jarves.mh.model.AgentKind.CURSOR_CLI)) return
+        // A partial tree is not a working install. Remove only that before the
+        // download so a failed download cannot wipe a copy that already verifies.
+        if (!isCursorInstalled()) removePartialCursorInstall()
+        requireCursorFreeSpace()
+        val archive = File(downloads, "cursor-$CURSOR_VERSION-linux-arm64.tar.gz")
+        val downloadLabel = str(R.string.rt_install_downloading_version, "Cursor CLI", CURSOR_VERSION)
+        downloadVerified(CURSOR_PACKAGE_URL, archive, CURSOR_PACKAGE_SHA256) { bytes, total ->
+            val ratio = if (total > 0L) bytes.toFloat() / total else 0f
+            val span = (0.9f - fraction).coerceAtLeast(0.05f)
+            onProgress(
+                RuntimeInstallProgress(
+                    downloadLabel,
+                    fraction + ratio * span,
+                    bytes,
+                    total.takeIf { it > 0L },
+                    event = RuntimeInstallEvent.DOWNLOAD,
+                ),
+            )
+        }
+        removePartialCursorInstall()
+        try {
+            onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_version, "Cursor CLI", CURSOR_VERSION), 0.92f, indeterminate = true))
+            installCursorPackage(archive)
+            verifyGuest(proot, "$CURSOR_GUEST_PATH --version", str(R.string.rt_install_verify_failed, "Cursor CLI"))
+            cursorMarker.writeText(CURSOR_VERSION)
+            writeCursorCliConfig()
+            archive.delete()
+        } catch (error: Throwable) {
+            removePartialCursorInstall()
+            throw error
+        }
+        require(isAgentInstalled(com.jarves.mh.model.AgentKind.CURSOR_CLI)) {
+            "Cursor CLI installation is incomplete"
+        }
+    }
+
+    private fun installCursorPackage(archive: File) {
+        val prefix = cursorPackagePrefix(archive)
+        val versionDir = File(rootfs, "root/.local/share/cursor-agent/versions/$CURSOR_VERSION")
+        versionDir.mkdirs()
+        extractCursorTree(archive, prefix, versionDir)
+        val node = File(versionDir, "node")
+        val launcherScript = File(versionDir, "cursor-agent")
+        val index = File(versionDir, "index.js")
+        check(node.isFile && launcherScript.isFile && index.isFile) { "Cursor CLI package is incomplete" }
+        Os.chmod(node.absolutePath, 0b111101101)
+        Os.chmod(launcherScript.absolutePath, 0b111101101)
+        val link = File(rootfs, CURSOR_GUEST_PATH.removePrefix("/"))
+        link.parentFile?.mkdirs()
+        val linkPath = link.toPath()
+        if (java.nio.file.Files.isSymbolicLink(linkPath) || link.exists()) link.delete()
+        Os.symlink(
+            "/root/.local/share/cursor-agent/versions/$CURSOR_VERSION/cursor-agent",
+            link.absolutePath,
+        )
+    }
+
+    private fun cursorPackagePrefix(archive: File): String {
+        openCursorTar(archive).use { tar ->
+            var entry = tar.nextEntry
+            while (entry != null) {
+                val name = entry.name.removePrefix("./").trimStart('/')
+                if (!entry.isDirectory && (name == "cursor-agent" || name.endsWith("/cursor-agent"))) {
+                    return name.removeSuffix("cursor-agent").trimEnd('/')
+                }
+                entry = tar.nextEntry
+            }
+        }
+        error("Cursor CLI package has no cursor-agent launcher")
+    }
+
+    private fun extractCursorTree(archive: File, prefix: String, destination: File) {
+        val rootPrefix = if (prefix.isEmpty()) "" else "$prefix/"
+        val deferredLinks = mutableListOf<Pair<File, File>>()
+        openCursorTar(archive).use { tar ->
+            var entry = tar.nextEntry
+            while (entry != null) {
+                val name = entry.name.removePrefix("./").trimStart('/')
+                val relative = cursorRelativePath(name, prefix, rootPrefix)
+                if (relative != null) {
+                    val target = safeChild(destination, relative)
+                    when {
+                        entry.isDirectory -> target.mkdirs()
+                        entry.isSymbolicLink -> {
+                            target.parentFile?.mkdirs()
+                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
+                            Os.symlink(entry.linkName, target.absolutePath)
+                        }
+                        entry.isLink -> {
+                            val linkRelative = cursorRelativePath(
+                                entry.linkName.removePrefix("./").trimStart('/'),
+                                prefix,
+                                rootPrefix,
+                            )
+                            if (linkRelative != null) {
+                                target.parentFile?.mkdirs()
+                                val linkTarget = safeChild(destination, linkRelative)
+                                if (linkTarget.isFile) {
+                                    linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+                                } else {
+                                    deferredLinks += target to linkTarget
+                                }
+                            }
+                        }
+                        entry.isFile -> {
+                            target.parentFile?.mkdirs()
+                            FileOutputStream(target).use { output -> tar.copyTo(output) }
+                            val mode = entry.mode and 0b111111111
+                            if (mode != 0) runCatching { Os.chmod(target.absolutePath, mode) }
+                        }
+                    }
+                }
+                entry = tar.nextEntry
+            }
+        }
+        deferredLinks.forEach { (target, linkTarget) ->
+            check(linkTarget.isFile) { "Cursor CLI package is missing a linked file" }
+            target.parentFile?.mkdirs()
+            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+        }
+    }
+
+    private fun cursorRelativePath(name: String, prefix: String, rootPrefix: String): String? {
+        if (name.isBlank() || name.split('/').any { it == ".." }) return null
+        val relative = when {
+            prefix.isEmpty() -> name
+            name == prefix -> return null
+            name.startsWith(rootPrefix) -> name.removePrefix(rootPrefix)
+            else -> return null
+        }
+        if (relative.isBlank() || relative.split('/').any { it == ".." }) return null
+        return relative
+    }
+
+    private fun openCursorTar(archive: File): TarArchiveInputStream =
+        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream())))
+
+    private suspend fun updateCursor(
+        runtime: InstalledRuntime,
+        expectedVersion: String,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        check(expectedVersion == CURSOR_VERSION) {
+            "Cursor CLI updates stay on the pinned $CURSOR_VERSION package"
+        }
+        ensureCursorInstalled(runtime.proot, 0.05f, onProgress, force = true)
     }
 
     private suspend fun ensureDshInstalled(
@@ -1001,10 +1196,11 @@ class RuntimeInstaller(private val context: Context) {
         from: Float,
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
+        networkOnly: Boolean = false,
     ): File {
         downloads.mkdirs()
         val destination = File(downloads, bundle.fileName)
-        val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        val useEmbedded = !networkOnly && (preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES)
         if (useEmbedded) {
             val loadingLabel = str(R.string.rt_install_loading_bundle, bundle.label)
             onProgress(RuntimeInstallProgress(loadingLabel, from, 0, bundle.compressedBytes))
@@ -1907,6 +2103,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
 
     companion object {
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
+        const val CURSOR_GUEST_PATH = "/usr/local/bin/cursor-agent"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
         private const val AGY_VERSION = "1.1.27"
         private const val AGY_RELEASE_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz"
@@ -1989,6 +2186,23 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             sha256 = "a659ab9188956fc4721ca86fb21b5118e0e489f47a5e02ae6b4f2fb423659d78",
             compressedBytes = 41_870_025L,
         )
+        private const val CURSOR_VERSION = "2026.10.19-6bbf2c4"
+        private const val CURSOR_MIN_FREE_BYTES = 1_288_490_189L
+        private const val CURSOR_PACKAGE_URL =
+            "https://downloads.cursor.com/lab/2026.10.19-6bbf2c4/linux/arm64/agent-cli-package.tar.gz"
+        private const val CURSOR_PACKAGE_SHA256 =
+            "71a90f12a8b8183a71442b7ed4037bddc1a0f88114ec4fb9ec92782acb8e7d84"
+        private val CURSOR_CLI_CONFIG = """
+            {
+              "version": 1,
+              "editor": { "vimMode": false },
+              "permissions": {
+                "allow": ["Shell(*)", "Read(**)", "Write(**)", "WebFetch(*)"],
+                "deny": []
+              },
+              "approvalMode": "unrestricted"
+            }
+        """.trimIndent() + "\n"
         private const val MAX_TERMINAL_LINE = 500
         private const val MAX_COLLECTED_OUTPUT = 24_000
         private const val MAX_PROCESS_OUTPUT_BYTES = 256 * 1024

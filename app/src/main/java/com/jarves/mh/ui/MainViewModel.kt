@@ -58,6 +58,8 @@ import com.jarves.mh.runtime.AntigravityAuthController
 import com.jarves.mh.runtime.AntigravityAuthState
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.runtime.AntigravityRuntimeBridge
+import com.jarves.mh.runtime.CURSOR_VAULT_ID
+import com.jarves.mh.runtime.CursorRuntimeBridge
 import com.jarves.mh.runtime.NativeSpawnProcess
 import com.jarves.mh.runtime.RuntimeInstallProgress
 import com.jarves.mh.runtime.RuntimeInstaller
@@ -111,6 +113,7 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
@@ -380,6 +383,10 @@ data class AppUiState(
     val antigravityEffort: String = "high",
     val antigravityModels: List<String> = emptyList(),
     val antigravityModelsLoading: Boolean = false,
+    val cursorModel: String = "",
+    val cursorModels: List<String> = emptyList(),
+    val cursorModelsLoading: Boolean = false,
+    val cursorHasKey: Boolean = false,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
     val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
@@ -427,7 +434,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.ANTIGRAVITY, projectId, it, id) }
         },
     )
-    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime)
+    private val cursorRuntime = CursorRuntimeBridge(
+        application,
+        model = { _state.value.cursorModel },
+        apiKey = { vault.get(CURSOR_VAULT_ID) },
+        conversationId = { projectId ->
+            _state.value.activeChatId?.let { preferences.loadAgentConversation(AgentKind.CURSOR_CLI, projectId, it) }
+        },
+        saveConversationId = { projectId, id ->
+            _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.CURSOR_CLI, projectId, it, id) }
+        },
+    )
+    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime, cursorRuntime)
     private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge = agentRegistry.require(_state.value.agentKind).runtime
     private val providerApi = ProviderApiClient(application)
     private fun appUpdater(): AppUpdater = AppUpdater(
@@ -494,6 +512,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ),
             antigravityModel = preferences.antigravityModel,
             antigravityEffort = preferences.antigravityEffort,
+            cursorModel = preferences.cursorModel,
+            cursorHasKey = cursorKeySaved(),
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
             languageCode = preferences.languageCode,
@@ -570,6 +590,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
+        viewModelScope.launch { cursorRuntime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
@@ -2045,6 +2066,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         claudeRuntime.configureProjectRoot(projectId, rootPath)
         dshRuntime.configureProjectRoot(projectId, rootPath)
         antigravityRuntime.configureProjectRoot(projectId, rootPath)
+        cursorRuntime.configureProjectRoot(projectId, rootPath)
     }
 
     init {
@@ -2357,6 +2379,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(onboardingComplete = true, provider = saved, startupStage = StartupStage.READY) }
         refreshActiveApiKey(profile.kind)
         autoPingApi()
+    }
+
+    fun saveCursorKey(secret: String) {
+        val cleaned = secret.trim().removePrefix("Bearer ").removePrefix("bearer ").filterNot(Char::isWhitespace)
+        if (cleaned.isBlank()) {
+            _state.update { it.copy(toastMessage = str(R.string.md_reason_cursor_needs_key)) }
+            return
+        }
+        vault.put(CURSOR_VAULT_ID, cleaned)
+        val saved = cursorKeySaved()
+        if (!saved) vault.remove(CURSOR_VAULT_ID)
+        _state.update {
+            it.copy(
+                cursorHasKey = saved,
+                toastMessage = if (saved) null else str(R.string.md_reason_cursor_needs_key),
+            )
+        }
+        if (saved) refreshCursorModels()
+    }
+
+    fun removeCursorKey() {
+        vault.remove(CURSOR_VAULT_ID)
+        _state.update {
+            it.copy(cursorHasKey = false, toastMessage = str(R.string.settings_cursor_key_removed))
+        }
+        viewModelScope.launch {
+            runCatching { cursorRuntime.logout() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                }
+        }
+    }
+
+    fun setCursorModel(model: String) {
+        val chosen = model.trim()
+        preferences.cursorModel = chosen
+        _state.update { it.copy(cursorModel = chosen) }
+    }
+
+    fun refreshCursorModels() {
+        if (_state.value.cursorModelsLoading) return
+        if (!installer.isAgentInstalled(AgentKind.CURSOR_CLI)) {
+            _state.update { it.copy(toastMessage = str(R.string.md_reason_cursor_not_installed)) }
+            return
+        }
+        if (!cursorKeySaved()) {
+            _state.update { it.copy(cursorHasKey = false, toastMessage = str(R.string.md_reason_cursor_needs_key)) }
+            return
+        }
+        _state.update { it.copy(cursorModelsLoading = true) }
+        viewModelScope.launch {
+            try {
+                val catalog = cursorRuntime.listModels()
+                _state.update { current ->
+                    val chosen = current.cursorModel.ifBlank { catalog.defaultId.orEmpty() }
+                    if (chosen.isNotBlank() && chosen != current.cursorModel) preferences.cursorModel = chosen
+                    current.copy(
+                        cursorModels = catalog.ids,
+                        cursorModel = chosen.ifBlank { current.cursorModel },
+                        cursorModelsLoading = false,
+                    )
+                }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(cursorModelsLoading = false) }
+                throw error
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(
+                        cursorModelsLoading = false,
+                        toastMessage = localizedFailureReason(error.message.orEmpty()),
+                    )
+                }
+            }
+        }
+    }
+
+    fun finishCursorOnboarding() {
+        if (!cursorKeySaved()) {
+            _state.update { it.copy(cursorHasKey = false, toastMessage = str(R.string.md_reason_cursor_needs_key)) }
+            return
+        }
+        preferences.onboardingComplete = true
+        _state.update { it.copy(onboardingComplete = true, startupStage = StartupStage.READY) }
+    }
+
+    private fun cursorKeySaved(): Boolean {
+        val saved = vault.get(CURSOR_VAULT_ID)
+        if (saved != null && saved.isBlank()) {
+            vault.remove(CURSOR_VAULT_ID)
+            return false
+        }
+        return !saved.isNullOrBlank()
     }
 
     fun finishAntigravityOnboarding() {
@@ -2854,6 +2968,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             testAntigravityConnection()
             return
         }
+        if (_state.value.agentKind == AgentKind.CURSOR_CLI) {
+            testCursorConnection()
+            return
+        }
         val profile = _state.value.provider
         if (_state.value.agentKind == AgentKind.CLAUDE_CODE && profile.kind == ProviderKind.CLAUDE) {
             testClaudeSubscription(profile)
@@ -2931,6 +3049,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }.onFailure { error ->
                 _state.update {
                     it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(error.message.orEmpty()))
+                }
+            }
+        }
+    }
+
+    fun testCursorConnection() {
+        if (_state.value.agentKind != AgentKind.CURSOR_CLI) return
+        if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
+        if (!cursorKeySaved()) {
+            _state.update {
+                it.copy(
+                    cursorHasKey = false,
+                    apiPingStatus = ApiPingStatus.FAILED,
+                    apiPingMessage = str(R.string.md_reason_cursor_needs_key),
+                )
+            }
+            return
+        }
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.agent_status_testing)) }
+        viewModelScope.launch {
+            try {
+                val reply = cursorRuntime.hello()
+                _state.update {
+                    it.copy(
+                        apiPingStatus = ApiPingStatus.OK,
+                        apiPingMessage = reply.ifBlank { str(R.string.vm_ping_success) },
+                    )
+                }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = null) }
+                throw error
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(
+                        apiPingStatus = ApiPingStatus.FAILED,
+                        apiPingMessage = localizedFailureReason(error.message.orEmpty()),
+                    )
                 }
             }
         }
@@ -4660,6 +4815,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendPrompt(prompt: String) {
         val project = state.value.activeProject ?: return
+        if (_state.value.agentKind == AgentKind.CURSOR_CLI && !cursorKeySaved()) {
+            _state.update { it.copy(cursorHasKey = false, toastMessage = str(R.string.md_reason_cursor_needs_key)) }
+            return
+        }
         if (_state.value.agentKind == AgentKind.ANTIGRAVITY &&
             _state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
             _state.update { it.copy(toastMessage = str(R.string.vm_antigravity_signin_before_task)) }
@@ -5158,18 +5317,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is RuntimeEvent.SessionFailed -> {
                     val finishedAt = System.currentTimeMillis()
                     val displayReason = localizedFailureReason(event.reason)
-                    attachTaskDuration(
-                        finishWorkSegment(
-                            appendWorkItem(current, ActivityItem("Task stopped", displayReason)),
-                            finishedAt,
-                        ),
+                    val stopped = finishWorkSegment(
+                        appendWorkItem(current, ActivityItem("Task stopped", displayReason)),
                         finishedAt,
-                    ).copy(
+                    )
+                    val withReason = if (current.agentKind == AgentKind.CURSOR_CLI && displayReason.isNotBlank()) {
+                        stopped.copy(messages = stopped.messages + ChatMessage(fromUser = false, text = displayReason))
+                    } else {
+                        stopped
+                    }
+                    attachTaskDuration(withReason, finishedAt).copy(
                         isRunning = false,
                         activeSessionId = null,
                         pendingApproval = null,
                         toastMessage = displayReason.takeIf {
-                            event.reason.contains("user not found", true) ||
+                            current.agentKind == AgentKind.CURSOR_CLI ||
+                                event.reason.contains("user not found", true) ||
                                 event.reason.contains("API key", true) ||
                                 event.reason.contains("authentication", true)
                         },
@@ -5206,6 +5369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun retryWithNextApiKey(event: RuntimeEvent.SessionFailed): Boolean {
         val current = _state.value
+        if (current.agentKind == AgentKind.CURSOR_CLI) return false
         if (current.agentKind == AgentKind.ANTIGRAVITY) return false
         if (!current.isRunning || current.activeSessionId != event.sessionId) return false
         if (!isApiKeyFailure(event.reason)) return false
@@ -5277,6 +5441,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "No Claude subscription token is saved. Add one from Agent → AI provider." -> str(R.string.md_reason_no_claude_token)
             "DeepSeek Harness is not installed. Open Settings → Coding agent to install it." -> str(R.string.md_reason_dsh_not_installed)
             "Antigravity CLI is not installed. Open Settings → Coding agent to install it." -> str(R.string.md_reason_antigravity_not_installed)
+            com.jarves.mh.runtime.CURSOR_NOT_INSTALLED -> str(R.string.md_reason_cursor_not_installed)
+            com.jarves.mh.runtime.CURSOR_NEEDS_KEY -> str(R.string.md_reason_cursor_needs_key)
+            com.jarves.mh.runtime.CURSOR_QUOTA -> str(R.string.md_reason_cursor_quota)
+            com.jarves.mh.runtime.CURSOR_NETWORK -> str(R.string.md_reason_cursor_network)
+            com.jarves.mh.runtime.CURSOR_TIMEOUT -> str(R.string.md_reason_cursor_timeout)
+            com.jarves.mh.runtime.CURSOR_INCOMPATIBLE -> str(R.string.md_reason_cursor_incompatible)
+            com.jarves.mh.runtime.CURSOR_FAILED -> str(R.string.md_reason_cursor_failed)
+            com.jarves.mh.runtime.CURSOR_NO_SPACE -> str(R.string.md_reason_cursor_no_space)
             "Antigravity did not answer. Try again." -> str(R.string.vm_antigravity_no_answer)
             else -> reason
         }
@@ -5316,8 +5488,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             current.messages
         } else {
             val startedAt = current.workSegmentStartedAtMillis ?: current.taskStartedAtMillis ?: System.currentTimeMillis()
+            // Reuse one snapshot id while this task is running. If that id is already in the
+            // chat (a previous attempt was restored), mint a new one so LazyColumn keys stay unique.
+            val preferredSnapshotId = "interrupted-${current.activeSessionId ?: chatId}"
+            val snapshotId = if (current.messages.any { it.id == preferredSnapshotId }) {
+                "interrupted-${UUID.randomUUID()}"
+            } else {
+                preferredSnapshotId
+            }
             current.messages + ChatMessage(
-                id = "interrupted-${current.activeSessionId ?: chatId}",
+                id = snapshotId,
                 fromUser = false,
                 text = "",
                 workItems = liveItems.map { it.copy(isComplete = true) } + ActivityItem(

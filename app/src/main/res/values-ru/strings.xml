@@ -209,4 +209,26 @@
 <string name="project_type">Тип проекта</string><string name="project_type_general">Обычный</string><string name="project_type_general_desc">Любой проект с кодом</string><string name="project_type_compose">Compose</string><string name="project_type_compose_desc">Современный интерфейс Android</string><string name="project_type_xml">XML</string><string name="project_type_xml_desc">Классический интерфейс Android</string>
 <string name="android_estimated_remaining">Осталось около %1$s</string><string name="android_finishing_build">Завершение сборки…</string><string name="android_estimating_build">Оценка времени сборки…</string><string name="android_usually_takes">Обычно около %1$s</string>
 <string name="diagnostics_title">Диагностика разработчика</string><string name="diagnostics_subtitle">Производительность, процессы и хранилище</string><string name="diagnostics_refresh">Обновить диагностику</string><string name="diagnostics_memory">Память</string><string name="diagnostics_app_memory">Память приложения</string><string name="diagnostics_java_heap">Куча Java</string><string name="diagnostics_processes">Активные процессы</string><string name="diagnostics_no_processes">Процессы разработки не запущены</string><string name="diagnostics_stop_inactive">Остановить неактивные процессы</string><string name="diagnostics_buffers">Буферы приложения</string><string name="diagnostics_messages">Сообщения чата</string><string name="diagnostics_live_activity">Строки активности</string><string name="diagnostics_terminal_buffer">Текст терминала</string><string name="diagnostics_build_log">Журнал сборки</string><string name="diagnostics_logcat_lines">Строки журнала</string><string name="diagnostics_file_entries">Загруженные файлы</string><string name="diagnostics_runtime_cache">Кэш вывода среды</string><string name="diagnostics_cached_output">Кэшированный вывод</string><string name="diagnostics_clear_cache">Очистить временный вывод</string><string name="diagnostics_cache_disabled">Доступно после завершения активной работы.</string><string name="diagnostics_recent_exit">Недавняя проблема</string><string name="diagnostics_no_recent_exit">Недавних сбоев и ANR нет</string><string name="diagnostics_inactive_stopped">Неактивные процессы остановлены</string><string name="diagnostics_cache_busy">Дождитесь завершения активной работы</string><string name="diagnostics_cache_cleared">Временный вывод очищен</string>
+
+    <string name="agent_title_cursor">Cursor CLI</string>
+    <string name="agent_subtitle_cursor">Cursor\'s coding agent · Cursor account API key</string>
+    <string name="md_reason_cursor_not_installed">Cursor CLI is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_reason_cursor_needs_key">Cursor CLI needs an API key. Open Settings → Coding agent.</string>
+    <string name="md_reason_cursor_quota">The Cursor account has hit its usage limit. Check the plan, or wait and try again.</string>
+    <string name="md_reason_cursor_network">Cursor CLI could not reach Cursor. Check the internet connection and try again.</string>
+    <string name="md_reason_cursor_timeout">Cursor CLI timed out. Files already written were kept.</string>
+    <string name="md_reason_cursor_incompatible">Cursor CLI is incompatible with this runtime build. Reinstall the pinned version from Settings.</string>
+    <string name="md_reason_cursor_failed">Cursor CLI could not complete the task.</string>
+    <string name="md_reason_cursor_no_space">Not enough free storage for Cursor CLI. Free at least 1.2 GB and install again.</string>
+    <string name="md_reason_cursor_bundle">Cursor CLI package is not ready to download. Its checksum has not been published yet.</string>
+    <string name="settings_cursor_key_hint">Paste a user API key from the Cursor dashboard.</string>
+    <string name="settings_cursor_force_warning">Cursor tasks run tools without asking for approval on each command. Use this only on projects you trust. Account limits still apply.</string>
+    <string name="settings_cursor_billing_note">Create the key at Cursor Dashboard, API Keys. Usage is billed to that Cursor account. Paste the key itself, not a Bearer header. Prompts go directly to Cursor. Mobile Harness does not add its own relay.</string>
+    <string name="settings_cursor_key_removed">The local Cursor API key was removed.</string>
+    <string name="settings_cursor_replace_key">Replace</string>
+    <string name="settings_cursor_model_using">Using model: %1$s</string>
+    <string name="settings_cursor_model_default">Account default</string>
+    <string name="settings_cursor_model_switch">The highlighted model is used for the next task. Tap another model to switch.</string>
+    <string name="settings_cursor_model_hint">Type a model id</string>
+    <string name="settings_cursor_model_use">Use model</string>
 </resources>

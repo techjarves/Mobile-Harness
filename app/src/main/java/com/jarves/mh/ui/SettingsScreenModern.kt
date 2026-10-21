@@ -67,6 +67,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -138,6 +139,10 @@ fun SettingsScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    onSaveCursorKey: (String) -> Unit = {},
+    onRemoveCursorKey: () -> Unit = {},
+    onRefreshCursorModels: () -> Unit = {},
+    onSetCursorModel: (String) -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
@@ -426,6 +431,17 @@ fun SettingsScreen(
                                 RuntimeInfoRow(agent.localizedTitle(), "v$version")
                             }
                         }
+                    }
+                    if (state.agentKind == AgentKind.CURSOR_CLI) {
+                        Spacer(Modifier.height(8.dp))
+                        CursorKeySettings(
+                            state = state,
+                            onSaveKey = onSaveCursorKey,
+                            onRemoveKey = onRemoveCursorKey,
+                            onRefreshModels = onRefreshCursorModels,
+                            onSetModel = onSetCursorModel,
+                            onTest = onPing,
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
@@ -1109,6 +1125,91 @@ private fun DebugUpdateChannelSection(
                 stringResource(R.string.st_current_url, initialUrl),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CursorKeySettings(
+    state: AppUiState,
+    onSaveKey: (String) -> Unit,
+    onRemoveKey: () -> Unit,
+    onRefreshModels: () -> Unit,
+    onSetModel: (String) -> Unit,
+    onTest: () -> Unit,
+) {
+    var draft by rememberSaveable { mutableStateOf("") }
+    var typedModel by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(state.cursorHasKey) {
+        if (state.cursorHasKey && state.cursorModels.isEmpty() && !state.cursorModelsLoading) onRefreshModels()
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.settings_cursor_billing_note), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.settings_cursor_force_warning), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        if (state.cursorHasKey) Text("••••••••", fontFamily = FontFamily.Monospace)
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            label = { Text(stringResource(R.string.settings_cursor_key_hint)) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onSaveKey(draft); draft = "" }, enabled = draft.isNotBlank()) {
+                Text(if (state.cursorHasKey) stringResource(R.string.settings_cursor_replace_key) else stringResource(R.string.action_save))
+            }
+            if (state.cursorHasKey) {
+                OutlinedButton(onClick = onRemoveKey) { Text(stringResource(R.string.action_remove)) }
+            }
+            OutlinedButton(onClick = onTest, enabled = state.cursorHasKey && state.apiPingStatus != ApiPingStatus.PINGING) {
+                Text(stringResource(R.string.action_test))
+            }
+        }
+        Text(
+            stringResource(
+                R.string.settings_cursor_model_using,
+                state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
+            ),
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            stringResource(R.string.settings_cursor_model_switch),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = typedModel,
+            onValueChange = { typedModel = it },
+            label = { Text(stringResource(R.string.settings_cursor_model_hint)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    onSetModel(typedModel)
+                    typedModel = ""
+                },
+                enabled = typedModel.isNotBlank(),
+            ) { Text(stringResource(R.string.settings_cursor_model_use)) }
+            TextButton(onClick = onRefreshModels, enabled = state.cursorHasKey && !state.cursorModelsLoading) {
+                Text(stringResource(R.string.provider_refresh_models))
+            }
+        }
+        state.cursorModels.forEach { modelId ->
+            val selected = modelId == state.cursorModel
+            Text(
+                if (selected) "● $modelId" else modelId,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSetModel(modelId) }
+                    .padding(vertical = 8.dp),
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
         }
     }
