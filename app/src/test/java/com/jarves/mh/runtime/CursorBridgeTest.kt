@@ -55,7 +55,7 @@ class CursorBridgeTest {
         val event = CursorEventParser.parse(
             """{"type":"system","subtype":"init","session_id":"sess-early","model":"default"}""",
         )
-        assertEquals(CursorParsedEvent.Session("sess-early"), event)
+        assertEquals(CursorParsedEvent.Session("sess-early", "default"), event)
     }
 
     @Test
@@ -96,6 +96,38 @@ class CursorBridgeTest {
             """{"type":"result","subtype":"success","is_error":false,"session_id":"sess-1","result":"done"}""",
         )
         assertEquals(CursorParsedEvent.Success("sess-1", "done"), event)
+    }
+
+    @Test
+    fun parserReadsUsageWhenCursorSendsItAndOmitsItWhenAbsent() {
+        val withUsage = CursorEventParser.parse(
+            """{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"inputTokens":2000000,"outputTokens":8000000,"cacheReadTokens":10,"cacheWriteTokens":5}}""",
+        )
+        val usage = (withUsage as CursorParsedEvent.Success).usage
+        assertEquals(2_000_000L, usage?.inputTokens)
+        assertEquals(8_000_000L, usage?.outputTokens)
+        assertEquals(15L, (usage?.cacheReadTokens ?: 0) + (usage?.cacheWriteTokens ?: 0))
+        val without = CursorEventParser.parse(
+            """{"type":"result","subtype":"error","is_error":true,"error":"stopped"}""",
+        )
+        assertEquals(CursorParsedEvent.Failure("stopped"), without)
+    }
+
+    @Test
+    fun usageNoteShowsOnlyTheDetailsCursorProvided() {
+        val usage = CursorTokenUsage(inputTokens = 2_000_000, outputTokens = 8_000_000)
+        assertEquals(
+            "Model: claude-opus-4-5\nInput: 2,000,000\nOutput: 8,000,000",
+            cursorUsageNote(cursorShownModel(null, "claude-opus-4-5"), usage),
+        )
+        assertEquals(
+            "Input: 2,000,000\nOutput: 8,000,000",
+            cursorUsageNote(cursorShownModel(null, "default"), usage),
+        )
+        assertEquals("Model: grok-4.5", cursorUsageNote(cursorShownModel("grok-4.5", null), null))
+        assertNull(cursorUsageNote(cursorShownModel(null, "auto"), null))
+        val cached = cursorUsageNote(cursorShownModel(null, "gpt-5.5"), usage.copy(cacheReadTokens = 1_000))
+        assertTrue(cached!!.contains("Cache: 1,000"))
     }
 
     @Test
@@ -183,6 +215,58 @@ class CursorBridgeTest {
         val catalog = parseCursorModelCatalog(output)
         assertEquals(listOf("composer-2.5", "gpt-5.5"), catalog.ids)
         assertEquals("composer-2.5", catalog.defaultId)
+        assertEquals("Composer 2.5", catalog.models[0].name)
+        assertEquals("GPT-5.5", catalog.models[1].name)
+    }
+
+    @Test
+    fun modelSearchMatchesNameVersionAndContextWindow() {
+        val output = """
+            claude-opus-4-5 - Claude Opus 4.5
+            grok-4.5 - Grok 4.5
+            composer-2.5 - Composer 2.5
+            gemini-2.5-pro - Gemini 2.5 Pro 1M context
+            claude-sonnet-4-5 - Claude Sonnet 4.5 200K context, 1M context
+            gpt-5.5 - GPT-5.5
+        """.trimIndent()
+        val models = parseCursorModelCatalog(output).models
+        assertEquals("1M", models.first { it.id == "gemini-2.5-pro" }.contextWindowLabel())
+        assertEquals("1M · Gemini 2.5 Pro", models.first { it.id == "gemini-2.5-pro" }.title())
+        assertEquals("200K–1M", models.first { it.id == "claude-sonnet-4-5" }.contextWindowLabel())
+
+        assertEquals(
+            listOf("claude-opus-4-5", "grok-4.5", "claude-sonnet-4-5"),
+            filterCursorModels(models, "4.5").map { it.id },
+        )
+        assertEquals(
+            listOf("gemini-2.5-pro", "claude-sonnet-4-5"),
+            filterCursorModels(models, "1m").map { it.id },
+        )
+        assertEquals(
+            listOf("gemini-2.5-pro"),
+            filterCursorModels(models, "google").map { it.id },
+        )
+        assertEquals(
+            listOf("claude-sonnet-4-5"),
+            filterCursorModels(models, "claude 1m").map { it.id },
+        )
+        assertEquals(
+            listOf("grok-4.5"),
+            filterCursorModels(models, "grok").map { it.id },
+        )
+        assertEquals(models.map { it.id }, filterCursorModels(models, "  ").map { it.id })
+    }
+
+    @Test
+    fun modelJsonKeepsDisplayNameAndContextLimit() {
+        val catalog = parseCursorModelCatalog(
+            """{"models":[{"id":"claude-opus-4-8","displayName":"Claude Opus 4.8","contextTokenLimit":200000,"contextTokenLimitForMaxMode":1000000}]}""",
+        )
+        val model = catalog.models.single()
+        assertEquals("Claude Opus 4.8", model.name)
+        assertEquals("200K–1M", model.contextWindowLabel())
+        assertEquals(listOf("claude-opus-4-8"), filterCursorModels(catalog.models, "1000000").map { it.id })
+        assertEquals(listOf("claude-opus-4-8"), filterCursorModels(catalog.models, "opus").map { it.id })
     }
 
     @Test

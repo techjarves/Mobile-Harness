@@ -400,7 +400,12 @@
     <string name="settings_cursor_replace_key">Replace</string>
     <string name="settings_cursor_model_using">Using model: %1$s</string>
     <string name="settings_cursor_model_default">Account default</string>
-    <string name="settings_cursor_model_switch">The highlighted model is used for the next task. Tap another model to switch.</string>
-    <string name="settings_cursor_model_hint">Type a model id</string>
+    <string name="settings_cursor_model_switch">Search by name, version, or context window. Tap a model to use it on the next task.</string>
+    <string name="settings_cursor_model_hint">Search models</string>
+    <string name="settings_cursor_model_none">No models match \"%1$s\".</string>
     <string name="settings_cursor_model_use">Use model</string>
+    <string name="cursor_usage_model">Model: %1$s</string>
+    <string name="cursor_usage_input">Input: %1$s</string>
+    <string name="cursor_usage_output">Output: %1$s</string>
+    <string name="cursor_usage_cache">Cache: %1$s</string>
 </resources>

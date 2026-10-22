@@ -1167,10 +1167,11 @@ private fun CursorKeySettings(
                 Text(stringResource(R.string.action_test))
             }
         }
+        val selectedCursor = state.cursorModels.firstOrNull { it.id == state.cursorModel }
         Text(
             stringResource(
                 R.string.settings_cursor_model_using,
-                state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
+                selectedCursor?.title() ?: state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
             ),
             fontWeight = FontWeight.SemiBold,
         )
@@ -1179,38 +1180,15 @@ private fun CursorKeySettings(
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        OutlinedTextField(
-            value = typedModel,
-            onValueChange = { typedModel = it },
-            label = { Text(stringResource(R.string.settings_cursor_model_hint)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+        CursorModelPicker(
+            models = state.cursorModels,
+            selectedId = state.cursorModel,
+            query = typedModel,
+            onQueryChange = { typedModel = it },
+            loading = state.cursorModelsLoading,
+            enabled = state.cursorHasKey,
+            onRefresh = onRefreshModels,
+            onSelect = onSetModel,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = {
-                    onSetModel(typedModel)
-                    typedModel = ""
-                },
-                enabled = typedModel.isNotBlank(),
-            ) { Text(stringResource(R.string.settings_cursor_model_use)) }
-            TextButton(onClick = onRefreshModels, enabled = state.cursorHasKey && !state.cursorModelsLoading) {
-                Text(stringResource(R.string.provider_refresh_models))
-            }
-        }
-        state.cursorModels.forEach { modelId ->
-            val selected = modelId == state.cursorModel
-            Text(
-                if (selected) "● $modelId" else modelId,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSetModel(modelId) }
-                    .padding(vertical = 8.dp),
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-        }
     }
 }

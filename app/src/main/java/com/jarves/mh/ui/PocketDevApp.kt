@@ -4170,7 +4170,8 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
         state.agentKind == AgentKind.ANTIGRAVITY ->
             state.antigravityModel.ifBlank { agentTitle }
         state.agentKind == AgentKind.CURSOR_CLI ->
-            state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) }
+            state.cursorModels.firstOrNull { it.id == state.cursorModel }?.title()
+                ?: state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) }
         state.provider.model.isNotBlank() -> state.provider.model
         state.provider.baseUrl.isNotBlank() -> {
             runCatching { java.net.URI(state.provider.baseUrl).host ?: providerTitle }

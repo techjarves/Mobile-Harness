@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -109,6 +111,8 @@ import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.runtime.AntigravityAuthStatus
+import com.jarves.mh.runtime.CursorModel
+import com.jarves.mh.runtime.filterCursorModels
 import com.jarves.mh.ui.theme.PocketBlue
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
@@ -2211,6 +2215,113 @@ private fun defaultModelsForProvider(kind: ProviderKind, context: android.conten
 }
 
 @Composable
+internal fun CursorModelPicker(
+    models: List<CursorModel>,
+    selectedId: String,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    loading: Boolean,
+    enabled: Boolean,
+    onRefresh: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    val visible = filterCursorModels(models, query)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text(stringResource(R.string.settings_cursor_model_hint)) },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        IconButton(onClick = onRefresh, enabled = enabled && !loading) {
+            if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Default.Refresh, stringResource(R.string.provider_refresh_models))
+        }
+    }
+    if (query.isNotBlank() && visible.isEmpty()) {
+        Text(
+            stringResource(R.string.settings_cursor_model_none, query.trim()),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val customId = query.trim()
+        if (' ' !in customId) {
+            Button(onClick = { onSelect(customId); onQueryChange("") }) {
+                Text(stringResource(R.string.settings_cursor_model_use))
+            }
+        }
+    }
+    if (visible.isNotEmpty()) {
+        val listState = rememberLazyListState()
+        LaunchedEffect(selectedId, models) {
+            val index = visible.indexOfFirst { it.id == selectedId }
+            if (index >= 0) listState.scrollToItem(index)
+        }
+        val rowHeight = 56.dp
+        val rowGap = 4.dp
+        val listHeight = (rowHeight * visible.size + rowGap * (visible.size - 1))
+            .coerceAtMost(400.dp)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxWidth().height(listHeight),
+            verticalArrangement = Arrangement.spacedBy(rowGap),
+        ) {
+            itemsIndexed(visible, key = { index, model -> "${model.id}#$index" }) { _, model ->
+                val selected = model.id == selectedId
+                val shape = RoundedCornerShape(10.dp)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .border(
+                            width = 1.5.dp,
+                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            shape = shape,
+                        )
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else Color.Transparent,
+                            shape,
+                        )
+                        .clickable { onSelect(model.id) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        model.contextWindowLabel()?.let { window ->
+                            Text(
+                                window,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            model.name.ifBlank { model.id },
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Text(
+                        model.id,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AgentCursorCard(
     state: AppUiState,
     onSaveKey: (String) -> Unit,
@@ -2269,10 +2380,11 @@ private fun AgentCursorCard(
                 Text(stringResource(R.string.action_test))
             }
         }
+        val selectedCursor = state.cursorModels.firstOrNull { it.id == state.cursorModel }
         Text(
             stringResource(
                 R.string.settings_cursor_model_using,
-                state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
+                selectedCursor?.title() ?: state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
             ),
             fontWeight = FontWeight.SemiBold,
         )
@@ -2281,41 +2393,16 @@ private fun AgentCursorCard(
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = typedModel,
-                onValueChange = { typedModel = it },
-                label = { Text(stringResource(R.string.settings_cursor_model_hint)) },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            IconButton(onClick = onRefreshModels, enabled = !state.cursorModelsLoading && state.cursorHasKey) {
-                if (state.cursorModelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                else Icon(Icons.Default.Refresh, stringResource(R.string.provider_refresh_models))
-            }
-        }
-        Button(
-            onClick = {
-                onSetModel(typedModel)
-                typedModel = ""
-            },
-            enabled = typedModel.isNotBlank(),
-        ) { Text(stringResource(R.string.settings_cursor_model_use)) }
-        state.cursorModels.forEach { modelId ->
-            val selected = modelId == state.cursorModel
-            Text(
-                if (selected) "● $modelId" else modelId,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSetModel(modelId) }
-                    .padding(vertical = 8.dp),
-            )
-        }
+        CursorModelPicker(
+            models = state.cursorModels,
+            selectedId = state.cursorModel,
+            query = typedModel,
+            onQueryChange = { typedModel = it },
+            loading = state.cursorModelsLoading,
+            enabled = state.cursorHasKey,
+            onRefresh = onRefreshModels,
+            onSelect = onSetModel,
+        )
         state.apiPingMessage?.let { message ->
             Text(message, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

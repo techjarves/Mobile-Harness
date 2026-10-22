@@ -384,7 +384,7 @@ data class AppUiState(
     val antigravityModels: List<String> = emptyList(),
     val antigravityModelsLoading: Boolean = false,
     val cursorModel: String = "",
-    val cursorModels: List<String> = emptyList(),
+    val cursorModels: List<com.jarves.mh.runtime.CursorModel> = emptyList(),
     val cursorModelsLoading: Boolean = false,
     val cursorHasKey: Boolean = false,
     val androidBuildRunning: Boolean = false,
@@ -2436,7 +2436,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val chosen = current.cursorModel.ifBlank { catalog.defaultId.orEmpty() }
                     if (chosen.isNotBlank() && chosen != current.cursorModel) preferences.cursorModel = chosen
                     current.copy(
-                        cursorModels = catalog.ids,
+                        cursorModels = catalog.models,
                         cursorModel = chosen.ifBlank { current.cursorModel },
                         cursorModelsLoading = false,
                     )

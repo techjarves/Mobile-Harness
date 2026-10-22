@@ -43,13 +43,27 @@ internal const val CURSOR_NETWORK =
     "Cursor CLI could not reach Cursor. Check the internet connection and try again."
 internal const val CURSOR_FAILED = "Cursor CLI could not complete the task."
 
+internal data class CursorTokenUsage(
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val cacheReadTokens: Long = 0,
+    val cacheWriteTokens: Long = 0,
+) {
+    fun hasAny(): Boolean =
+        inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheWriteTokens > 0
+}
+
 internal sealed class CursorParsedEvent {
-    data class Session(val sessionId: String) : CursorParsedEvent()
+    data class Session(val sessionId: String, val model: String? = null) : CursorParsedEvent()
     data class AssistantDelta(val text: String) : CursorParsedEvent()
     data class ToolStarted(val name: String, val detail: String) : CursorParsedEvent()
     data class ToolCompleted(val name: String, val detail: String) : CursorParsedEvent()
-    data class Success(val sessionId: String?, val resultText: String?) : CursorParsedEvent()
-    data class Failure(val message: String) : CursorParsedEvent()
+    data class Success(
+        val sessionId: String?,
+        val resultText: String?,
+        val usage: CursorTokenUsage? = null,
+    ) : CursorParsedEvent()
+    data class Failure(val message: String, val usage: CursorTokenUsage? = null) : CursorParsedEvent()
 }
 
 /** Newline-delimited Cursor stream-json. Unknown types and fields are ignored. */
@@ -59,7 +73,8 @@ internal object CursorEventParser {
         return when (root.optString("type")) {
             "system" -> {
                 if (root.optString("subtype") != "init") return null
-                root.optString("session_id").takeIf(String::isNotBlank)?.let(CursorParsedEvent::Session)
+                val sessionId = root.optString("session_id").takeIf(String::isNotBlank) ?: return null
+                CursorParsedEvent.Session(sessionId, root.optString("model").takeIf(String::isNotBlank))
             }
             "assistant" -> parseAssistant(root)
             "tool_call" -> parseTool(root)
@@ -91,15 +106,69 @@ internal object CursorEventParser {
         val sessionId = root.optString("session_id").takeIf(String::isNotBlank)
         val isError = root.optBoolean("is_error", false)
         val subtype = root.optString("subtype")
+        val usage = parseCursorUsage(root)
         if (!isError && subtype == "success") {
-            return CursorParsedEvent.Success(sessionId, root.optString("result").takeIf(String::isNotBlank))
+            return CursorParsedEvent.Success(sessionId, root.optString("result").takeIf(String::isNotBlank), usage)
         }
         if (isError || subtype.isNotBlank()) {
             val message = root.optString("error").ifBlank { root.optString("result") }
-            return CursorParsedEvent.Failure(message.ifBlank { CURSOR_FAILED })
+            return CursorParsedEvent.Failure(message.ifBlank { CURSOR_FAILED }, usage)
         }
         return null
     }
+}
+
+/** Model id to show. A blank or account-default report is omitted unless the user selected one. */
+internal fun cursorShownModel(requested: String?, reported: String?): String? {
+    val fromCli = reported?.trim()?.takeIf { it.isNotEmpty() && !it.equals("default", true) && !it.equals("auto", true) }
+    if (fromCli != null) return fromCli
+    return requested?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+internal fun parseCursorUsage(root: JSONObject): CursorTokenUsage? {
+    val usage = root.optJSONObject("usage") ?: return null
+    fun long(vararg names: String): Long {
+        names.forEach { name ->
+            if (!usage.has(name) || usage.isNull(name)) return@forEach
+            val number = usage.optLong(name, Long.MIN_VALUE)
+            if (number != Long.MIN_VALUE && number >= 0L) return number
+        }
+        return 0L
+    }
+    return CursorTokenUsage(
+        inputTokens = long("inputTokens", "input_tokens"),
+        outputTokens = long("outputTokens", "output_tokens"),
+        cacheReadTokens = long("cacheReadTokens", "cache_read_tokens"),
+        cacheWriteTokens = long("cacheWriteTokens", "cache_write_tokens"),
+    ).takeIf { it.hasAny() }
+}
+
+internal fun formatTokenCount(tokens: Long): String {
+    val digits = kotlin.math.abs(tokens).toString()
+    val grouped = digits.reversed().chunked(3).joinToString(",").reversed()
+    return if (tokens < 0) "-$grouped" else grouped
+}
+
+/** One short note. Missing model or missing usage is left out instead of showing a placeholder. */
+internal fun cursorUsageNote(
+    model: String?,
+    usage: CursorTokenUsage?,
+    modelLabel: (String) -> String = { "Model: $it" },
+    inputLabel: (String) -> String = { "Input: $it" },
+    outputLabel: (String) -> String = { "Output: $it" },
+    cacheLabel: (String) -> String = { "Cache: $it" },
+): String? {
+    val counted = usage?.takeIf { it.hasAny() }
+    if (model.isNullOrBlank() && counted == null) return null
+    return buildString {
+        if (!model.isNullOrBlank()) appendLine(modelLabel(model))
+        if (counted != null) {
+            appendLine(inputLabel(formatTokenCount(counted.inputTokens)))
+            appendLine(outputLabel(formatTokenCount(counted.outputTokens)))
+            val cache = counted.cacheReadTokens + counted.cacheWriteTokens
+            if (cache > 0L) appendLine(cacheLabel(formatTokenCount(cache)))
+        }
+    }.trim()
 }
 
 private fun assistantText(root: JSONObject): String {
@@ -283,10 +352,37 @@ internal fun cursorWorkspacePrompt(
     return preamble + historyBlock + "\n\n" + prompt
 }
 
+data class CursorModel(
+    val id: String,
+    val name: String = id,
+    val contextTokens: Long? = null,
+    val maxContextTokens: Long? = null,
+    val isDefault: Boolean = false,
+) {
+    /** Context window in front of the display name, for example "1M · Claude Opus 4.5". */
+    fun title(): String {
+        val window = contextWindowLabel()
+        val shown = name.ifBlank { id }
+        return if (window.isNullOrBlank()) shown else "$window · $shown"
+    }
+
+    fun contextWindowLabel(): String? {
+        val standard = contextTokens?.let(::formatContextTokens)
+        val extended = maxContextTokens?.takeIf { it != contextTokens }?.let(::formatContextTokens)
+        return when {
+            standard != null && extended != null -> "$standard–$extended"
+            standard != null -> standard
+            else -> extended
+        }
+    }
+}
+
 data class CursorModelCatalog(
-    val ids: List<String>,
+    val models: List<CursorModel>,
     val defaultId: String?,
-)
+) {
+    val ids: List<String> get() = models.map { it.id }
+}
 
 internal fun parseCursorModelList(output: String): List<String> = parseCursorModelCatalog(output).ids
 
@@ -294,14 +390,13 @@ internal fun parseCursorModelCatalog(output: String): CursorModelCatalog {
     val trimmed = output.replace(CURSOR_ANSI, "").trim()
     if (trimmed.startsWith("{")) {
         val models = runCatching { JSONObject(trimmed).optJSONArray("models") }.getOrNull()
-        if (models != null) return CursorModelCatalog(jsonModelIds(models), null)
+        if (models != null) return catalogFrom(jsonModels(models))
     }
     if (trimmed.startsWith("[")) {
         val array = runCatching { JSONArray(trimmed) }.getOrNull()
-        if (array != null) return CursorModelCatalog(jsonModelIds(array), null)
+        if (array != null) return catalogFrom(jsonModels(array))
     }
-    val ids = mutableListOf<String>()
-    var defaultId: String? = null
+    val models = mutableListOf<CursorModel>()
     trimmed.lineSequence().forEach { raw ->
         val line = raw.trim()
         if (line.isEmpty() || line.startsWith("#") || line.startsWith("Tip:", true) ||
@@ -312,23 +407,152 @@ internal fun parseCursorModelCatalog(output: String): CursorModelCatalog {
         val described = Regex("""^(\S+)\s+-\s+(.+)$""").matchEntire(line)
         val id = described?.groupValues?.get(1) ?: line.takeIf { ' ' !in it }
         if (id == null || id.length !in 2..160) return@forEach
-        ids += id
-        val detail = described?.groupValues?.get(2).orEmpty()
-        if (defaultId == null && detail.contains("default", true)) defaultId = id
+        models += cursorModelFromText(id, described?.groupValues?.get(2).orEmpty())
     }
-    return CursorModelCatalog(ids.distinct(), defaultId?.takeIf { it in ids })
+    return catalogFrom(models)
 }
 
-private val CURSOR_ANSI = Regex("\\u001B\\[[0-9;]*[A-Za-z]")
+/** Every query word must match the name, id, vendor, version, or context window. */
+internal fun filterCursorModels(models: List<CursorModel>, query: String): List<CursorModel> {
+    val tokens = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (tokens.isEmpty()) return models
+    return models.filter { model -> tokens.all { token -> cursorModelMatches(model, token) } }
+}
 
-private fun jsonModelIds(array: JSONArray): List<String> =
+internal fun cursorModelMatches(model: CursorModel, token: String): Boolean {
+    val wanted = parseContextQuery(token)
+    if (wanted != null) {
+        val limits = listOfNotNull(model.contextTokens, model.maxContextTokens)
+        if (limits.any { sameContextLabel(it, wanted) }) return true
+    }
+    val needle = looseSearchText(token)
+    if (needle.isEmpty()) return true
+    return looseSearchText(model.searchBlob()).contains(needle)
+}
+
+internal fun formatContextTokens(tokens: Long): String {
+    if (tokens >= 1_000_000L) {
+        val whole = tokens / 1_000_000L
+        val fraction = ((tokens % 1_000_000L) / 100_000L).toInt()
+        return if (fraction == 0) "${whole}M" else "$whole.${fraction}M"
+    }
+    if (tokens >= 1_000L) {
+        val whole = tokens / 1_000L
+        val fraction = ((tokens % 1_000L) / 100L).toInt()
+        return if (fraction == 0) "${whole}K" else "$whole.${fraction}K"
+    }
+    return tokens.toString()
+}
+
+private fun catalogFrom(models: List<CursorModel>): CursorModelCatalog {
+    val distinct = models.distinctBy { it.id }
+    return CursorModelCatalog(distinct, distinct.firstOrNull { it.isDefault }?.id)
+}
+
+private fun CursorModel.searchBlob(): String = buildString {
+    append(id).append(' ').append(name).append(' ')
+    contextWindowLabel()?.let { append(it).append(' ') }
+    append(vendorSearchTerms(id, name))
+}
+
+private fun vendorSearchTerms(id: String, name: String): String {
+    val blob = "$id $name".lowercase()
+    return buildString {
+        if ("gemini" in blob || "gemma" in blob) append("google gemini ")
+        if ("claude" in blob) append("anthropic claude ")
+        if ("gpt" in blob || "openai" in blob) append("openai gpt ")
+        if ("grok" in blob) append("xai grok ")
+        if ("composer" in blob) append("cursor composer ")
+    }
+}
+
+private fun looseSearchText(value: String): String =
+    value.lowercase()
+        .replace(Regex("(?<=\\d)-(?=\\d)"), ".")
+        .replace(Regex("[^a-z0-9.]+"), "")
+
+private fun sameContextLabel(left: Long, right: Long): Boolean =
+    formatContextTokens(left).equals(formatContextTokens(right), ignoreCase = true)
+
+/** "1m", "1 million", and "1000000" are context sizes. "4.5" is a version, not a size. */
+private fun parseContextQuery(token: String): Long? {
+    val compact = token.lowercase().replace(Regex("[\\s,_]"), "")
+    CONTEXT_AMOUNT.find(compact)?.let { return it.toContextTokens() }
+    val digits = compact.replace(",", "")
+    val plain = digits.toLongOrNull() ?: return null
+    return plain.takeIf { it >= 1_000L }
+}
+
+private fun cursorModelFromText(id: String, detail: String): CursorModel {
+    val isDefault = detail.contains("default", ignoreCase = true)
+    val cleaned = detail.replace(STATUS_PARENS, " ").replace(Regex("\\s+"), " ").trim()
+    val amounts = CONTEXT_AMOUNT.findAll("$id $cleaned").map { it.toContextTokens() }.distinct().sorted().toList()
+    val name = stripContextPhrases(cleaned).ifBlank {
+        stripContextPhrases(id.substringBefore('[')).ifBlank { id.substringBefore('[') }
+    }
+    return CursorModel(
+        id = id,
+        name = name,
+        contextTokens = amounts.firstOrNull(),
+        maxContextTokens = amounts.lastOrNull()?.takeIf { amounts.size > 1 },
+        isDefault = isDefault,
+    )
+}
+
+private fun stripContextPhrases(value: String): String =
+    value.replace(CONTEXT_PHRASE, " ")
+        .replace(Regex("\\s+"), " ")
+        .trim(' ', '-', '·', '|', ',', '/')
+
+private fun jsonModels(array: JSONArray): List<CursorModel> =
     (0 until array.length()).mapNotNull { index ->
         val obj = array.optJSONObject(index)
         when {
-            obj != null -> obj.optString("id").ifBlank { obj.optString("name") }.takeIf(String::isNotBlank)
-            else -> array.optString(index).takeIf { it.isNotBlank() && !it.startsWith("{") && !it.startsWith("[") }
+            obj != null -> jsonModel(obj)
+            else -> array.optString(index)
+                .takeIf { it.isNotBlank() && !it.startsWith("{") && !it.startsWith("[") }
+                ?.let { cursorModelFromText(it, "") }
         }
-    }.distinct()
+    }
+
+private fun jsonModel(obj: JSONObject): CursorModel? {
+    val id = obj.optString("id").ifBlank { obj.optString("modelId") }.ifBlank { obj.optString("name") }
+        .takeIf { it.isNotBlank() } ?: return null
+    val display = obj.optString("displayName")
+        .ifBlank { obj.optString("clientDisplayName") }
+        .ifBlank { obj.optString("display_name") }
+        .ifBlank { obj.optString("client_display_name") }
+    val parsed = cursorModelFromText(id, display)
+    val context = obj.longField("contextTokenLimit", "context_token_limit", "contextWindow", "contextTokens")
+    val maxContext = obj.longField("contextTokenLimitForMaxMode", "context_token_limit_for_max_mode")
+    return parsed.copy(
+        name = stripContextPhrases(display).ifBlank { parsed.name },
+        contextTokens = context ?: parsed.contextTokens,
+        maxContextTokens = maxContext ?: parsed.maxContextTokens,
+        isDefault = parsed.isDefault || obj.optBoolean("default") || obj.optBoolean("isDefault"),
+    )
+}
+
+private fun JSONObject.longField(vararg names: String): Long? {
+    names.forEach { name ->
+        if (!has(name) || isNull(name)) return@forEach
+        val number = optLong(name, Long.MIN_VALUE)
+        if (number != Long.MIN_VALUE && number > 0L) return number
+    }
+    return null
+}
+
+private fun MatchResult.toContextTokens(): Long {
+    val number = groupValues[1].toDouble()
+    val unit = groupValues[2].lowercase()
+    val tokens = if (unit == "m") number * 1_000_000.0 else number * 1_000.0
+    return tokens.toLong()
+}
+
+private val CURSOR_ANSI = Regex("\\u001B\\[[0-9;]*[A-Za-z]")
+private val STATUS_PARENS = Regex("""(?i)\((?:current|default)(?:\s*,\s*(?:current|default))*\)""")
+private val CONTEXT_AMOUNT = Regex("""(?i)(?:context\s*=\s*)?(\d+(?:\.\d+)?)[-_\s]*([km])(?:illion)?(?=$|[^a-z])""")
+private val CONTEXT_PHRASE = Regex("""(?i)(?:\s*[·|,/-]\s*)?(?:context\s*=\s*)?\d+(?:\.\d+)?[-_\s]*[km](?:illion)?\s*(?:tokens?|context|ctx)?""")
 
 private const val HELLO_TIMEOUT_MILLIS = 90_000L
 private const val UTILITY_TIMEOUT_MILLIS = 45_000L
@@ -518,9 +742,24 @@ class CursorRuntimeBridge(
             val pending = StringBuilder()
             var resultSeen = false
             var assistantTextSeen = false
+            var reportedModel: String? = null
+            suspend fun emitUsage(usage: CursorTokenUsage?) {
+                val summary = cursorUsageNote(
+                    model = cursorShownModel(model(), reportedModel),
+                    usage = usage,
+                    modelLabel = { context.getString(R.string.cursor_usage_model, it) },
+                    inputLabel = { context.getString(R.string.cursor_usage_input, it) },
+                    outputLabel = { context.getString(R.string.cursor_usage_output, it) },
+                    cacheLabel = { context.getString(R.string.cursor_usage_cache, it) },
+                ) ?: return
+                eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, "\n\n$summary"))
+            }
             suspend fun handleLine(line: String) {
                 when (val event = CursorEventParser.parse(line)) {
-                    is CursorParsedEvent.Session -> saveConversationId(projectId, event.sessionId)
+                    is CursorParsedEvent.Session -> {
+                        saveConversationId(projectId, event.sessionId)
+                        event.model?.takeIf(String::isNotBlank)?.let { reportedModel = it }
+                    }
                     is CursorParsedEvent.AssistantDelta -> {
                         assistantTextSeen = true
                         pushForegroundProgress(R.string.rt_bridge_working, "Cursor CLI")
@@ -542,9 +781,11 @@ class CursorRuntimeBridge(
                             assistantTextSeen = true
                             eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.resultText))
                         }
+                        emitUsage(event.usage)
                         resultSeen = true
                     }
                     is CursorParsedEvent.Failure -> {
+                        emitUsage(event.usage)
                         throw CursorSessionException(cursorFriendlyError(scrubCursorSecret(event.message, key)))
                     }
                     null -> Unit
