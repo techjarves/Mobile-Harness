@@ -387,6 +387,10 @@ data class AppUiState(
     val cursorModels: List<com.jarves.mh.runtime.CursorModel> = emptyList(),
     val cursorModelsLoading: Boolean = false,
     val cursorHasKey: Boolean = false,
+    val cursorUsage: com.jarves.mh.runtime.CursorUsage? = null,
+    val cursorUsageLoading: Boolean = false,
+    val cursorUsageMessage: String? = null,
+    val cursorUsageUpdatedAt: Long = 0L,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
     val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
@@ -514,6 +518,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             antigravityEffort = preferences.antigravityEffort,
             cursorModel = preferences.cursorModel,
             cursorHasKey = cursorKeySaved(),
+            cursorUsage = preferences.cursorUsage,
+            cursorUsageUpdatedAt = preferences.cursorUsageUpdatedAt,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
             languageCode = preferences.languageCode,
@@ -2401,8 +2407,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeCursorKey() {
         vault.remove(CURSOR_VAULT_ID)
+        preferences.cursorUsage = null
+        preferences.cursorUsageUpdatedAt = 0L
         _state.update {
-            it.copy(cursorHasKey = false, toastMessage = str(R.string.settings_cursor_key_removed))
+            it.copy(
+                cursorHasKey = false,
+                cursorUsage = null,
+                cursorUsageUpdatedAt = 0L,
+                cursorUsageMessage = null,
+                toastMessage = str(R.string.settings_cursor_key_removed),
+            )
         }
         viewModelScope.launch {
             runCatching { cursorRuntime.logout() }
@@ -2455,8 +2469,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun finishCursorOnboarding() {
+    fun refreshCursorUsage() {
+        if (_state.value.cursorUsageLoading) return
         if (!cursorKeySaved()) {
+            _state.update {
+                it.copy(
+                    cursorHasKey = false,
+                    cursorUsageLoading = false,
+                    cursorUsageMessage = str(R.string.md_reason_cursor_needs_key),
+                )
+            }
+            return
+        }
+        _state.update { it.copy(cursorUsageLoading = true, cursorUsageMessage = null) }
+        viewModelScope.launch {
+            try {
+                val usage = cursorRuntime.fetchUsage()
+                val now = System.currentTimeMillis()
+                if (usage.hasPercent() || usage.onDemand != null || usage.planName != null) {
+                    preferences.cursorUsage = usage
+                    preferences.cursorUsageUpdatedAt = now
+                }
+                _state.update {
+                    it.copy(
+                        cursorUsage = usage,
+                        cursorUsageLoading = false,
+                        cursorUsageMessage = null,
+                        cursorUsageUpdatedAt = now,
+                    )
+                }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(cursorUsageLoading = false) }
+                throw error
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(
+                        cursorUsageLoading = false,
+                        cursorUsageMessage = localizedFailureReason(error.message.orEmpty()),
+                    )
+                }
+            }
+        }
+    }
+
+    fun finishCursorOnboarding() {        if (!cursorKeySaved()) {
             _state.update { it.copy(cursorHasKey = false, toastMessage = str(R.string.md_reason_cursor_needs_key)) }
             return
         }
@@ -5449,6 +5505,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             com.jarves.mh.runtime.CURSOR_INCOMPATIBLE -> str(R.string.md_reason_cursor_incompatible)
             com.jarves.mh.runtime.CURSOR_FAILED -> str(R.string.md_reason_cursor_failed)
             com.jarves.mh.runtime.CURSOR_NO_SPACE -> str(R.string.md_reason_cursor_no_space)
+            com.jarves.mh.runtime.CURSOR_USAGE_UNAVAILABLE -> str(R.string.settings_cursor_usage_empty)
             "Antigravity did not answer. Try again." -> str(R.string.vm_antigravity_no_answer)
             else -> reason
         }

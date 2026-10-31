@@ -56,6 +56,18 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_cursor_model", "") ?: ""
         set(value) { preferences.edit().putString("agent_cursor_model", value).apply() }
 
+    /** Cached Cursor plan usage, so the last reading shows offline. JSON from CursorUsage. */
+    var cursorUsage: com.jarves.mh.runtime.CursorUsage?
+        get() = preferences.getString("agent_cursor_usage", null)
+            ?.let { runCatching { com.jarves.mh.runtime.CursorUsage.fromJson(org.json.JSONObject(it)) }.getOrNull() }
+        set(value) {
+            preferences.edit().putString("agent_cursor_usage", value?.toJson()?.toString()).apply()
+        }
+
+    var cursorUsageUpdatedAt: Long
+        get() = preferences.getLong("agent_cursor_usage_at", 0L)
+        set(value) { preferences.edit().putLong("agent_cursor_usage_at", value).apply() }
+
     var antigravityEffort: String
         get() = preferences.getString("agent_antigravity_effort", "high") ?: "high"
         set(value) { preferences.edit().putString("agent_antigravity_effort", value).apply() }

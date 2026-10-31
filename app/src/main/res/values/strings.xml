@@ -408,4 +408,19 @@
     <string name="cursor_usage_input">Input: %1$s</string>
     <string name="cursor_usage_output">Output: %1$s</string>
     <string name="cursor_usage_cache">Cache: %1$s</string>
+    <string name="settings_cursor_usage_title">Plan usage</string>
+    <string name="settings_cursor_usage_refresh">Load usage</string>
+    <string name="settings_cursor_usage_loading">Loading usage from Cursor…</string>
+    <string name="settings_cursor_usage_included">Included usage: %1$d%% used</string>
+    <string name="settings_cursor_usage_auto">Auto: %1$d%% used</string>
+    <string name="settings_cursor_usage_api">Named models: %1$d%% used</string>
+    <string name="settings_cursor_usage_on_demand">On-demand spend: %1$s of %2$s</string>
+    <string name="settings_cursor_usage_on_demand_only">On-demand spend: %1$s</string>
+    <string name="settings_cursor_usage_on_demand_unlimited">On-demand spend: %1$s (no monthly limit)</string>
+    <string name="settings_cursor_usage_on_demand_disabled">On-demand spend: %1$s (disabled)</string>
+    <string name="settings_cursor_usage_plan">Plan: %1$s</string>
+    <string name="settings_cursor_usage_resets">Resets on %1$s</string>
+    <string name="settings_cursor_usage_updated">Updated %1$s</string>
+    <string name="settings_cursor_usage_empty">Cursor did not return usage numbers for this account.</string>
+    <string name="settings_cursor_usage_note">Read from your Cursor account. No browser login needed.</string>
 </resources>

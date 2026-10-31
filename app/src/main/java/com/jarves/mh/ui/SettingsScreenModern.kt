@@ -143,6 +143,7 @@ fun SettingsScreen(
     onRemoveCursorKey: () -> Unit = {},
     onRefreshCursorModels: () -> Unit = {},
     onSetCursorModel: (String) -> Unit = {},
+    onRefreshCursorUsage: () -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
@@ -440,6 +441,7 @@ fun SettingsScreen(
                             onRemoveKey = onRemoveCursorKey,
                             onRefreshModels = onRefreshCursorModels,
                             onSetModel = onSetCursorModel,
+                            onRefreshUsage = onRefreshCursorUsage,
                             onTest = onPing,
                         )
                     }
@@ -1137,12 +1139,22 @@ private fun CursorKeySettings(
     onRemoveKey: () -> Unit,
     onRefreshModels: () -> Unit,
     onSetModel: (String) -> Unit,
+    onRefreshUsage: () -> Unit,
     onTest: () -> Unit,
 ) {
     var draft by rememberSaveable { mutableStateOf("") }
     var typedModel by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(state.cursorHasKey) {
         if (state.cursorHasKey && state.cursorModels.isEmpty() && !state.cursorModelsLoading) onRefreshModels()
+    }
+    LaunchedEffect(state.cursorHasKey, state.cursorUsage, state.cursorUsageMessage) {
+        val stale = state.cursorUsageUpdatedAt <= 0L ||
+            System.currentTimeMillis() - state.cursorUsageUpdatedAt > CURSOR_USAGE_STALE_MILLIS
+        if (state.cursorHasKey && stale &&
+            !state.cursorUsageLoading && state.cursorUsageMessage == null
+        ) {
+            onRefreshUsage()
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.settings_cursor_billing_note), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1189,6 +1201,14 @@ private fun CursorKeySettings(
             enabled = state.cursorHasKey,
             onRefresh = onRefreshModels,
             onSelect = onSetModel,
+        )
+        CursorUsagePanel(
+            usage = state.cursorUsage,
+            loading = state.cursorUsageLoading,
+            message = state.cursorUsageMessage,
+            updatedAt = state.cursorUsageUpdatedAt,
+            enabled = state.cursorHasKey,
+            onRefresh = onRefreshUsage,
         )
     }
 }

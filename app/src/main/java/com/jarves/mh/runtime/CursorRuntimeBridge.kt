@@ -12,6 +12,8 @@ import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +44,8 @@ internal const val CURSOR_TIMEOUT =
 internal const val CURSOR_NETWORK =
     "Cursor CLI could not reach Cursor. Check the internet connection and try again."
 internal const val CURSOR_FAILED = "Cursor CLI could not complete the task."
+internal const val CURSOR_USAGE_UNAVAILABLE =
+    "Usage details are not available for this Cursor account."
 
 internal data class CursorTokenUsage(
     val inputTokens: Long = 0,
@@ -384,6 +388,172 @@ data class CursorModelCatalog(
     val ids: List<String> get() = models.map { it.id }
 }
 
+/** Model family used for grouping the picker. Order is the display order. */
+enum class CursorVendor { ANTHROPIC, OPENAI, GOOGLE, XAI, CURSOR, OTHER }
+
+data class CursorModelGroup(
+    val vendor: CursorVendor,
+    val models: List<CursorModel>,
+)
+
+/** Groups models by vendor, keeping the catalog order inside each group. */
+internal fun groupCursorModels(models: List<CursorModel>): List<CursorModelGroup> =
+    CursorVendor.entries.mapNotNull { vendor ->
+        val members = models.filter { cursorVendorOf(it) == vendor }
+        if (members.isEmpty()) null else CursorModelGroup(vendor, members)
+    }
+
+internal fun cursorVendorOf(model: CursorModel): CursorVendor {
+    val blob = "${model.id} ${model.name}".lowercase()
+    return when {
+        "claude" in blob || "anthropic" in blob -> CursorVendor.ANTHROPIC
+        "gpt" in blob || "openai" in blob || "codex" in blob -> CursorVendor.OPENAI
+        "gemini" in blob || "gemma" in blob || "google" in blob -> CursorVendor.GOOGLE
+        "grok" in blob || "xai" in blob -> CursorVendor.XAI
+        "composer" in blob || "cursor" in blob -> CursorVendor.CURSOR
+        else -> CursorVendor.OTHER
+    }
+}
+
+enum class CursorOnDemandKind { FIXED, UNLIMITED, DISABLED, UNAVAILABLE }
+
+data class CursorOnDemand(
+    val kind: CursorOnDemandKind,
+    val usedDollars: Double = 0.0,
+    val limitDollars: Double? = null,
+)
+
+/** Plan usage for the current billing period, exactly as Cursor reports it. */
+data class CursorUsage(
+    val planName: String? = null,
+    val includedPercent: Float? = null,
+    val autoPercent: Float? = null,
+    val apiPercent: Float? = null,
+    val onDemand: CursorOnDemand? = null,
+    val billingCycleEndMillis: Long? = null,
+) {
+    fun hasPercent(): Boolean = includedPercent != null
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        planName?.let { put("planName", it) }
+        includedPercent?.let { put("includedPercent", it.toDouble()) }
+        autoPercent?.let { put("autoPercent", it.toDouble()) }
+        apiPercent?.let { put("apiPercent", it.toDouble()) }
+        billingCycleEndMillis?.let { put("billingCycleEndMillis", it) }
+        onDemand?.let { demand ->
+            put(
+                "onDemand",
+                JSONObject().apply {
+                    put("kind", demand.kind.name)
+                    put("usedDollars", demand.usedDollars)
+                    demand.limitDollars?.let { put("limitDollars", it) }
+                },
+            )
+        }
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): CursorUsage {
+            val demand = json.optJSONObject("onDemand")?.let { obj ->
+                val kind = runCatching { CursorOnDemandKind.valueOf(obj.optString("kind")) }
+                    .getOrDefault(CursorOnDemandKind.UNAVAILABLE)
+                CursorOnDemand(
+                    kind = kind,
+                    usedDollars = obj.optDouble("usedDollars", 0.0),
+                    limitDollars = if (obj.has("limitDollars")) obj.optDouble("limitDollars") else null,
+                )
+            }
+            return CursorUsage(
+                planName = json.optString("planName").takeIf(String::isNotBlank),
+                includedPercent = if (json.has("includedPercent")) json.optDouble("includedPercent", 0.0).toFloat() else null,
+                autoPercent = if (json.has("autoPercent")) json.optDouble("autoPercent", 0.0).toFloat() else null,
+                apiPercent = if (json.has("apiPercent")) json.optDouble("apiPercent", 0.0).toFloat() else null,
+                onDemand = demand,
+                billingCycleEndMillis = if (json.has("billingCycleEndMillis")) json.optLong("billingCycleEndMillis") else null,
+            )
+        }
+    }
+}
+
+/**
+ * Reads plan usage from the dashboard payloads. Missing numbers stay null so the UI can hide them
+ * instead of showing a made-up zero.
+ */
+internal fun parseCursorUsage(
+    usage: JSONObject,
+    hardLimit: JSONObject? = null,
+    plan: JSONObject? = null,
+): CursorUsage? {
+    val planUsage = usage.optJSONObject("planUsage") ?: usage.optJSONObject("plan_usage")
+    val spend = usage.optJSONObject("spendLimitUsage") ?: usage.optJSONObject("spend_limit_usage")
+    val planInfo = plan?.optJSONObject("planInfo") ?: plan?.optJSONObject("plan_info")
+
+    val included = planUsage?.floatField("totalPercentUsed", "total_percent_used")
+    val auto = planUsage?.floatField("autoPercentUsed", "auto_percent_used")
+    val api = planUsage?.floatField("apiPercentUsed", "api_percent_used")
+
+    val usedDollars = (spend?.longField("individualUsed", "individual_used") ?: 0L) / 100.0
+    val individualLimit = spend?.longField("individualLimit", "individual_limit")
+    val teamScoped = (spend?.optString("limitType").orEmpty().ifBlank {
+        spend?.optString("limit_type").orEmpty()
+    }) == "team"
+    val hardLimitValue = hardLimit?.longField("hardLimit", "hard_limit")
+    val noUsageBased = hardLimit?.optBoolean("noUsageBasedAllowed", false) == true ||
+        hardLimit?.optBoolean("no_usage_based_allowed", false) == true
+    val onDemand = when {
+        individualLimit != null && individualLimit > 0L -> CursorOnDemand(
+            CursorOnDemandKind.FIXED,
+            usedDollars,
+            individualLimit / 100.0,
+        )
+        individualLimit != null -> CursorOnDemand(CursorOnDemandKind.DISABLED, usedDollars)
+        teamScoped -> CursorOnDemand(CursorOnDemandKind.UNAVAILABLE, usedDollars)
+        noUsageBased -> CursorOnDemand(CursorOnDemandKind.DISABLED, usedDollars)
+        hardLimitValue != null && hardLimitValue >= 2_147_483_647L ->
+            CursorOnDemand(CursorOnDemandKind.UNLIMITED, usedDollars)
+        hardLimitValue != null && hardLimitValue > 0L ->
+            CursorOnDemand(CursorOnDemandKind.FIXED, usedDollars, hardLimitValue.toDouble())
+        hardLimitValue != null -> CursorOnDemand(CursorOnDemandKind.DISABLED, usedDollars)
+        else -> null
+    }
+
+    val end = usage.stringLong("billingCycleEnd", "billing_cycle_end")
+        ?: planInfo?.stringLong("billingCycleEnd", "billing_cycle_end")
+    val planName = planInfo?.optString("planName")
+        ?.ifBlank { planInfo.optString("plan_name") }
+        ?.takeIf(String::isNotBlank)
+
+    if (included == null && onDemand == null && planName == null && end == null) return null
+    return CursorUsage(
+        planName = planName,
+        includedPercent = included?.coerceIn(0f, 100f),
+        autoPercent = auto?.coerceIn(0f, 100f),
+        apiPercent = api?.coerceIn(0f, 100f),
+        onDemand = onDemand,
+        billingCycleEndMillis = end?.takeIf { it > 0L },
+    )
+}
+
+private fun JSONObject.floatField(vararg names: String): Float? {
+    names.forEach { name ->
+        if (!has(name) || isNull(name)) return@forEach
+        val number = optDouble(name, Double.NaN)
+        if (!number.isNaN()) return number.toFloat()
+    }
+    return null
+}
+
+/** Proto JSON sends int64 as a string, so both shapes are accepted. */
+private fun JSONObject.stringLong(vararg names: String): Long? {
+    names.forEach { name ->
+        if (!has(name) || isNull(name)) return@forEach
+        val raw = optString(name)
+        val number = raw.toLongOrNull() ?: optDouble(name, Double.NaN).takeIf { !it.isNaN() }?.toLong()
+        if (number != null) return number
+    }
+    return null
+}
+
 internal fun parseCursorModelList(output: String): List<String> = parseCursorModelCatalog(output).ids
 
 internal fun parseCursorModelCatalog(output: String): CursorModelCatalog {
@@ -556,6 +726,8 @@ private val CONTEXT_PHRASE = Regex("""(?i)(?:\s*[·|,/-]\s*)?(?:context\s*=\s*)?
 
 private const val HELLO_TIMEOUT_MILLIS = 90_000L
 private const val UTILITY_TIMEOUT_MILLIS = 45_000L
+private const val CURSOR_HTTP_TIMEOUT_MILLIS = 15_000
+private const val CURSOR_API_BASE = "https://api2.cursor.sh"
 private const val CURSOR_HISTORY_CHARACTERS = 160_000
 private const val PROMPT_ARGV_LIMIT = 100_000
 private const val MAX_UTILITY_OUTPUT_CHARS = 24_000
@@ -654,6 +826,35 @@ class CursorRuntimeBridge(
         if (fallback.ids.isNotEmpty()) return@withContext fallback
         if (failure != null) throw failure
         parsed ?: CursorModelCatalog(emptyList(), null)
+    }
+
+    /**
+     * Plan usage and spending for the account behind the saved API key.
+     * Reads the same dashboard RPC the CLI uses for `/usage`, so no browser login is needed.
+     */
+    suspend fun fetchUsage(): CursorUsage = withContext(Dispatchers.IO) {
+        val key = apiKey()?.takeIf(String::isNotBlank) ?: throw CursorSessionException(CURSOR_NEEDS_KEY)
+        try {
+            val accessToken = exchangeCursorApiKey(key) ?: throw CursorSessionException(CURSOR_NEEDS_KEY)
+            val usage = cursorDashboardPost(
+                "/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+                accessToken,
+                "{}",
+            ) ?: throw CursorSessionException(CURSOR_USAGE_UNAVAILABLE)
+            val hardLimit = runCatching {
+                cursorDashboardPost("/aiserver.v1.DashboardService/GetHardLimit", accessToken, "{}")
+            }.getOrNull()
+            val plan = runCatching {
+                cursorDashboardPost("/aiserver.v1.DashboardService/GetPlanInfo", accessToken, "{}")
+            }.getOrNull()
+            parseCursorUsage(usage, hardLimit, plan) ?: CursorUsage()
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: CursorSessionException) {
+            throw error
+        } catch (error: Throwable) {
+            throw CursorSessionException(cursorFriendlyError(scrubCursorSecret(error.message.orEmpty(), key)))
+        }
     }
 
     suspend fun logout() = withContext(Dispatchers.IO) {
@@ -1002,8 +1203,60 @@ class CursorRuntimeBridge(
         return CursorRun(reply?.trim().orEmpty())
     }
 
-    private suspend fun runUtility(command: List<String>, apiKey: String?): String {
-        val installed = installer.installedRuntime()
+    /** Public API key to short-lived access token, the same exchange the CLI performs. */
+    private fun exchangeCursorApiKey(apiKey: String): String? {
+        val body = cursorHttpPost(
+            "$CURSOR_API_BASE/auth/exchange_user_api_key",
+            mapOf(
+                "Content-Type" to "application/json",
+                "Authorization" to "Bearer $apiKey",
+            ),
+            "{}",
+        ) ?: return null
+        return body.optString("accessToken").takeIf(String::isNotBlank)
+    }
+
+    private fun cursorDashboardPost(path: String, accessToken: String, payload: String): JSONObject? =
+        cursorHttpPost(
+            "$CURSOR_API_BASE$path",
+            mapOf(
+                "Content-Type" to "application/json",
+                "Connect-Protocol-Version" to "1",
+                "Authorization" to "Bearer $accessToken",
+                "x-cursor-client-type" to "cli",
+                "x-cursor-client-version" to "cli-$CURSOR_VERSION",
+            ),
+            payload,
+        )
+
+    private fun cursorHttpPost(url: String, headers: Map<String, String>, payload: String): JSONObject? {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = CURSOR_HTTP_TIMEOUT_MILLIS
+            readTimeout = CURSOR_HTTP_TIMEOUT_MILLIS
+            doOutput = true
+            useCaches = false
+            headers.forEach { (name, value) -> setRequestProperty(name, value) }
+        }
+        return try {
+            connection.outputStream.use { it.write(payload.toByteArray()) }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.use { it.readBytes().decodeToString() }.orEmpty()
+            when {
+                code == HttpURLConnection.HTTP_UNAUTHORIZED -> null
+                code !in 200..299 -> throw CursorSessionException(
+                    cursorFriendlyError("HTTP $code ${text.take(200)}"),
+                )
+                text.isBlank() -> null
+                else -> runCatching { JSONObject(text) }.getOrNull()
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun runUtility(command: List<String>, apiKey: String?): String {        val installed = installer.installedRuntime()
         val workspace = File(context.cacheDir, "cursor-util").apply { mkdirs() }
         val outputFile = File(context.cacheDir, "cursor-util-${System.nanoTime()}.log")
         val process = installer.process(
@@ -1047,8 +1300,7 @@ class CursorRuntimeBridge(
         }
     }
 
-    private fun readUtilityOutput(file: File): String {
-        if (!file.isFile) return ""
+    private fun readUtilityOutput(file: File): String {        if (!file.isFile) return ""
         return file.inputStream().use { input ->
             val buffer = ByteArray(MAX_UTILITY_OUTPUT_CHARS)
             val count = input.read(buffer)

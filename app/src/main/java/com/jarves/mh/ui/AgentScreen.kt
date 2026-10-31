@@ -60,6 +60,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import com.jarves.mh.runtime.CursorOnDemandKind
+import com.jarves.mh.runtime.CursorUsage
+import com.jarves.mh.runtime.CursorVendor
+import com.jarves.mh.runtime.cursorVendorOf
+import com.jarves.mh.runtime.groupCursorModels
+import kotlin.math.roundToInt
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -202,6 +208,7 @@ fun AgentScreen(
     onRemoveCursorKey: () -> Unit = {},
     onRefreshCursorModels: () -> Unit = {},
     onSetCursorModel: (String) -> Unit = {},
+    onRefreshCursorUsage: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1007,6 +1014,7 @@ fun AgentScreen(
                         onRemoveKey = onRemoveCursorKey,
                         onRefreshModels = onRefreshCursorModels,
                         onSetModel = onSetCursorModel,
+                        onRefreshUsage = onRefreshCursorUsage,
                         onTest = onPing,
                     )
                 } else if (state.agentKind == AgentKind.ANTIGRAVITY) {
@@ -2215,8 +2223,7 @@ private fun defaultModelsForProvider(kind: ProviderKind, context: android.conten
 }
 
 @Composable
-internal fun CursorModelPicker(
-    models: List<CursorModel>,
+internal fun CursorModelPicker(    models: List<CursorModel>,
     selectedId: String,
     query: String,
     onQueryChange: (String) -> Unit,
@@ -2226,6 +2233,7 @@ internal fun CursorModelPicker(
     onSelect: (String) -> Unit,
 ) {
     val visible = filterCursorModels(models, query)
+    val groups = groupCursorModels(visible)
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = query,
@@ -2253,73 +2261,339 @@ internal fun CursorModelPicker(
             }
         }
     }
-    if (visible.isNotEmpty()) {
+    if (groups.isNotEmpty()) {
+        // A search result is short, so every matching group opens. Without a search the closed
+        // groups are one short row each, which keeps the whole catalog in view.
+        val searching = query.isNotBlank()
+        val selectedVendor = models.firstOrNull { it.id == selectedId }?.let(::cursorVendorOf)
+        val startOpen = remember {
+            listOf(selectedVendor ?: cursorVendorOf(groups.first().models.first()))
+        }
+        // Stored as one string because a Set is not Bundle-friendly for rememberSaveable.
+        val expanded = rememberSaveable { mutableStateOf(startOpen.joinToString(",") { it.name }) }
+        val openGroups = if (searching) {
+            groups.map { it.vendor }.toSet()
+        } else {
+            expanded.value.split(',').mapNotNullTo(mutableSetOf()) { name ->
+                CursorVendor.entries.firstOrNull { it.name == name }
+            }
+        }
+        val rows = buildList<CursorPickerRow> {
+            groups.forEach { group ->
+                add(CursorPickerRow.Header(group.vendor, group.models.size))
+                if (group.vendor in openGroups) {
+                    group.models.forEach { add(CursorPickerRow.Model(it)) }
+                }
+            }
+        }
         val listState = rememberLazyListState()
-        LaunchedEffect(selectedId, models) {
-            val index = visible.indexOfFirst { it.id == selectedId }
+        LaunchedEffect(selectedId, searching) {
+            if (!searching) return@LaunchedEffect
+            val index = rows.indexOfFirst { it is CursorPickerRow.Model && it.model.id == selectedId }
             if (index >= 0) listState.scrollToItem(index)
         }
-        val rowHeight = 56.dp
-        val rowGap = 4.dp
-        val listHeight = (rowHeight * visible.size + rowGap * (visible.size - 1))
-            .coerceAtMost(400.dp)
+        val headerHeight = 40.dp
+        val modelHeight = 54.dp
+        val gap = 4.dp
+        val measured = rows.fold(0.dp) { total, row ->
+            total + (if (row is CursorPickerRow.Header) headerHeight else modelHeight) + gap
+        } - gap
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxWidth().height(listHeight),
-            verticalArrangement = Arrangement.spacedBy(rowGap),
+            modifier = Modifier.fillMaxWidth().height(measured.coerceAtMost(420.dp)),
+            verticalArrangement = Arrangement.spacedBy(gap),
         ) {
-            itemsIndexed(visible, key = { index, model -> "${model.id}#$index" }) { _, model ->
-                val selected = model.id == selectedId
-                val shape = RoundedCornerShape(10.dp)
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .border(
-                            width = 1.5.dp,
-                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            shape = shape,
-                        )
-                        .background(
-                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else Color.Transparent,
-                            shape,
-                        )
-                        .clickable { onSelect(model.id) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(1.dp),
-                ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        model.contextWindowLabel()?.let { window ->
-                            Text(
-                                window,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(
-                            model.name.ifBlank { model.id },
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-                            fontSize = 14.sp,
-                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
+            itemsIndexed(
+                rows,
+                key = { index, row ->
+                    when (row) {
+                        is CursorPickerRow.Header -> "header-${row.vendor}#$index"
+                        is CursorPickerRow.Model -> "${row.model.id}#$index"
+                    }
+                },
+            ) { _, row ->
+                when (row) {
+                    is CursorPickerRow.Header -> {
+                        val open = row.vendor in openGroups
+                        CursorVendorHeader(
+                            vendor = row.vendor,
+                            count = row.count,
+                            open = open,
+                            searching = searching,
+                            onToggle = {
+                                val vendorName = row.vendor.name
+                                val current = openGroups.map { it.name }.toMutableSet()
+                                if (open) current.remove(vendorName) else current.add(vendorName)
+                                expanded.value = current.joinToString(",")
+                            },
                         )
                     }
-                    Text(
-                        model.id,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    is CursorPickerRow.Model -> {
+                        CursorModelRow(
+                            model = row.model,
+                            selected = row.model.id == selectedId,
+                            onClick = { onSelect(row.model.id) },
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+private sealed interface CursorPickerRow {
+    data class Header(val vendor: CursorVendor, val count: Int) : CursorPickerRow
+    data class Model(val model: CursorModel) : CursorPickerRow
+}
+
+@Composable
+private fun CursorVendorHeader(
+    vendor: CursorVendor,
+    count: Int,
+    open: Boolean,
+    searching: Boolean,
+    onToggle: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), shape)
+            .clickable(enabled = !searching, onClick = onToggle)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            cursorVendorLabel(vendor),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            count.toString(),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!searching) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (open) {
+                    stringResource(R.string.st_collapse)
+                } else {
+                    stringResource(R.string.st_expand)
+                },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CursorModelRow(model: CursorModel, selected: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.5.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = shape,
+            )
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else Color.Transparent,
+                shape,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            model.contextWindowLabel()?.let { window ->
+                Text(
+                    window,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                model.name.ifBlank { model.id },
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                fontSize = 14.sp,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Text(
+            model.id,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+internal const val CURSOR_USAGE_STALE_MILLIS = 15 * 60 * 1000L
+
+internal fun cursorVendorLabel(vendor: CursorVendor): String = when (vendor) {
+    CursorVendor.ANTHROPIC -> "Claude"
+    CursorVendor.OPENAI -> "OpenAI"
+    CursorVendor.GOOGLE -> "Google"
+    CursorVendor.XAI -> "xAI"
+    CursorVendor.CURSOR -> "Cursor"
+    CursorVendor.OTHER -> "Other"
+}
+
+/** Plan usage for the account. Only Cursor numbers are shown; nothing is estimated. */
+@Composable
+internal fun CursorUsagePanel(
+    usage: CursorUsage?,
+    loading: Boolean,
+    message: String?,
+    updatedAt: Long,
+    enabled: Boolean,
+    onRefresh: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.settings_cursor_usage_title),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRefresh, enabled = enabled && !loading) {
+                if (loading) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Text(stringResource(R.string.settings_cursor_usage_refresh))
+                }
+            }
+        }
+        if (loading && usage == null) {
+            Text(
+                stringResource(R.string.settings_cursor_usage_loading),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        message?.let {
+            Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        }
+        val shown = usage
+        if (shown != null) {
+            shown.planName?.let {
+                Text(stringResource(R.string.settings_cursor_usage_plan, it), fontSize = 12.sp)
+            }
+            shown.includedPercent?.let { percent ->
+                Text(
+                    stringResource(R.string.settings_cursor_usage_included, percent.roundToInt()),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                LinearProgressIndicator(
+                    progress = { percent / 100f },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                )
+            }
+            val secondary = buildList {
+                shown.autoPercent?.let { add(stringResource(R.string.settings_cursor_usage_auto, it.roundToInt())) }
+                shown.apiPercent?.let { add(stringResource(R.string.settings_cursor_usage_api, it.roundToInt())) }
+            }
+            if (secondary.isNotEmpty()) {
+                Text(
+                    secondary.joinToString(" · "),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            shown.onDemand?.let { demand ->
+                val spent = cursorDollars(demand.usedDollars)
+                val text = when (demand.kind) {
+                    CursorOnDemandKind.FIXED -> {
+                        val limit = demand.limitDollars
+                        if (limit == null) {
+                            stringResource(R.string.settings_cursor_usage_on_demand_only, spent)
+                        } else {
+                            stringResource(
+                                R.string.settings_cursor_usage_on_demand,
+                                spent,
+                                cursorDollars(limit),
+                            )
+                        }
+                    }
+                    CursorOnDemandKind.UNLIMITED ->
+                        stringResource(R.string.settings_cursor_usage_on_demand_unlimited, spent)
+                    CursorOnDemandKind.DISABLED ->
+                        stringResource(R.string.settings_cursor_usage_on_demand_disabled, spent)
+                    CursorOnDemandKind.UNAVAILABLE -> null
+                }
+                text?.let { Text(it, fontSize = 12.sp) }
+                demand.limitDollars?.takeIf { demand.kind == CursorOnDemandKind.FIXED && it > 0.0 }?.let { limit ->
+                    LinearProgressIndicator(
+                        progress = { (demand.usedDollars / limit).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    )
+                }
+            }
+            shown.billingCycleEndMillis?.let { end ->
+                val formatted = remember(end) { cursorShortDate(end) }
+                if (formatted != null) {
+                    Text(
+                        stringResource(R.string.settings_cursor_usage_resets, formatted),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (shown.includedPercent == null && shown.onDemand == null && shown.planName == null) {
+                Text(
+                    stringResource(R.string.settings_cursor_usage_empty),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (updatedAt > 0L) {
+                val stamp = remember(updatedAt) { cursorShortDateTime(updatedAt) }
+                Text(
+                    stringResource(R.string.settings_cursor_usage_updated, stamp),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else if (!loading && message == null) {
+            Text(
+                stringResource(R.string.settings_cursor_usage_note),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun cursorDollars(value: Double): String {
+    val rounded = (value * 100).roundToInt() / 100.0
+    return if (rounded % 1.0 == 0.0) "$${rounded.toInt()}" else "$${String.format(java.util.Locale.US, "%.2f", rounded)}"
+}
+
+private fun cursorShortDate(epochMillis: Long): String? = runCatching {
+    java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+        .format(java.util.Date(epochMillis))
+}.getOrNull()
+
+private fun cursorShortDateTime(epochMillis: Long): String = runCatching {
+    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+        .format(java.util.Date(epochMillis))
+}.getOrDefault("")
 
 @Composable
 private fun AgentCursorCard(
@@ -2328,6 +2602,7 @@ private fun AgentCursorCard(
     onRemoveKey: () -> Unit,
     onRefreshModels: () -> Unit,
     onSetModel: (String) -> Unit,
+    onRefreshUsage: () -> Unit,
     onTest: () -> Unit,
 ) {
     var draft by rememberSaveable { mutableStateOf("") }
@@ -2335,6 +2610,15 @@ private fun AgentCursorCard(
     var typedModel by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(state.cursorHasKey) {
         if (state.cursorHasKey && state.cursorModels.isEmpty() && !state.cursorModelsLoading) onRefreshModels()
+    }
+    LaunchedEffect(state.cursorHasKey, state.cursorUsage, state.cursorUsageMessage) {
+        val stale = state.cursorUsageUpdatedAt <= 0L ||
+            System.currentTimeMillis() - state.cursorUsageUpdatedAt > CURSOR_USAGE_STALE_MILLIS
+        if (state.cursorHasKey && stale &&
+            !state.cursorUsageLoading && state.cursorUsageMessage == null
+        ) {
+            onRefreshUsage()
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(stringResource(R.string.agent_title_cursor), fontWeight = FontWeight.Bold)
@@ -2402,6 +2686,14 @@ private fun AgentCursorCard(
             enabled = state.cursorHasKey,
             onRefresh = onRefreshModels,
             onSelect = onSetModel,
+        )
+        CursorUsagePanel(
+            usage = state.cursorUsage,
+            loading = state.cursorUsageLoading,
+            message = state.cursorUsageMessage,
+            updatedAt = state.cursorUsageUpdatedAt,
+            enabled = state.cursorHasKey,
+            onRefresh = onRefreshUsage,
         )
         state.apiPingMessage?.let { message ->
             Text(message, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

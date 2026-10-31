@@ -2551,6 +2551,7 @@ private fun RootScreenHost(
                     onRemoveCursorKey = viewModel::removeCursorKey,
                     onRefreshCursorModels = viewModel::refreshCursorModels,
                     onSetCursorModel = viewModel::setCursorModel,
+                    onRefreshCursorUsage = viewModel::refreshCursorUsage,
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
@@ -2583,6 +2584,7 @@ private fun RootScreenHost(
                     onRemoveCursorKey = viewModel::removeCursorKey,
                     onRefreshCursorModels = viewModel::refreshCursorModels,
                     onSetCursorModel = viewModel::setCursorModel,
+                    onRefreshCursorUsage = viewModel::refreshCursorUsage,
                     initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,

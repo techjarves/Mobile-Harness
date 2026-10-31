@@ -282,4 +282,87 @@ class CursorBridgeTest {
         assertEquals(AgentKind.CLAUDE_CODE, AgentKind.fromStored(null))
         assertEquals(AgentKind.CLAUDE_CODE, AgentKind.fromStored("nope"))
     }
+
+    @Test
+    fun modelsAreGroupedByVendorInCatalogOrder() {
+        val models = listOf(
+            CursorModel("claude-opus-4-8", "Claude Opus 4.8"),
+            CursorModel("gpt-5.5", "GPT-5.5"),
+            CursorModel("gemini-3-pro", "Gemini 3 Pro"),
+            CursorModel("grok-4.5", "Grok 4.5"),
+            CursorModel("claude-sonnet-4-5", "Claude Sonnet 4.5"),
+            CursorModel("composer-1", "Composer 1"),
+            CursorModel("mystery-model", "Mystery"),
+        )
+        val groups = groupCursorModels(models)
+        assertEquals(
+            listOf(
+                CursorVendor.ANTHROPIC,
+                CursorVendor.OPENAI,
+                CursorVendor.GOOGLE,
+                CursorVendor.XAI,
+                CursorVendor.CURSOR,
+                CursorVendor.OTHER,
+            ),
+            groups.map { it.vendor },
+        )
+        assertEquals(
+            listOf("claude-opus-4-8", "claude-sonnet-4-5"),
+            groups.first().models.map { it.id },
+        )
+        assertEquals(listOf("gpt-5.5"), groups[1].models.map { it.id })
+        assertEquals(CursorVendor.GOOGLE, cursorVendorOf(CursorModel("gemma-3", "Gemma 3")))
+        assertEquals(CursorVendor.CURSOR, cursorVendorOf(CursorModel("composer-1", "Composer 1")))
+    }
+
+    @Test
+    fun usageParsesPercentSpendAndPlan() {
+        val usage = parseCursorUsage(
+            org.json.JSONObject(
+                """{"billingCycleEnd":"1800000000000","planUsage":{"totalPercentUsed":45.4,"autoPercentUsed":30,"apiPercentUsed":15.4},"spendLimitUsage":{"individualUsed":1250,"individualLimit":5000}}""",
+            ),
+            hardLimit = org.json.JSONObject("""{"hardLimit":5000,"noUsageBasedAllowed":false}"""),
+            plan = org.json.JSONObject("""{"planInfo":{"planName":"Pro"}}"""),
+        )
+        requireNotNull(usage)
+        assertEquals("Pro", usage.planName)
+        assertEquals(45.4f, usage.includedPercent)
+        assertEquals(30f, usage.autoPercent)
+        assertEquals(15.4f, usage.apiPercent)
+        assertEquals(1_800_000_000_000L, usage.billingCycleEndMillis)
+        assertEquals(CursorOnDemandKind.FIXED, usage.onDemand?.kind)
+        assertEquals(12.5, usage.onDemand?.usedDollars ?: 0.0, 0.001)
+        assertEquals(50.0, usage.onDemand?.limitDollars ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun usageWithoutPlanBlockIsStillReadable() {
+        val usage = parseCursorUsage(
+            org.json.JSONObject("""{"spendLimitUsage":{"individualUsed":300}}"""),
+            hardLimit = org.json.JSONObject("""{"hardLimit":2147483647}"""),
+        )
+        requireNotNull(usage)
+        assertNull(usage.includedPercent)
+        assertEquals(CursorOnDemandKind.UNLIMITED, usage.onDemand?.kind)
+        assertEquals(3.0, usage.onDemand?.usedDollars ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun usageIsNullWhenCursorSendsNothing() {
+        assertNull(parseCursorUsage(org.json.JSONObject("{}")))
+    }
+
+    @Test
+    fun usageSurvivesCacheRoundTrip() {
+        val original = CursorUsage(
+            planName = "Pro",
+            includedPercent = 45f,
+            autoPercent = 20f,
+            apiPercent = 25f,
+            onDemand = CursorOnDemand(CursorOnDemandKind.FIXED, 4.5, 20.0),
+            billingCycleEndMillis = 1_800_000_000_000L,
+        )
+        val restored = CursorUsage.fromJson(original.toJson())
+        assertEquals(original, restored)
+    }
 }
