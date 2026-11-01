@@ -1,6 +1,7 @@
 package com.jarves.mh.update
 
 import android.content.Context
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import com.jarves.mh.BuildConfig
@@ -108,18 +109,32 @@ class AppUpdater(
 
     @Suppress("DEPRECATION")
     private fun verifyApk(apk: File, expectedVersionCode: Long) {
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        // Android 9/10 archive parsing can leave signingInfo null, so also request the legacy
+        // signatures and fall back to them rather than reporting a false key mismatch.
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
         val archive = context.packageManager.getPackageArchiveInfo(apk.absolutePath, flags)
             ?: error(str(R.string.rt_update_invalid_apk))
         check(archive.packageName == context.packageName) { str(R.string.rt_update_package_mismatch) }
         val archiveVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
         check(archiveVersion == expectedVersionCode && archiveVersion > BuildConfig.VERSION_CODE) { str(R.string.rt_update_version_mismatch) }
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)
-        val archiveSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.signingInfo?.apkContentsSigners else archive.signatures
-        val installedSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) installed.signingInfo?.apkContentsSigners else installed.signatures
-        check(!archiveSignatures.isNullOrEmpty() && !installedSignatures.isNullOrEmpty() &&
-            archiveSignatures.map { sha256(it.toByteArray()) }.toSet() == installedSignatures.map { sha256(it.toByteArray()) }.toSet()
-        ) { str(R.string.rt_update_signature_mismatch) }
+        val archiveSigners = signerDigests(archive)
+        val installedSigners = signerDigests(installed)
+        check(archiveSigners.isNotEmpty() && archiveSigners == installedSigners) { str(R.string.rt_update_signature_mismatch) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun signerDigests(info: PackageInfo): Set<String> {
+        val signers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners?.takeIf { it.isNotEmpty() } ?: info.signatures
+        } else {
+            info.signatures
+        }
+        return signers.orEmpty().map { sha256(it.toByteArray()) }.toSet()
     }
 
     private fun sha256(file: File): String = file.inputStream().use { input ->
