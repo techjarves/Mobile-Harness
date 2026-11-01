@@ -98,6 +98,7 @@
     <string name="vm_git_url_not_repo">The URL must identify a Git repository</string>
     <string name="vm_github_preparing_signin">Preparing official GitHub sign-in…</string>
     <string name="vm_github_enter_code">Enter this one-time code on GitHub</string>
+    <string name="vm_github_code_copied">Code %1$s copied. Paste it on the GitHub page.</string>
     <string name="vm_github_signin_failed_exit">GitHub sign-in failed (exit %1$d)</string>
     <string name="vm_github_account_unknown">GitHub connected, but the account could not be identified</string>
     <string name="vm_github_connected_as">Connected as @%1$s</string>

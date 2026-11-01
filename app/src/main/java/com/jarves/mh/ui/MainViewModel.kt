@@ -3561,8 +3561,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                             githubUserCode = code,
                                             githubVerificationUri = GITHUB_DEVICE_URL,
                                             githubMessage = str(R.string.vm_github_enter_code),
+                                            toastMessage = str(R.string.vm_github_code_copied, code),
                                         )
                                     }
+                                    // The browser covers the dialog, so put the code on the clipboard
+                                    // and give the user a moment to see it before GitHub asks for it.
+                                    copyToClipboard("GitHub code", code)
+                                    delay(1_500)
                                     openExternalUrl(GITHUB_DEVICE_URL)
                                 }
                             } else {
@@ -3760,6 +3765,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         return repositories.values.toList()
+    }
+
+    private fun copyToClipboard(label: String, text: String) {
+        runCatching {
+            val clipboard = getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+        }
     }
 
     private fun openExternalUrl(url: String) {

@@ -70,7 +70,7 @@
     <string name="ws_github_signin">Iniciar sesión con GitHub</string>
     <string name="ws_github_starting">Iniciando sesión con GitHub…</string>
     <string name="ws_github_enter_code">Introduce este código de un solo uso en la página de GitHub abierta en tu navegador.</string>
-    <string name="ws_github_tap_code">Toca el código para copiarlo. PocketDev se conectará automáticamente tras la aprobación.</string>
+    <string name="ws_github_tap_code">Toca el código para copiarlo. Mobile Harness se conectará automáticamente tras la aprobación.</string>
     <string name="ws_github_new_code">Generar nuevo código</string>
     <string name="ws_github_select_repo">Selecciona un repositorio</string>
     <string name="ws_github_refresh_repos">Actualizar repositorios</string>

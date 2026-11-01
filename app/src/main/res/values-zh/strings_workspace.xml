@@ -70,7 +70,7 @@
     <string name="ws_github_signin">使用 GitHub 登录</string>
     <string name="ws_github_starting">正在启动 GitHub 登录…</string>
     <string name="ws_github_enter_code">请在浏览器中打开的 GitHub 页面输入此一次性代码。</string>
-    <string name="ws_github_tap_code">点按代码即可复制。批准后 PocketDev 将自动连接。</string>
+    <string name="ws_github_tap_code">点按代码即可复制。批准后 Mobile Harness 将自动连接。</string>
     <string name="ws_github_new_code">生成新代码</string>
     <string name="ws_github_select_repo">选择一个仓库</string>
     <string name="ws_github_refresh_repos">刷新仓库</string>

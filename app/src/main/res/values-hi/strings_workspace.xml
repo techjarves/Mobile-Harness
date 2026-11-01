@@ -70,7 +70,7 @@
     <string name="ws_github_signin">GitHub से साइन इन करें</string>
     <string name="ws_github_starting">GitHub साइन-इन शुरू हो रहा है…</string>
     <string name="ws_github_enter_code">अपने ब्राउज़र में खुले GitHub पेज में यह एक-बार का कोड दर्ज करें।</string>
-    <string name="ws_github_tap_code">कोड कॉपी करने के लिए उस पर टैप करें। स्वीकृति के बाद PocketDev अपने आप कनेक्ट हो जाएगा।</string>
+    <string name="ws_github_tap_code">कोड कॉपी करने के लिए उस पर टैप करें। स्वीकृति के बाद Mobile Harness अपने आप कनेक्ट हो जाएगा।</string>
     <string name="ws_github_new_code">नया कोड बनाएं</string>
     <string name="ws_github_select_repo">एक रिपॉज़िटरी चुनें</string>
     <string name="ws_github_refresh_repos">रिपॉज़िटरी रीफ़्रेश करें</string>

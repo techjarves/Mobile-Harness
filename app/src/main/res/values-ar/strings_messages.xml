@@ -97,7 +97,7 @@
     <string name="vm_git_local_unsupported">روابط Git المحلية غير مدعومة</string>
     <string name="vm_git_url_not_repo">يجب أن يشير الرابط إلى مستودع Git</string>
     <string name="vm_github_preparing_signin">جارٍ تجهيز تسجيل الدخول الرسمي إلى GitHub…</string>
-    <string name="vm_github_enter_code">أدخل هذا الرمز لمرة واحدة على GitHub</string>
+    <string name="vm_github_enter_code">أدخل هذا الرمز لمرة واحدة على GitHub</string><string name="vm_github_code_copied">تم نسخ الرمز %1$s. الصقه في صفحة GitHub.</string>
     <string name="vm_github_signin_failed_exit">فشل تسجيل الدخول إلى GitHub (الخروج %1$d)</string>
     <string name="vm_github_account_unknown">تم الاتصال بـ GitHub، لكن تعذّر تحديد الحساب</string>
     <string name="vm_github_connected_as">متصل باسم ‎@%1$s</string>
