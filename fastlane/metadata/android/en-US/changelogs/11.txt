@@ -1,0 +1,6 @@
+Backup & Restore in Settings: save projects, files, chats and settings into one file.
+A backup password also saves API keys and logins (GitHub, git, SSH, coding agents).
+Restoring adds the backup's projects next to the ones on your phone.
+After a reinstall, restore from the setup screen to get everything back.
+Backups keep running in the background and show live progress.
+A What's New screen shows after each update.
