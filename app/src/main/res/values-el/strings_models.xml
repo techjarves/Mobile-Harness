@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Display labels for model enums and related UI (ui/ModelLabels.kt). -->
+<resources>
+    <string name="md_stack_web_label">Web (JavaScript / TypeScript)</string>
+    <string name="md_stack_python_label">Python</string>
+    <string name="md_stack_android_label">Android (Java / Kotlin)</string>
+    <string name="md_stack_cpp_label">C / C++</string>
+    <string name="md_stack_php_label">PHP</string>
+    <string name="md_stack_web_description">Ιστότοποι και web εφαρμογές με HTML, CSS και frameworks JS.</string>
+    <string name="md_stack_python_description">Σενάρια, αυτοματοποίηση, επεξεργασία δεδομένων και backend σε Python.</string>
+    <string name="md_stack_android_description">Δημιουργήστε έργα εφαρμογών Android και εγκαταστήστε τα απευθείας σε αυτό το τηλέφωνο.</string>
+    <string name="md_stack_cpp_description">Γρήγορα μεταγλωττισμένα προγράμματα, αλγόριθμοι και κώδικας συστήματος.</string>
+    <string name="md_stack_php_description">Ιστότοποι και εφαρμογές με PHP — κλασικοί ιστότοποι και έργα Laravel.</string>
+    <string name="md_stack_web_installs">Node.js και npm (περιλαμβάνονται ήδη)</string>
+    <string name="md_stack_python_installs">python3, pip, venv και εργαλεία μεταγλώττισης</string>
+    <string name="md_stack_android_installs">JDK 17, ARM64 Android SDK 36, Build Tools 35, Gradle 8.14.3 και τοπική κρυφή μνήμη Maven εκτός σύνδεσης</string>
+    <string name="md_stack_cpp_installs">gcc, g++, make, cmake, gdb</string>
+    <string name="md_stack_php_installs">php-cli, συνήθεις επεκτάσεις και Composer</string>
+    <string name="md_time_just_now">Μόλις τώρα</string>
+    <string name="md_time_minutes_ago">Πριν από %1$d λ.</string>
+    <string name="md_time_hours_ago">Πριν από %1$d ώ.</string>
+    <string name="md_time_yesterday">Χθες</string>
+    <string name="md_time_days_ago">Πριν από %1$d ημ.</string>
+    <string name="md_model_default">%1$s Προεπιλογή (%2$s)</string>
+    <string name="md_model_opencode_default">Προεπιλογή OpenCode Zen</string>
+    <string name="md_activity_permission_denied">Δεν επιτρέπεται η πρόσβαση</string>
+    <string name="md_reason_stopped_by_user">Διακόπηκε από τον χρήστη</string>
+    <string name="md_reason_no_api_key">Δεν έχει αποθηκευτεί κλειδί API για %1$s.</string>
+    <string name="md_reason_no_claude_token">Δεν έχει αποθηκευτεί token συνδρομής Claude. Προσθέστε ένα από Agent → Πάροχος AI.</string>
+    <string name="md_reason_dsh_not_installed">Το DeepSeek Harness δεν είναι εγκατεστημένο. Ανοίξτε Ρυθμίσεις → Agent προγραμματισμού για να το εγκαταστήσετε.</string>
+    <string name="md_reason_antigravity_not_installed">Το Antigravity CLI δεν είναι εγκατεστημένο. Ανοίξτε Ρυθμίσεις → Agent προγραμματισμού για να το εγκαταστήσετε.</string>
+    <string name="md_chat_title_attachments">Ελέγξτε τα συνημμένα αρχεία</string>
+    <string name="md_reason_user_not_found">Ο χρήστης δεν βρέθηκε. Ελέγξτε το κλειδί API και τον λογαριασμό του παρόχου.</string>
+    <string name="md_reason_key_rejected">Ο πάροχος απέρριψε το αποθηκευμένο κλειδί API.</string>
+    <string name="md_reason_verification_failed">Η επαλήθευση του runtime απέτυχε. Δεν εκτελέστηκε τίποτα μη επαληθευμένο.</string>
+    <string name="md_reason_claude_could_not_start">Δεν ήταν δυνατή η εκκίνηση του πραγματικού runtime του Claude Code.</string>
+    <string name="md_reason_claude_reported_error">Το Claude Code ανέφερε σφάλμα</string>
+    <string name="md_reason_agent_exit_code">Το %1$s σταμάτησε με κωδικό εξόδου %2$d</string>
+    <string name="md_reason_antigravity_exit_code">Το Antigravity τερματίστηκε με κωδικό %1$d</string>
+    <string name="md_reason_antigravity_signin">Το Antigravity απαιτεί σύνδεση με Google. Ανοίξτε Ρυθμίσεις → Agent προγραμματισμού.</string>
+    <string name="md_reason_antigravity_no_credits">Ο λογαριασμός Antigravity δεν έχει άλλες μονάδες χρέωσης. Ελέγξτε το πρόγραμμα του λογαριασμού ή περιμένετε την ανανέωσή τους.</string>
+    <string name="md_reason_antigravity_time_limit">Το Antigravity έφτασε το όριο εργασίας των 60 λεπτών. Τα αρχεία σας διατηρήθηκαν.</string>
+    <string name="md_reason_antigravity_model_unavailable">Το επιλεγμένο μοντέλο Antigravity δεν είναι διαθέσιμο. Ανανεώστε τα μοντέλα στις Ρυθμίσεις.</string>
+    <string name="md_reason_antigravity_failed">Το Antigravity δεν μπόρεσε να ολοκληρώσει την εργασία.</string>
+    <string name="md_reason_antigravity_cli_missing_short">Το Antigravity CLI δεν είναι εγκατεστημένο.</string>
+    <string name="md_reason_dsh_stopped_before_prompt">Το DeepSeek Harness σταμάτησε πριν επεξεργαστεί το αίτημα</string>
+    <string name="md_reason_dsh_no_key">Κανένα κλειδί API δεν έφτασε στο DeepSeek Harness. Αποθηκεύστε ξανά το κλειδί του παρόχου στις Ρυθμίσεις.</string>
+    <string name="md_reason_dsh_could_not_start">Δεν ήταν δυνατή η εκκίνηση του DeepSeek Harness.</string>
+    <string name="md_reason_dsh_unspecified">Το DeepSeek Harness ανέφερε απροσδιόριστο σφάλμα</string>
+    <string name="md_reason_dsh_turn_failed">Ο γύρος του DeepSeek Harness απέτυχε</string>
+    <string name="md_reason_dsh_blocked">Το DeepSeek Harness εμποδίστηκε να ολοκληρώσει την εργασία</string>
+    <string name="md_tool_failed">Το εργαλείο απέτυχε</string>
+    <string name="md_tool_completed_successfully">Ολοκληρώθηκε με επιτυχία</string>
+</resources>

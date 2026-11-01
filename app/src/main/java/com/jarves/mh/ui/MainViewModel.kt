@@ -3054,6 +3054,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     toastMessage = when {
                         it.isRunning -> str(R.string.vm_task_continues_background)
                         it.androidBuildRunning -> str(R.string.an_build_continues_background)
+                        projectTerminalStopRequested -> null
                         else -> str(R.string.vm_terminal_continues_background)
                     },
                 )

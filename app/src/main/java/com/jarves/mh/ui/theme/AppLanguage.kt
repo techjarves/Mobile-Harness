@@ -11,7 +11,8 @@ enum class AppLanguage(
     CHINESE("zh", "Chinese (Simplified)", "简体中文"),
     ARABIC("ar", "Arabic", "العربية"),
     HINDI("hi", "Hindi", "हिन्दी"),
-    RUSSIAN("ru", "Russian", "Русский");
+    RUSSIAN("ru", "Russian", "Русский"),
+    GREEK("el", "Greek", "Ελληνικά");
 
     companion object {
         fun fromCode(code: String?): AppLanguage =

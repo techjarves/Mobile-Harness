@@ -41,7 +41,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -4417,7 +4419,42 @@ private fun WorkspaceScreen(
     onCleanAndroid: () -> Unit,
     onInstallAndroidTools: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
+    // Leaving while a terminal command runs asks whether to stop it or keep it running.
+    var confirmLeaveTerminal by rememberSaveable { mutableStateOf(false) }
+    val requestBack: () -> Unit = {
+        if (state.projectTerminalRunning) confirmLeaveTerminal = true else onBack()
+    }
+    BackHandler(onBack = requestBack)
+    if (confirmLeaveTerminal) {
+        AlertDialog(
+            onDismissRequest = { confirmLeaveTerminal = false },
+            title = { Text(stringResource(R.string.ws_terminal_leave_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.ws_terminal_leave_body,
+                        state.projectTerminalCommand ?: stringResource(R.string.workspace_project_terminal),
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLeaveTerminal = false
+                    onTerminalStop()
+                    onBack()
+                }) { Text(stringResource(R.string.ws_terminal_leave_stop)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { confirmLeaveTerminal = false }) { Text(stringResource(R.string.cancel)) }
+                    TextButton(onClick = {
+                        confirmLeaveTerminal = false
+                        onBack()
+                    }) { Text(stringResource(R.string.ws_terminal_leave_keep)) }
+                }
+            },
+        )
+    }
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -4485,32 +4522,37 @@ private fun WorkspaceScreen(
         if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
     }
 
-    // When the user actively scrolls/touches the screen, detect if they scrolled up to read thinking/messages.
+    // Only a finger drag pauses follow mode; our own scrolls (and the Latest button) must not.
+    val chatDragged by chatListState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(chatDragged) {
+        if (chatDragged) userScrolledUp = true
+    }
+    // Reaching the bottom again, by hand or via Latest, re-enables follow mode.
     LaunchedEffect(chatListState.isScrollInProgress) {
-        if (chatListState.isScrollInProgress) {
-            if (chatListState.canScrollForward) {
-                userScrolledUp = true
-            }
-        } else {
-            // If user scrolled back down to the very bottom, re-enable follow mode
-            if (!chatListState.canScrollForward) {
-                userScrolledUp = false
-            }
+        if (!chatListState.isScrollInProgress && !chatListState.canScrollForward) {
+            userScrolledUp = false
         }
     }
+    // A new run always starts following.
+    LaunchedEffect(state.isRunning) {
+        if (state.isRunning) userScrolledUp = false
+    }
 
-    // Follow new tokens/updates only when user is at the bottom and has not scrolled up to read.
+    // Follow new tokens/updates unless the user has scrolled up to read.
     LaunchedEffect(
         state.messages.size,
         state.messages.lastOrNull()?.text?.length,
         state.liveProcess.size,
         state.liveProcess.lastOrNull()?.detail,
         state.pendingApproval,
+        state.isRunning,
     ) {
-        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress) return@LaunchedEffect
-        if (!chatListState.canScrollForward) {
-            chatListState.scrollToItem(chatItemCount - 1)
-        }
+        if (chatItemCount <= 0 || userScrolledUp || chatDragged) return@LaunchedEffect
+        // Don't gate on canScrollForward: this runs before the new item is laid out, so the list
+        // still looks "at bottom". Scrolling past the end is clamped, so this is a no-op when already there.
+        chatListState.scrollToItem(chatItemCount - 1)
+        // The newest item can be taller than the screen; land on its end, not its top.
+        chatListState.scrollBy(100_000f)
     }
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
@@ -4646,7 +4688,7 @@ private fun WorkspaceScreen(
                         )
                     }
                 },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
+                navigationIcon = { IconButton(onClick = requestBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
                 actions = {
                     if (isAndroidProject) {
                         IconButton(

@@ -194,4 +194,8 @@
     </plurals>
     <string name="vm_claude_hello">جارٍ طلب رد من Claude Code…</string>
     <string name="vm_claude_working">اشتراك Claude يعمل!</string>
+    <string name="ws_terminal_leave_title">الطرفية لا تزال تعمل</string>
+    <string name="ws_terminal_leave_body">‏«%1$s» لا يزال يعمل في الطرفية.</string>
+    <string name="ws_terminal_leave_stop">إيقاف والرجوع</string>
+    <string name="ws_terminal_leave_keep">متابعة التشغيل</string>
 </resources>

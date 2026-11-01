@@ -40,7 +40,7 @@ val prepareBundledAgentAssets = tasks.register<Sync>("prepareBundledAgentAssets"
 val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAssets") {
     from(
         runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
-        runtimeBundleDir.file("pocketdev-claude-arm64-2026.09.1.tar.zst"),
+        runtimeBundleDir.file("pocketdev-claude-arm64-2026.11.1.tar.zst"),
         runtimeBundleDir.file("pocketdev-python-arm64-2026.09.2.tar.zst"),
         runtimeBundleDir.file("pocketdev-android-arm64-2026.09.1.tar.zst"),
         runtimeBundleDir.file("pocketdev-dsh-arm64-2026.09.1.tar.zst"),
@@ -67,6 +67,11 @@ android {
                 storePassword = checkNotNull(uploadStorePassword)
                 keyAlias = checkNotNull(uploadKeyAlias)
                 keyPassword = checkNotNull(uploadKeyPassword)
+                // AGP drops the legacy JAR signature for minSdk >= 24, but some
+                // OEM installers (vivo) reject APKs without it as "missing the
+                // developer certificate". Keep both; the key is unchanged.
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }
