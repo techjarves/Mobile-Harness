@@ -221,4 +221,20 @@ class AntigravityBridgeTest {
         val output = "Error: dial tcp: lookup cloudcode-pa.googleapis.com: i/o timeout"
         assertEquals(AntigravitySignInCheck.UNKNOWN, antigravitySignInCheck(output, 1))
     }
+
+    @Test
+    fun `invalid conversation project is treated as stale`() {
+        val error = "The project associated with this conversation is no longer valid."
+        assertTrue(isStaleAntigravityConversation(error))
+        assertEquals(
+            "The previous Antigravity conversation is no longer available. Send your message again to start a new one.",
+            antigravityFriendlyError(error),
+        )
+    }
+
+    @Test
+    fun `missing conversation warning is not treated as stale`() {
+        // agy prints this, ignores --conversation and continues on its own.
+        assertTrue(!isStaleAntigravityConversation("warning: conversation \"0f0e6a52\" not found"))
+    }
 }
