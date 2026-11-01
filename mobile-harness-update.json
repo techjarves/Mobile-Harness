@@ -1,17 +1,17 @@
 {
-  "versionCode": 8,
-  "versionName": "1.0.7",
-  "notes": "Repairs DeepSeek Harness installs after incompatible updates, adds visible update progress, and keeps active Antigravity sessions alive more reliably in the background.",
+  "versionCode": 9,
+  "versionName": "1.0.8",
+  "notes": "Fixes Antigravity asking to sign in again after Google sign-in, copies the GitHub one-time code before opening the browser, supports ARM64 phones with unusual CPU names, and lets the C/C++ stack build native npm packages.",
   "artifacts": {
     "online": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-online-v1.0.7.apk",
-      "sha256": "c41795826ae1c9a9afec8b393d15ebd3c934d52b857d66eb62123a1079a98588",
-      "sizeBytes": 89090180
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-online-v1.0.8.apk",
+      "sha256": "5cddb2174e58fc8c70a9b116e3f23d9a8f0bf4ba729e4925f042bf3417a2c44a",
+      "sizeBytes": 89109576
     },
     "offline": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-offline-v1.0.7.apk",
-      "sha256": "99879b6e0c7d295e66cdd108f2c4a0ba8fa3a6211eb607733eba1ce91bc0a34e",
-      "sizeBytes": 889390061
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-offline-v1.0.8.apk",
+      "sha256": "f93de8c9a82041bcfcd196cdb5885e8bfafe45377ceae39ac7c7d6a6bce676e9",
+      "sizeBytes": 889409461
     }
   }
 }
