@@ -4,12 +4,12 @@
   "notes": "Fixes Antigravity asking to sign in again after Google sign-in, copies the GitHub one-time code before opening the browser, supports ARM64 phones with unusual CPU names, and lets the C/C++ stack build native npm packages.",
   "artifacts": {
     "online": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-online-v1.0.8.apk",
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-online.apk",
       "sha256": "5cddb2174e58fc8c70a9b116e3f23d9a8f0bf4ba729e4925f042bf3417a2c44a",
       "sizeBytes": 89109576
     },
     "offline": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-offline-v1.0.8.apk",
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-offline.apk",
       "sha256": "f93de8c9a82041bcfcd196cdb5885e8bfafe45377ceae39ac7c7d6a6bce676e9",
       "sizeBytes": 889409461
     }
