@@ -87,7 +87,6 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.ANTHROPIC,
     ProviderKind.LLM_ROUTER,
     ProviderKind.KIMI,
-    ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
     ProviderKind.CUSTOM,
 )
@@ -132,7 +131,11 @@ fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): Provid
     }
 }
 
-/** Provider choices shown for the selected coding agent. */
+/**
+ * Provider choices shown for the selected coding agent. OpenCode Zen is no longer offered: its
+ * gateway does not permit use from third-party clients. The enum entry stays so saved profiles
+ * still load; [AppPreferences.loadProvider] moves them to the agent's default provider.
+ */
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
     AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot { it == ProviderKind.OPENCODE_ZEN }
