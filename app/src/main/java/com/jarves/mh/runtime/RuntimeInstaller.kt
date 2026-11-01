@@ -1617,9 +1617,9 @@ class RuntimeInstaller(private val context: Context) {
                 if (hasNativeAddonToolchain(rootfs)) {
                     // node-gyp compiles native npm packages with $CC/$CXX and
                     // Node 24 headers need C++20, which Ubuntu's default GCC 9 lacks.
+                    // It finds python3 on PATH; npm 11 rejects npm_config_python.
                     put("CC", "/usr/bin/gcc-10")
                     put("CXX", "/usr/bin/g++-10")
-                    put("npm_config_python", "/usr/bin/python3")
                 }
                 // agy otherwise replaces its own binary in the background on any
                 // run, moving users to an untested release behind the installed
