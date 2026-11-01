@@ -23,7 +23,7 @@
     <string name="fm_failed">Не удалось выполнить: %1$s</string>
     <string name="fm_busy">Сначала остановите текущую задачу, команду терминала, сборку или экспорт</string>
     <string name="fm_share_title">Поделиться %1$s</string>
-    <string name="fm_too_large">%1$s больше 100 МБ</string>
+    <string name="fm_too_large">%1$s больше доступных для загрузки %2$s</string>
     <string name="fm_protected">Этот элемент защищён и не может быть изменён</string>
     <plurals name="fm_uploaded">
         <item quantity="one">Загружен %1$d файл</item>

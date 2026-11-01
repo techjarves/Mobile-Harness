@@ -23,7 +23,7 @@
     <string name="fm_failed">Could not complete: %1$s</string>
     <string name="fm_busy">Stop the running task, terminal command, build or export first</string>
     <string name="fm_share_title">Share %1$s</string>
-    <string name="fm_too_large">%1$s is larger than 100 MB</string>
+    <string name="fm_too_large">%1$s is larger than the %2$s available for uploads</string>
     <string name="fm_protected">This item is protected and can\'t be changed</string>
     <plurals name="fm_uploaded">
         <item quantity="one">%1$d file uploaded</item>

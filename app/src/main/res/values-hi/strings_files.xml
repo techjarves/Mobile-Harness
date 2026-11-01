@@ -23,7 +23,7 @@
     <string name="fm_failed">पूरा नहीं हो सका: %1$s</string>
     <string name="fm_busy">पहले चल रहा टास्क, टर्मिनल कमांड, बिल्ड या एक्सपोर्ट रोकें</string>
     <string name="fm_share_title">%1$s शेयर करें</string>
-    <string name="fm_too_large">%1$s 100 MB से बड़ी है</string>
+    <string name="fm_too_large">%1$s अपलोड के लिए उपलब्ध %2$s से बड़ी है</string>
     <string name="fm_protected">यह आइटम सुरक्षित है और बदला नहीं जा सकता</string>
     <plurals name="fm_uploaded">
         <item quantity="one">%1$d फ़ाइल अपलोड हुई</item>
