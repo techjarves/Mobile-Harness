@@ -276,6 +276,8 @@ class RuntimeSetupService : Service() {
                         RuntimeSetupController.update(this@RuntimeSetupService, progress)
                         updateNotification(progress.event == RuntimeInstallEvent.COMMAND_COMPLETED)
                     }
+                    // Logins restored from a backup before the runtime existed land in /root now.
+                    runCatching { com.jarves.mh.backup.BackupManager.applyPendingHome(filesDir) }
                     AppPreferences(this@RuntimeSetupService).runtimeSetupComplete = true
                     RuntimeSetupController.complete(this@RuntimeSetupService)
                     showFinishedNotification(success = true)

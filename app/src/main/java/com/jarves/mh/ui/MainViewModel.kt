@@ -401,6 +401,8 @@ data class AppUiState(
     val appUpdateDownloadedBytes: Long = 0L,
     val appUpdateTotalBytes: Long = -1L,
     val appUpdateError: String? = null,
+    val showWhatsNew: Boolean = false,
+    val backupFeatureSeen: Boolean = true,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -503,8 +505,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
+            // Only people updating from an earlier version get the dialog; a new install has nothing "new".
+            showWhatsNew = preferences.onboardingComplete && preferences.whatsNewSeenVersionCode < BuildConfig.VERSION_CODE,
+            backupFeatureSeen = preferences.backupFeatureSeen,
         ),
-    )
+    ).also {
+        if (!preferences.onboardingComplete) preferences.whatsNewSeenVersionCode = BuildConfig.VERSION_CODE
+    }
+
+    fun dismissWhatsNew() {
+        preferences.whatsNewSeenVersionCode = BuildConfig.VERSION_CODE
+        _state.update { it.copy(showWhatsNew = false) }
+    }
+
+    fun markBackupFeatureSeen() {
+        if (_state.value.backupFeatureSeen) return
+        preferences.backupFeatureSeen = true
+        _state.update { it.copy(backupFeatureSeen = true) }
+    }
 
     init {
         viewModelScope.launch {
@@ -2075,7 +2093,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Upgrades from the old single-bundle layout keep every already-installed tool.
             installer.migrateLegacyToolMarkers()
             installer.isInstalled().also { ready ->
-                if (ready) installer.cleanupLegacyWorkspaceScaffolding()
+                if (ready) {
+                    installer.cleanupLegacyWorkspaceScaffolding()
+                    runCatching { com.jarves.mh.backup.BackupManager.applyPendingHome(getApplication<Application>().filesDir) }
+                }
             }
         }
         _state.update { current ->

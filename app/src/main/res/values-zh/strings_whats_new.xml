@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="whats_new_title">新功能</string>
+    <string name="whats_new_version">版本 %1$s</string>
+    <string name="whats_new_open_backup">打开备份与恢复</string>
+    <string name="whats_new_got_it">知道了</string>
+    <string-array name="whats_new_items">
+        <item>备份与恢复：将你的项目、文件、聊天和设置保存到一个文件中。可在“设置”中找到。</item>
+        <item>添加密码即可同时保存 API 密钥和登录信息（GitHub、git、SSH、编码智能体）。</item>
+        <item>恢复时，备份中的项目会添加到手机上现有项目旁边，因此这里不会丢失任何内容。</item>
+        <item>重新安装后，在设置界面恢复即可找回所有内容。</item>
+        <item>熄屏时备份仍会继续运行，并显示实时进度。</item>
+    </string-array>
+</resources>

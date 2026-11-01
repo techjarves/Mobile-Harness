@@ -161,6 +161,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
@@ -305,6 +307,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             viewModel.consumeToast()
         }
     }
+    BackupRestartEffect()
     when {
         state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(
             state = state,
@@ -1306,7 +1309,26 @@ private fun RuntimeSetupPromptScreen(
                     }
                 }
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(16.dp))
+
+                // A fresh install can bring back a previous install's data before setup.
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            stringResource(R.string.backup_restore_on_setup_desc),
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        BackupRestoreSection(busy = false, compact = true)
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
 
                 Button(
                     onClick = { currentStep = 1 },
@@ -2452,6 +2474,18 @@ private fun RootScreenHost(
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
+    var openBackup by rememberSaveable { mutableStateOf(false) }
+
+    if (state.showWhatsNew) {
+        WhatsNewDialog(
+            onDismiss = viewModel::dismissWhatsNew,
+            onOpenBackup = {
+                viewModel.dismissWhatsNew()
+                openBackup = true
+                screen = RootScreen.SETTINGS
+            },
+        )
+    }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
@@ -2466,7 +2500,11 @@ private fun RootScreenHost(
                     NavigationBarItem(
                         selected = screen == tab,
                         onClick = { screen = tab },
-                        icon = { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) },
+                        icon = {
+                            BadgedBox(
+                                badge = { if (tab == RootScreen.SETTINGS && !state.backupFeatureSeen) Badge() },
+                            ) { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) }
+                        },
                         label = { Text(stringResource(tab.labelRes), fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -2538,6 +2576,12 @@ private fun RootScreenHost(
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
+                    showBackupDot = !state.backupFeatureSeen,
+                    onBackupOpened = {
+                        openBackup = false
+                        viewModel.markBackupFeatureSeen()
+                    },
+                    openBackup = openBackup,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
                     },

@@ -1,12 +1,12 @@
 {
-  "versionCode": 10,
-  "versionName": "1.0.9",
-  "notes": "New installs get Claude Code 2.1.316 for the latest Claude models. The chat now follows new messages, the terminal has a Stop button and keeps its keys above the keyboard, leaving a project asks before stopping a running command, and Greek is added.",
+  "versionCode": 11,
+  "versionName": "1.0.10",
+  "notes": "New Backup & Restore in Settings saves your projects, files, chats and settings into one file. Add a password to also save API keys and logins. Restoring adds projects next to the ones you already have, and after a reinstall you can restore from the setup screen. A What's New screen now shows after updates.",
   "artifacts": {
     "online": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.9/mobile-harness-online.apk",
-      "sha256": "ba725e04ecd02437e23d37153c1dd01074c4a4e2039249396210e400f54119d0",
-      "sizeBytes": 89250466
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.10/mobile-harness-online.apk",
+      "sha256": "5d3b15a0ae51c537a9a13893da1b3bb017067e4227707d72f3f30b2cf4ba58b2",
+      "sizeBytes": 89486745
     }
   }
 }

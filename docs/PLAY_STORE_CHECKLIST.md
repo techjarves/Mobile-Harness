@@ -35,6 +35,7 @@ This checklist covers the Play-facing work for package `com.jarves.mh`. It does 
 - [x] Prepare Data safety answers, including data sent to configured AI providers
 - [x] Prepare content rating, target audience, ads, app access, and privacy answers
 - [x] Prepare both `specialUse` foreground-service declarations
+- [ ] Declare the `dataSync` backup and restore foreground service in Play Console
 - [ ] Record a reviewer-accessible video showing how each foreground service is started, displayed, and stopped
 - [x] Provide reviewer instructions for setup and provider authentication
 - [ ] Run Play pre-launch reports on all supported Android versions
