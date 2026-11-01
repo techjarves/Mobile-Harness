@@ -95,6 +95,8 @@
     <string name="rt_agy_start_again">Vuelve a iniciar sesión con Google</string>
     <string name="rt_agy_session_expired">La sesión de inicio de sesión caducó. Empieza de nuevo.</string>
     <string name="rt_agy_completing">Completando el inicio de sesión con Google…</string>
+    <string name="rt_agy_checking_sign_in">Comprobando que Antigravity puede usar tu cuenta de Google…</string>
+    <string name="rt_agy_sign_in_not_kept">El inicio de sesión con Google terminó, pero Antigravity no lo conservó. Vuelve a iniciar sesión.</string>
     <string name="rt_agy_signing_out">Cerrando sesión en Antigravity…</string>
     <string name="rt_agy_remove_credential_failed">No se pudo quitar la credencial oficial de Antigravity. Tu cuenta sigue conectada.</string>
     <string name="rt_agy_logout_incomplete">No se completó el cierre de sesión de Antigravity.</string>

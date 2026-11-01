@@ -95,6 +95,8 @@
     <string name="rt_agy_start_again">Start Google sign-in again</string>
     <string name="rt_agy_session_expired">The sign-in session expired. Start again.</string>
     <string name="rt_agy_completing">Completing Google sign-in…</string>
+    <string name="rt_agy_checking_sign_in">Checking that Antigravity can use your Google account…</string>
+    <string name="rt_agy_sign_in_not_kept">Google sign-in finished, but Antigravity did not keep it. Sign in again.</string>
     <string name="rt_agy_signing_out">Signing out of Antigravity…</string>
     <string name="rt_agy_remove_credential_failed">Could not remove the official Antigravity credential. Your account remains connected.</string>
     <string name="rt_agy_logout_incomplete">Antigravity logout did not complete.</string>

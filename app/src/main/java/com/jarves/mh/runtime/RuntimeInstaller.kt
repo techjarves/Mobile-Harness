@@ -1605,6 +1605,10 @@ class RuntimeInstaller(private val context: Context) {
                 put("PROOT_LOADER", File(context.applicationInfo.nativeLibraryDir, "libprootloader.so").absolutePath)
                 // Also protects any glibc helper Claude starts later.
                 put("GLIBC_TUNABLES", "glibc.pthread.rseq=0")
+                // agy otherwise replaces its own binary in the background on any
+                // run, moving users to an untested release behind the installed
+                // version marker. Only "true" is honoured; "1" is ignored.
+                put("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
                 putAll(environment)
             },
             cwd = context.filesDir.absolutePath,

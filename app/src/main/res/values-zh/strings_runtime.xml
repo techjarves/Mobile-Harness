@@ -95,6 +95,8 @@
     <string name="rt_agy_start_again">请重新开始 Google 登录</string>
     <string name="rt_agy_session_expired">登录会话已过期。请重新开始。</string>
     <string name="rt_agy_completing">正在完成 Google 登录…</string>
+    <string name="rt_agy_checking_sign_in">正在确认 Antigravity 能使用你的 Google 账号…</string>
+    <string name="rt_agy_sign_in_not_kept">Google 登录已完成，但 Antigravity 没有保存登录状态。请重新登录。</string>
     <string name="rt_agy_signing_out">正在退出 Antigravity…</string>
     <string name="rt_agy_remove_credential_failed">无法移除官方 Antigravity 凭据。你的帐号仍处于连接状态。</string>
     <string name="rt_agy_logout_incomplete">Antigravity 退出未完成。</string>

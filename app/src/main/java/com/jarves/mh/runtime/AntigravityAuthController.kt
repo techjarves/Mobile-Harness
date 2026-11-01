@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Drives only agy's official interactive OAuth flow; it never reads the resulting credentials. */
 class AntigravityAuthController(
@@ -38,6 +39,12 @@ class AntigravityAuthController(
         // Remove output left by an app/process crash before starting a new OAuth flow.
         authOutput.delete()
         logoutOutput.delete()
+        // A saved "signed in" flag without agy's credential file can only fail
+        // every task with "authentication required"; show it as signed out.
+        if (initiallySignedIn && !hasOfficialCredential()) {
+            onSignedInChanged(false, null)
+            mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT)
+        }
     }
 
     private fun officialCredentialFile() = File(
@@ -152,24 +159,41 @@ class AntigravityAuthController(
                 }
                 if (isSignedInScreen(clean)) {
                     val email = extractSignedInEmail(clean)
-                    onSignedInChanged(true, email)
                     mutableState.value = AntigravityAuthState(
-                        AntigravityAuthStatus.SIGNED_IN,
-                        message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
-                        accountEmail = email,
+                        AntigravityAuthStatus.COMPLETING,
+                        message = str(R.string.rt_agy_checking_sign_in),
                     )
-                    // Leave the official CLI cleanly so it has a chance to flush
-                    // its own credential/session state before PocketDev closes
-                    // the temporary terminal. PocketDev never reads that state.
+                    // agy shows its main screen before it has finished saving the
+                    // account's tier and project next to the token. Newer releases
+                    // discard a token without them, so killing agy right away left
+                    // every later task with "authentication required". Let it
+                    // settle, then quit cleanly. PocketDev never reads that state.
+                    awaitCredentialSettled(running)
                     runCatching {
                         running.outputStream.write("/quit\r\n".toByteArray())
                         running.outputStream.flush()
                     }
-                    repeat(20) {
+                    repeat(QUIT_WAIT_STEPS) {
                         if (!running.isAlive) return@repeat
-                        delay(50)
+                        delay(100)
                     }
                     if (running.isAlive) running.destroy()
+                    // Confirm the sign-in works the way tasks use agy: headless,
+                    // without a terminal, before calling the account connected.
+                    if (verifySignIn(runtime) == AntigravitySignInCheck.SIGNED_OUT) {
+                        onSignedInChanged(false, null)
+                        mutableState.value = AntigravityAuthState(
+                            AntigravityAuthStatus.ERROR,
+                            message = str(R.string.rt_agy_sign_in_not_kept),
+                        )
+                    } else {
+                        onSignedInChanged(true, email)
+                        mutableState.value = AntigravityAuthState(
+                            AntigravityAuthStatus.SIGNED_IN,
+                            message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
+                            accountEmail = email,
+                        )
+                    }
                     break
                 }
                 if (!colorScreenCompleted && clean.contains("Choose your color scheme", true)) {
@@ -240,6 +264,52 @@ class AntigravityAuthController(
             codeSubmitted = false
         }
     }
+
+    /** Waits until agy has written its credential file and stopped changing it. */
+    private suspend fun awaitCredentialSettled(running: Process) {
+        val credential = officialCredentialFile()
+        var lastSignature = -1L to -1L
+        var stableSince = 0L
+        val startedAt = System.currentTimeMillis()
+        while (running.isAlive && System.currentTimeMillis() - startedAt < CREDENTIAL_SETTLE_TIMEOUT_MS) {
+            delay(250)
+            val signature = if (credential.isFile) credential.length() to credential.lastModified() else -1L to -1L
+            val now = System.currentTimeMillis()
+            if (signature != lastSignature) {
+                lastSignature = signature
+                stableSince = now
+            } else if (signature.first > 0L && now - stableSince >= CREDENTIAL_STABLE_MS) {
+                return
+            }
+        }
+    }
+
+    private suspend fun verifySignIn(runtime: InstalledRuntime): AntigravitySignInCheck = runCatching {
+        val workspace = File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
+        val outputFile = File(context.cacheDir, "antigravity-auth-check-${System.nanoTime()}.log")
+        val check = installer.process(
+            runtime.proot,
+            runtime.rootfs,
+            workspace,
+            emptyMap(),
+            listOf(RuntimeInstaller.AGY_GUEST_PATH, "models"),
+            guestWorkspacePath = "/workspace/antigravity-auth",
+            emulateHardLinks = false,
+            outputFile = outputFile,
+        )
+        try {
+            runCatching { check.outputStream.close() }
+            val finished = withTimeoutOrNull(SIGN_IN_CHECK_TIMEOUT_MS) {
+                while (check.isAlive) delay(100)
+                true
+            } ?: false
+            if (!finished) return@runCatching AntigravitySignInCheck.UNKNOWN
+            antigravitySignInCheck(outputFile.readTailText(4_000), check.waitFor())
+        } finally {
+            if (check.isAlive) check.destroyForcibly()
+            outputFile.delete()
+        }
+    }.getOrDefault(AntigravitySignInCheck.UNKNOWN)
 
     fun submitCode(code: String) {
         val value = code.trim()
@@ -330,6 +400,36 @@ internal fun extractGoogleOAuthUrl(output: String): String? {
     }
     return null
 }
+
+internal enum class AntigravitySignInCheck { SIGNED_IN, SIGNED_OUT, UNKNOWN }
+
+/**
+ * Classifies `agy models`, which needs a usable sign-in but no model call. Only
+ * an explicit "not signed in" answer counts as failure; network trouble must not
+ * sign the user out.
+ */
+internal fun antigravitySignInCheck(output: String, exitCode: Int): AntigravitySignInCheck {
+    val value = output.replace(Regex("\\s+"), " ")
+    return when {
+        AGY_SIGNED_OUT_MARKERS.any { value.contains(it, ignoreCase = true) } -> AntigravitySignInCheck.SIGNED_OUT
+        exitCode == 0 -> AntigravitySignInCheck.SIGNED_IN
+        else -> AntigravitySignInCheck.UNKNOWN
+    }
+}
+
+private val AGY_SIGNED_OUT_MARKERS = listOf(
+    "please sign in",
+    "sign in required",
+    "authentication required",
+    "not logged in",
+    "not logged into",
+    "not signed in",
+)
+
+private const val CREDENTIAL_SETTLE_TIMEOUT_MS = 20_000L
+private const val CREDENTIAL_STABLE_MS = 3_000L
+private const val QUIT_WAIT_STEPS = 100 // 10 seconds
+private const val SIGN_IN_CHECK_TIMEOUT_MS = 90_000L
 
 private fun isSignedInScreen(output: String): Boolean =
     output.contains("for shortcuts", true) ||

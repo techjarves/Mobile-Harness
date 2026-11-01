@@ -95,6 +95,8 @@
     <string name="rt_agy_start_again">Начните вход через Google заново</string>
     <string name="rt_agy_session_expired">Сеанс входа истёк. Начните заново.</string>
     <string name="rt_agy_completing">Завершение входа через Google…</string>
+    <string name="rt_agy_checking_sign_in">Проверяем, что Antigravity может использовать ваш аккаунт Google…</string>
+    <string name="rt_agy_sign_in_not_kept">Вход через Google завершён, но Antigravity его не сохранил. Войдите снова.</string>
     <string name="rt_agy_signing_out">Выход из Antigravity…</string>
     <string name="rt_agy_remove_credential_failed">Не удалось удалить официальные учётные данные Antigravity. Ваш аккаунт остаётся подключённым.</string>
     <string name="rt_agy_logout_incomplete">Выход из Antigravity не завершён.</string>
