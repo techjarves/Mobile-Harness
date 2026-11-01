@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="whats_new_title">नया क्या है</string>
+    <string name="whats_new_version">संस्करण %1$s</string>
+    <string name="whats_new_open_backup">बैकअप और रीस्टोर खोलें</string>
+    <string name="whats_new_got_it">समझ गया</string>
+    <string-array name="whats_new_items">
+        <item>बैकअप और रीस्टोर: अपने प्रोजेक्ट, फ़ाइलें, चैट और सेटिंग्स को एक फ़ाइल में सहेजें। यह सेटिंग्स में मिलेगा।</item>
+        <item>API कुंजियाँ और लॉगिन (GitHub, git, SSH, कोडिंग एजेंट) भी सहेजने के लिए पासवर्ड जोड़ें।</item>
+        <item>रीस्टोर करने पर बैकअप के प्रोजेक्ट आपके फ़ोन के मौजूदा प्रोजेक्ट के साथ जुड़ जाते हैं, इसलिए यहाँ कुछ भी नहीं खोता।</item>
+        <item>दोबारा इंस्टॉल करने के बाद, सब कुछ वापस पाने के लिए सेटअप स्क्रीन से रीस्टोर करें।</item>
+        <item>बैकअप स्क्रीन बंद होने पर भी चलते रहते हैं और लाइव प्रगति दिखाते हैं।</item>
+    </string-array>
+</resources>

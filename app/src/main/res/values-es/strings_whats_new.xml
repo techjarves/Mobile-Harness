@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="whats_new_title">Novedades</string>
+    <string name="whats_new_version">Versión %1$s</string>
+    <string name="whats_new_open_backup">Abrir Copia de seguridad y restauración</string>
+    <string name="whats_new_got_it">Entendido</string>
+    <string-array name="whats_new_items">
+        <item>Copia de seguridad y restauración: guarda tus proyectos, archivos, chats y ajustes en un solo archivo. La encontrarás en Ajustes.</item>
+        <item>Añade una contraseña para guardar también tus claves API y tus inicios de sesión (GitHub, git, SSH, agentes de programación).</item>
+        <item>Al restaurar, los proyectos de la copia se añaden junto a los de tu teléfono, así que aquí no se pierde nada.</item>
+        <item>Tras una reinstalación, restaura desde la pantalla de configuración para recuperarlo todo.</item>
+        <item>Las copias siguen funcionando con la pantalla apagada y muestran el progreso en directo.</item>
+    </string-array>
+</resources>

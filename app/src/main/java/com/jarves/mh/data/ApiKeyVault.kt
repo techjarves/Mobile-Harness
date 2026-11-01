@@ -77,6 +77,52 @@ class ApiKeyVault(context: Context) {
         }
     }
 
+    /** Decrypted copy of every saved key, grouped by provider, for password-protected backups. */
+    @Synchronized
+    fun exportAll(): JSONObject {
+        val all = preferences.all.keys
+        val providers = all.filter { it.endsWith(".pool") }.map { it.removeSuffix(".pool") } +
+            all.filter { it.endsWith(".value") && ".pool." !in it }.map { it.removeSuffix(".value") }
+        val result = JSONObject()
+        providers.distinct().forEach { providerId ->
+            val keys = JSONArray()
+            credentials(providerId).forEach { credential ->
+                keys.put(
+                    JSONObject()
+                        .put("id", credential.id)
+                        .put("name", credential.name)
+                        .put("secret", credential.secret)
+                        .put("active", credential.isActive),
+                )
+            }
+            if (keys.length() > 0) result.put(providerId, keys)
+        }
+        return result
+    }
+
+    /** Replaces every saved key with [backup], re-encrypting each with this device's Keystore key. */
+    @Synchronized
+    fun importAll(backup: JSONObject) {
+        preferences.edit().clear().commit()
+        backup.keys().forEach { providerId ->
+            val keys = backup.optJSONArray(providerId) ?: return@forEach
+            val entries = mutableListOf<ApiKeyInfo>()
+            var activeId: String? = null
+            for (index in 0 until keys.length()) {
+                val item = keys.optJSONObject(index) ?: continue
+                val id = item.optString("id").ifBlank { UUID.randomUUID().toString() }
+                val secret = item.optString("secret")
+                if (secret.isBlank()) continue
+                putEncrypted(secretKey(providerId, id), secret)
+                entries += ApiKeyInfo(id, item.optString("name").ifBlank { "API key" })
+                if (item.optBoolean("active")) activeId = id
+            }
+            if (entries.isEmpty()) return@forEach
+            savePool(providerId, entries)
+            setActiveId(providerId, activeId ?: entries.first().id)
+        }
+    }
+
     private fun putEncrypted(storageId: String, secret: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
