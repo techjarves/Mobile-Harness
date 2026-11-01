@@ -1977,13 +1977,13 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             sha256 = "df0cf7251c74f82d424231e3804114a4ca66b16130eea9abab11e220dc7ac012",
             compressedBytes = 72_185_773L,
         )
-        private const val CLAUDE_BUNDLED_VERSION = "2.1.263"
+        private const val CLAUDE_BUNDLED_VERSION = "2.1.316"
         private const val CLAUDE_GUEST_PATH = "/usr/local/bin/claude"
         private val CLAUDE_BUNDLE = RuntimeBundle(
             label = "Claude Code",
-            fileName = "pocketdev-claude-arm64-2026.09.1.tar.zst",
-            sha256 = "0f68e15630e8c0fc941afe3f61ab5a3eb4407b334018de6dbdabfa5eca627724",
-            compressedBytes = 75_289_800L,
+            fileName = "pocketdev-claude-arm64-2026.11.1.tar.zst",
+            sha256 = "26316a6481983e5f42d362b4b6fdfa0441a1c27e9ddc74eb33fd4fcbba4fe3eb",
+            compressedBytes = 116_997_995L,
         )
         private val PYTHON_BUNDLE = RuntimeBundle(
             label = "Python",
