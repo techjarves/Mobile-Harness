@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fm_new">Νέο</string>
+    <string name="fm_new_file">Νέο αρχείο</string>
+    <string name="fm_new_folder">Νέος φάκελος</string>
+    <string name="fm_upload_here">Μεταφόρτωση εδώ</string>
+    <string name="fm_rename">Μετονομασία</string>
+    <string name="fm_delete">Διαγραφή</string>
+    <string name="fm_share">Κοινοποίηση</string>
+    <string name="fm_save_copy">Αποθήκευση αντιγράφου</string>
+    <string name="fm_more_actions">Περισσότερες ενέργειες για %1$s</string>
+    <string name="fm_name">Όνομα</string>
+    <string name="fm_create">Δημιουργία</string>
+    <string name="fm_delete_title">Διαγραφή του %1$s;</string>
+    <string name="fm_delete_file_desc">Αυτό το αρχείο θα διαγραφεί οριστικά.</string>
+    <string name="fm_delete_folder_desc">Αυτός ο φάκελος και όλο το περιεχόμενό του θα διαγραφούν οριστικά.</string>
+    <string name="fm_created">Δημιουργήθηκε: %1$s</string>
+    <string name="fm_renamed">Μετονομάστηκε σε %1$s</string>
+    <string name="fm_deleted">Διαγράφηκε: %1$s</string>
+    <string name="fm_saved_copy">Αποθηκεύτηκε αντίγραφο του %1$s</string>
+    <string name="fm_invalid_name">Εισαγάγετε έγκυρο όνομα (χωρίς καθέτους, όχι . ή ..)</string>
+    <string name="fm_exists">Το %1$s υπάρχει ήδη</string>
+    <string name="fm_failed">Δεν ήταν δυνατή η ολοκλήρωση: %1$s</string>
+    <string name="fm_busy">Σταματήστε πρώτα την εργασία, την εντολή τερματικού, τη μεταγλώττιση ή την εξαγωγή που εκτελείται</string>
+    <string name="fm_share_title">Κοινοποίηση %1$s</string>
+    <string name="fm_too_large">Το %1$s υπερβαίνει τον διαθέσιμο χώρο για μεταφορτώσεις (%2$s)</string>
+    <string name="fm_protected">Αυτό το στοιχείο είναι προστατευμένο και δεν μπορεί να αλλάξει</string>
+    <plurals name="fm_uploaded">
+        <item quantity="one">Μεταφορτώθηκε %1$d αρχείο</item>
+        <item quantity="other">Μεταφορτώθηκαν %1$d αρχεία</item>
+    </plurals>
+</resources>
