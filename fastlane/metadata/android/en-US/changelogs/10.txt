@@ -1,0 +1,7 @@
+New installs get Claude Code 2.1.316, which supports the latest Claude models.
+The chat follows new messages and Claude's final answer.
+A Stop button shows in the terminal while a command runs.
+Leaving a project asks whether to stop a running terminal command.
+Terminal keys stay above the keyboard.
+Greek translation.
+Release APKs include the legacy v1 signature for OEM installers.
