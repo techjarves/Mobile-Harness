@@ -2367,6 +2367,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(onboardingComplete = true, startupStage = StartupStage.READY) }
     }
 
+    /** Finishes first run without a provider so it can be configured later from Settings. */
+    fun skipOnboarding() {
+        preferences.onboardingComplete = true
+        _state.update { it.copy(onboardingComplete = true, startupStage = StartupStage.READY) }
+    }
+
     /** Lets first-run users escape a provider/login failure without losing saved credentials. */
     fun chooseOnboardingAgent(kind: AgentKind) {
         selectAgent(kind)

@@ -208,6 +208,7 @@
     <string name="provider_keys_secure">API keys are encrypted in Android secure storage.</string>
     <string name="provider_continue">Continue</string>
     <string name="provider_use_another_agent">Use another coding agent</string>
+    <string name="provider_skip_setup_later">Skip, set up later in Settings</string>
     <string name="provider_beta">Beta</string>
     <string name="provider_title_claude">Claude subscription</string>
     <string name="provider_title_anthropic">Anthropic API</string>
