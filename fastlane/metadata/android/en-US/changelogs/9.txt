@@ -1,0 +1,5 @@
+Fix Antigravity asking to sign in again after a successful Google sign-in.
+Let first-run users skip AI setup and set it up later in Settings.
+Limit workspace uploads by free storage instead of a fixed 100 MB.
+Hide NVIDIA NIM models that cannot chat, and stop offering OpenCode Zen.
+Verify app updates signed with older keys.
