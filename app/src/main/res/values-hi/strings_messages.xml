@@ -182,4 +182,8 @@
     </plurals>
     <string name="vm_claude_hello">Claude Code से जवाब माँगा जा रहा है…</string>
     <string name="vm_claude_working">Claude सब्सक्रिप्शन काम कर रहा है!</string>
+    <string name="ws_terminal_leave_title">टर्मिनल अभी चल रहा है</string>
+    <string name="ws_terminal_leave_body">टर्मिनल में “%1$s” अभी चल रहा है।</string>
+    <string name="ws_terminal_leave_stop">रोकें और वापस जाएं</string>
+    <string name="ws_terminal_leave_keep">चलने दें</string>
 </resources>

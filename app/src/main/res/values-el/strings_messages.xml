@@ -183,4 +183,8 @@
     </plurals>
     <string name="vm_claude_hello">Ζητείται απάντηση από το Claude Code…</string>
     <string name="vm_claude_working">Η συνδρομή Claude λειτουργεί!</string>
+    <string name="ws_terminal_leave_title">Το τερματικό εκτελείται ακόμα</string>
+    <string name="ws_terminal_leave_body">Το «%1$s» εκτελείται ακόμα στο τερματικό.</string>
+    <string name="ws_terminal_leave_stop">Διακοπή και επιστροφή</string>
+    <string name="ws_terminal_leave_keep">Συνέχιση εκτέλεσης</string>
 </resources>
