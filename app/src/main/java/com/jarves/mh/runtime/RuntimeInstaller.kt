@@ -732,7 +732,7 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.ANDROID -> removeAndroidStack()
             DevStack.CPP -> aptRemove(
                 runtime.proot,
-                listOf("build-essential", "gcc", "g++", "make", "cmake", "gdb"),
+                listOf("build-essential", "gcc", "g++", "gcc-10", "g++-10", "make", "cmake", "gdb"),
                 0.45f,
                 onProgress,
             )
@@ -846,14 +846,16 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.CPP -> {
                 aptInstall(
                     proot,
-                    listOf("build-essential", "cmake", "gdb"),
+                    // Node 24's native addons (node-gyp) need C++20 and Python;
+                    // Ubuntu 20.04's default GCC 9 cannot build them.
+                    listOf("build-essential", "gcc-10", "g++-10", "python3", "cmake", "gdb"),
                     str(R.string.rt_install_cpp),
                     from,
                     onProgress,
                 )
                 verifyGuest(
                     proot,
-                    "gcc --version && g++ --version && make --version && cmake --version",
+                    "gcc --version && g++ --version && gcc-10 --version && g++-10 --version && python3 --version && make --version && cmake --version",
                     str(R.string.rt_install_verify_failed, "C/C++"),
                 )
             }
@@ -1179,6 +1181,8 @@ class RuntimeInstaller(private val context: Context) {
 
     fun isStackInstalled(stack: DevStack): Boolean {
         if (readDevStackState()[stack.name] != true) return false
+        // Older C/C++ installs lack GCC 10 and Python, which native npm packages need.
+        if (stack == DevStack.CPP) return hasNativeAddonToolchain(rootfs)
         if (stack != DevStack.ANDROID) return true
         return File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION &&
             File(rootfs, "root/android-sdk/platforms/android-36/android.jar").isFile &&
@@ -1187,6 +1191,11 @@ class RuntimeInstaller(private val context: Context) {
             File(rootfs, "root/maven/localMvnRepository").let { it.isDirectory && !it.list().isNullOrEmpty() } &&
             File(rootfs, "root/.gradle/init.d/pocketdev-android.gradle").isFile
     }
+
+    private fun hasNativeAddonToolchain(targetRootfs: File): Boolean =
+        File(targetRootfs, "usr/bin/gcc-10").canExecute() &&
+            File(targetRootfs, "usr/bin/g++-10").canExecute() &&
+            File(targetRootfs, "usr/bin/python3").canExecute()
 
     private fun readDevStackState(): MutableMap<String, Boolean> {
         if (!devStacksFile.isFile) return mutableMapOf()
@@ -1605,6 +1614,13 @@ class RuntimeInstaller(private val context: Context) {
                 put("PROOT_LOADER", File(context.applicationInfo.nativeLibraryDir, "libprootloader.so").absolutePath)
                 // Also protects any glibc helper Claude starts later.
                 put("GLIBC_TUNABLES", "glibc.pthread.rseq=0")
+                if (hasNativeAddonToolchain(rootfs)) {
+                    // node-gyp compiles native npm packages with $CC/$CXX and
+                    // Node 24 headers need C++20, which Ubuntu's default GCC 9 lacks.
+                    put("CC", "/usr/bin/gcc-10")
+                    put("CXX", "/usr/bin/g++-10")
+                    put("npm_config_python", "/usr/bin/python3")
+                }
                 // agy otherwise replaces its own binary in the background on any
                 // run, moving users to an untested release behind the installed
                 // version marker. Only "true" is honoured; "1" is ignored.
