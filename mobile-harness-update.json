@@ -1,17 +1,12 @@
 {
-  "versionCode": 9,
-  "versionName": "1.0.8",
-  "notes": "Fixes Antigravity asking to sign in again after Google sign-in, copies the GitHub one-time code before opening the browser, supports ARM64 phones with unusual CPU names, and lets the C/C++ stack build native npm packages.",
+  "versionCode": 10,
+  "versionName": "1.0.9",
+  "notes": "New installs get Claude Code 2.1.316 for the latest Claude models. The chat now follows new messages, the terminal has a Stop button and keeps its keys above the keyboard, leaving a project asks before stopping a running command, and Greek is added.",
   "artifacts": {
     "online": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-online.apk",
-      "sha256": "5cddb2174e58fc8c70a9b116e3f23d9a8f0bf4ba729e4925f042bf3417a2c44a",
-      "sizeBytes": 89109576
-    },
-    "offline": {
-      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.8/mobile-harness-offline.apk",
-      "sha256": "f93de8c9a82041bcfcd196cdb5885e8bfafe45377ceae39ac7c7d6a6bce676e9",
-      "sizeBytes": 889409461
+      "url": "https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.9/mobile-harness-online.apk",
+      "sha256": "ba725e04ecd02437e23d37153c1dd01074c4a4e2039249396210e400f54119d0",
+      "sizeBytes": 89250466
     }
   }
 }
