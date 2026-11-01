@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
@@ -199,6 +201,12 @@ fun TerminalScreen(
                             Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        if (isRunning) {
+                            (onStop ?: onInterrupt)?.let { stop ->
+                                TerminalStopChip(onClick = stop)
+                                Spacer(Modifier.width(4.dp))
+                            }
+                        }
                         IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
                             Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.ws_terminal_clear_output), modifier = Modifier.size(20.dp))
                         }
@@ -247,6 +255,9 @@ fun TerminalScreen(
                         }
                     },
                     actions = {
+                        if (isRunning) {
+                            (onStop ?: onInterrupt)?.let { stop -> TerminalStopChip(onClick = stop) }
+                        }
                         IconButton(onClick = onClear) {
                             Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.ws_terminal_clear_output))
                         }
@@ -268,7 +279,9 @@ fun TerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .then(if (compactHeader) Modifier else Modifier.imePadding()),
+                .consumeWindowInsets(padding)
+                // Shrink above the keyboard so the helper key row stays reachable while typing.
+                .imePadding(),
         ) {
             if (showQuickCommands && !keyboardVisible) {
                 // Quick command chips are useful in the standalone terminal, but
@@ -447,39 +460,38 @@ fun TerminalScreen(
 
             // Keyboard helper row. These operate on the command draft, so they are
             // useful even when the phone keyboard does not expose terminal keys.
-            if (!keyboardVisible) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp)
-                        .padding(bottom = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    TerminalKeyButton("↑", stringResource(R.string.ws_terminal_previous_command)) {
-                        commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
-                            historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
-                            commandInput = TextFieldValue(it, TextRange(it.length))
-                        }
+            // Kept visible with the keyboard open: that is when ↑/↓, ALT, ESC and CTRL are needed.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 14.dp)
+                    .padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                TerminalKeyButton("↑", stringResource(R.string.ws_terminal_previous_command)) {
+                    commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
+                        historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
+                        commandInput = TextFieldValue(it, TextRange(it.length))
                     }
-                    TerminalKeyButton("↓", stringResource(R.string.ws_terminal_next_command)) {
-                        if (historyIndex >= 0) {
-                            historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
-                            commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
-                        }
+                }
+                TerminalKeyButton("↓", stringResource(R.string.ws_terminal_next_command)) {
+                    if (historyIndex >= 0) {
+                        historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
+                        commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
                     }
-                    TerminalIconKeyButton(Icons.Default.ArrowBack, stringResource(R.string.ws_terminal_cursor_left)) {
-                        commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
-                    }
-                    TerminalIconKeyButton(Icons.Default.ArrowForward, stringResource(R.string.ws_terminal_cursor_right)) {
-                        commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
-                    }
-                    TerminalKeyButton("ALT", stringResource(R.string.ws_terminal_alt_modifier), active = altActive, fixedWidth = true) { altActive = !altActive }
-                    TerminalKeyButton("ESC", stringResource(R.string.ws_terminal_escape)) { commandInput = TextFieldValue() }
-                    TerminalKeyButton("CTRL", stringResource(R.string.ws_terminal_ctrl_modifier), active = ctrlActive, fixedWidth = true) {
-                        ctrlActive = !ctrlActive
-                        if (ctrlActive) openTerminalKeyboard()
-                    }
+                }
+                TerminalIconKeyButton(Icons.Default.ArrowBack, stringResource(R.string.ws_terminal_cursor_left)) {
+                    commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
+                }
+                TerminalIconKeyButton(Icons.Default.ArrowForward, stringResource(R.string.ws_terminal_cursor_right)) {
+                    commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
+                }
+                TerminalKeyButton("ALT", stringResource(R.string.ws_terminal_alt_modifier), active = altActive, fixedWidth = true) { altActive = !altActive }
+                TerminalKeyButton("ESC", stringResource(R.string.ws_terminal_escape)) { commandInput = TextFieldValue() }
+                TerminalKeyButton("CTRL", stringResource(R.string.ws_terminal_ctrl_modifier), active = ctrlActive, fixedWidth = true) {
+                    ctrlActive = !ctrlActive
+                    if (ctrlActive) openTerminalKeyboard()
                 }
             }
         }
@@ -545,4 +557,24 @@ private fun TerminalCommandPrompt(promptPath: String, command: String, isDark: B
         lineHeight = 18.sp,
         softWrap = true,
     )
+}
+
+// Small stop pill shown in the terminal header while a command is running.
+@Composable
+private fun TerminalStopChip(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 8.dp, end = 11.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(R.string.chat_stop), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
 }

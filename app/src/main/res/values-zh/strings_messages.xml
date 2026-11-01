@@ -179,4 +179,8 @@
     </plurals>
     <string name="vm_claude_hello">正在请求 Claude Code 回复…</string>
     <string name="vm_claude_working">Claude 订阅可用！</string>
+    <string name="ws_terminal_leave_title">终端仍在运行</string>
+    <string name="ws_terminal_leave_body">“%1$s”仍在终端中运行。</string>
+    <string name="ws_terminal_leave_stop">停止并返回</string>
+    <string name="ws_terminal_leave_keep">继续运行</string>
 </resources>

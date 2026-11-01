@@ -185,4 +185,8 @@
     </plurals>
     <string name="vm_claude_hello">Pidiendo a Claude Code que responda…</string>
     <string name="vm_claude_working">¡La suscripción de Claude funciona!</string>
+    <string name="ws_terminal_leave_title">La terminal sigue en ejecución</string>
+    <string name="ws_terminal_leave_body">«%1$s» sigue ejecutándose en la terminal.</string>
+    <string name="ws_terminal_leave_stop">Detener y volver</string>
+    <string name="ws_terminal_leave_keep">Seguir ejecutando</string>
 </resources>

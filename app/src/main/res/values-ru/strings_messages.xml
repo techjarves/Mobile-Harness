@@ -188,4 +188,8 @@
     </plurals>
     <string name="vm_claude_hello">Просим Claude Code ответить…</string>
     <string name="vm_claude_working">Подписка Claude работает!</string>
+    <string name="ws_terminal_leave_title">Терминал всё ещё работает</string>
+    <string name="ws_terminal_leave_body">«%1$s» всё ещё выполняется в терминале.</string>
+    <string name="ws_terminal_leave_stop">Остановить и выйти</string>
+    <string name="ws_terminal_leave_keep">Оставить работать</string>
 </resources>
