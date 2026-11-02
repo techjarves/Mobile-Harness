@@ -147,10 +147,24 @@ internal fun parseCursorTokenUsage(root: JSONObject): CursorTokenUsage? {
     ).takeIf { it.hasAny() }
 }
 
+/**
+ * Short token label for the chat footer: 1,234 stays exact, 101,400 is "101K", and 12,400,000
+ * is "12M". One decimal is kept only when it says something (101.4K, 1.2M).
+ */
 internal fun formatTokenCount(tokens: Long): String {
-    val digits = kotlin.math.abs(tokens).toString()
-    val grouped = digits.reversed().chunked(3).joinToString(",").reversed()
-    return if (tokens < 0) "-$grouped" else grouped
+    val value = kotlin.math.abs(tokens)
+    val sign = if (tokens < 0) "-" else ""
+    return when {
+        value < 1_000L -> "$sign$value"
+        value < 1_000_000L -> sign + shortUnit(value, 1_000L, "K")
+        else -> sign + shortUnit(value, 1_000_000L, "M")
+    }
+}
+
+private fun shortUnit(value: Long, unit: Long, suffix: String): String {
+    val whole = value / unit
+    val tenth = (value % unit) * 10 / unit
+    return if (tenth == 0L) "$whole$suffix" else "$whole.$tenth$suffix"
 }
 
 /** One short note. Missing model or missing usage is left out instead of showing a placeholder. */
@@ -158,21 +172,22 @@ internal fun cursorUsageNote(
     model: String?,
     usage: CursorTokenUsage?,
     modelLabel: (String) -> String = { "Model: $it" },
-    inputLabel: (String) -> String = { "Input: $it" },
-    outputLabel: (String) -> String = { "Output: $it" },
+    inputLabel: (String) -> String = { "In: $it" },
+    outputLabel: (String) -> String = { "Out: $it" },
     cacheLabel: (String) -> String = { "Cache: $it" },
 ): String? {
     val counted = usage?.takeIf { it.hasAny() }
     if (model.isNullOrBlank() && counted == null) return null
-    return buildString {
-        if (!model.isNullOrBlank()) appendLine(modelLabel(model))
+    val parts = buildList {
+        if (!model.isNullOrBlank()) add(modelLabel(model))
         if (counted != null) {
-            appendLine(inputLabel(formatTokenCount(counted.inputTokens)))
-            appendLine(outputLabel(formatTokenCount(counted.outputTokens)))
+            add(inputLabel(formatTokenCount(counted.inputTokens)))
+            add(outputLabel(formatTokenCount(counted.outputTokens)))
             val cache = counted.cacheReadTokens + counted.cacheWriteTokens
-            if (cache > 0L) appendLine(cacheLabel(formatTokenCount(cache)))
+            if (cache > 0L) add(cacheLabel(formatTokenCount(cache)))
         }
-    }.trim()
+    }
+    return parts.joinToString(" · ")
 }
 
 private fun assistantText(root: JSONObject): String {
@@ -423,6 +438,180 @@ data class CursorOnDemand(
     val limitDollars: Double? = null,
 )
 
+/** The signed-in Cursor account, as the dashboard reports it. */
+data class CursorAccount(
+    val email: String? = null,
+    val name: String? = null,
+    val teamName: String? = null,
+    val isEnterpriseUser: Boolean = false,
+    val isTeamAdmin: Boolean = false,
+    val createdAtMillis: Long? = null,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        email?.let { put("email", it) }
+        name?.let { put("name", it) }
+        teamName?.let { put("teamName", it) }
+        put("isEnterpriseUser", isEnterpriseUser)
+        put("isTeamAdmin", isTeamAdmin)
+        createdAtMillis?.let { put("createdAtMillis", it) }
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject) = CursorAccount(
+            email = json.optString("email").takeIf(String::isNotBlank),
+            name = json.optString("name").takeIf(String::isNotBlank),
+            teamName = json.optString("teamName").takeIf(String::isNotBlank),
+            isEnterpriseUser = json.optBoolean("isEnterpriseUser", false),
+            isTeamAdmin = json.optBoolean("isTeamAdmin", false),
+            createdAtMillis = if (json.has("createdAtMillis")) json.optLong("createdAtMillis") else null,
+        )
+    }
+}
+
+/** One day of spending, already in cents exactly as Cursor reports it. */
+data class CursorSpendDay(
+    val dayMillis: Long,
+    val spendCents: Long,
+    val totalTokens: Long = 0L,
+)
+
+/** Prepaid credit balance, when the account has credit grants. */
+data class CursorCredits(
+    val balanceCents: Long = 0L,
+    val totalCents: Long = 0L,
+    val usedCents: Long = 0L,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("balanceCents", balanceCents)
+        put("totalCents", totalCents)
+        put("usedCents", usedCents)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject) = CursorCredits(
+            balanceCents = json.optLong("balanceCents"),
+            totalCents = json.optLong("totalCents"),
+            usedCents = json.optLong("usedCents"),
+        )
+    }
+}
+
+/** Everything the Cursor dashboard can show, in one payload. */
+data class CursorOverview(
+    val account: CursorAccount? = null,
+    val usage: CursorUsage? = null,
+    val credits: CursorCredits? = null,
+    val spend: List<CursorSpendDay> = emptyList(),
+) {
+    fun hasAnything(): Boolean =
+        account != null || usage != null || credits != null || spend.isNotEmpty()
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        account?.let { put("account", it.toJson()) }
+        usage?.let { put("usage", it.toJson()) }
+        credits?.let { put("credits", it.toJson()) }
+        if (spend.isNotEmpty()) {
+            put(
+                "spend",
+                JSONArray().apply {
+                    spend.forEach { day ->
+                        put(
+                            JSONObject().apply {
+                                put("dayMillis", day.dayMillis)
+                                put("spendCents", day.spendCents)
+                                put("totalTokens", day.totalTokens)
+                            },
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): CursorOverview = CursorOverview(
+            account = json.optJSONObject("account")?.let(CursorAccount::fromJson),
+            usage = json.optJSONObject("usage")?.let(CursorUsage::fromJson),
+            credits = json.optJSONObject("credits")?.let(CursorCredits::fromJson),
+            spend = json.optJSONArray("spend")?.let { array ->
+                (0 until array.length()).mapNotNull { index ->
+                    array.optJSONObject(index)?.let { day ->
+                        CursorSpendDay(
+                            dayMillis = day.optLong("dayMillis"),
+                            spendCents = day.optLong("spendCents"),
+                            totalTokens = day.optLong("totalTokens"),
+                        )
+                    }
+                }
+            }.orEmpty(),
+        )
+    }
+}
+
+internal fun parseCursorAccount(json: JSONObject?): CursorAccount? {
+    if (json == null) return null
+    val email = json.optString("email").takeIf(String::isNotBlank)
+    val first = json.optString("firstName").ifBlank { json.optString("first_name") }
+    val last = json.optString("lastName").ifBlank { json.optString("last_name") }
+    val name = listOf(first, last).filter(String::isNotBlank).joinToString(" ").takeIf(String::isNotBlank)
+    val teamName = json.optString("teamName").ifBlank { json.optString("team_name") }
+        .takeIf(String::isNotBlank)
+    val created = json.stringLong("createdAt", "created_at")
+    if (email == null && name == null && teamName == null) return null
+    return CursorAccount(
+        email = email,
+        name = name,
+        teamName = teamName,
+        isEnterpriseUser = json.optBoolean("isEnterpriseUser", false) ||
+            json.optBoolean("is_enterprise_user", false),
+        isTeamAdmin = json.optBoolean("isTeamAdmin", false) || json.optBoolean("is_team_admin", false),
+        createdAtMillis = created?.takeIf { it > 0L },
+    )
+}
+
+internal fun parseCursorCredits(json: JSONObject?): CursorCredits? {
+    if (json == null) return null
+    val hasGrants = json.optBoolean("hasCreditGrants", false) ||
+        json.optBoolean("has_credit_grants", false)
+    val total = json.stringLong("totalCents", "total_cents")
+    val used = json.stringLong("usedCents", "used_cents")
+    val balance = json.stringLong("creditBalanceCents", "credit_balance_cents")
+    if (!hasGrants && total == null && balance == null) return null
+    return CursorCredits(
+        balanceCents = balance ?: 0L,
+        totalCents = total ?: 0L,
+        usedCents = used ?: 0L,
+    )
+}
+
+/** Daily spend entries, oldest first. Entries without a day are skipped. */
+internal fun parseCursorSpend(json: JSONObject?): List<CursorSpendDay> {
+    val array = json?.optJSONArray("dailySpend") ?: json?.optJSONArray("daily_spend") ?: return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val day = item.stringLong("day", "dayMillis", "day_millis") ?: return@mapNotNull null
+        CursorSpendDay(
+            dayMillis = day,
+            spendCents = item.stringLong("spendCents", "spend_cents") ?: 0L,
+            totalTokens = item.stringLong("totalTokens", "total_tokens") ?: 0L,
+        )
+    }.sortedBy { it.dayMillis }
+}
+
+/** Start and end of the current calendar month, used for the spend chart. */
+internal fun cursorCurrentMonthRange(nowMillis: Long = System.currentTimeMillis()): Pair<Long, Long> {
+    val calendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+    calendar.timeInMillis = nowMillis
+    calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
+    calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    calendar.set(java.util.Calendar.MINUTE, 0)
+    calendar.set(java.util.Calendar.SECOND, 0)
+    calendar.set(java.util.Calendar.MILLISECOND, 0)
+    val start = calendar.timeInMillis
+    calendar.add(java.util.Calendar.MONTH, 1)
+    return start to calendar.timeInMillis
+}
+
 /** Plan usage for the current billing period, exactly as Cursor reports it. */
 data class CursorUsage(
     val planName: String? = null,
@@ -431,6 +620,10 @@ data class CursorUsage(
     val apiPercent: Float? = null,
     val onDemand: CursorOnDemand? = null,
     val billingCycleEndMillis: Long? = null,
+    val includedUsedCents: Long? = null,
+    val includedLimitCents: Long? = null,
+    val remainingCents: Long? = null,
+    val bonusCents: Long? = null,
 ) {
     fun hasPercent(): Boolean = includedPercent != null
 
@@ -440,6 +633,10 @@ data class CursorUsage(
         autoPercent?.let { put("autoPercent", it.toDouble()) }
         apiPercent?.let { put("apiPercent", it.toDouble()) }
         billingCycleEndMillis?.let { put("billingCycleEndMillis", it) }
+        includedUsedCents?.let { put("includedUsedCents", it) }
+        includedLimitCents?.let { put("includedLimitCents", it) }
+        remainingCents?.let { put("remainingCents", it) }
+        bonusCents?.let { put("bonusCents", it) }
         onDemand?.let { demand ->
             put(
                 "onDemand",
@@ -470,6 +667,10 @@ data class CursorUsage(
                 apiPercent = if (json.has("apiPercent")) json.optDouble("apiPercent", 0.0).toFloat() else null,
                 onDemand = demand,
                 billingCycleEndMillis = if (json.has("billingCycleEndMillis")) json.optLong("billingCycleEndMillis") else null,
+                includedUsedCents = if (json.has("includedUsedCents")) json.optLong("includedUsedCents") else null,
+                includedLimitCents = if (json.has("includedLimitCents")) json.optLong("includedLimitCents") else null,
+                remainingCents = if (json.has("remainingCents")) json.optLong("remainingCents") else null,
+                bonusCents = if (json.has("bonusCents")) json.optLong("bonusCents") else null,
             )
         }
     }
@@ -531,6 +732,10 @@ internal fun parseCursorUsage(
         apiPercent = api?.coerceIn(0f, 100f),
         onDemand = onDemand,
         billingCycleEndMillis = end?.takeIf { it > 0L },
+        includedUsedCents = planUsage?.stringLong("includedSpend", "included_spend"),
+        includedLimitCents = planUsage?.stringLong("limit")?.takeIf { it > 0L },
+        remainingCents = planUsage?.stringLong("remaining"),
+        bonusCents = planUsage?.stringLong("bonusSpend", "bonus_spend")?.takeIf { it > 0L },
     )
 }
 
@@ -848,6 +1053,49 @@ class CursorRuntimeBridge(
                 cursorDashboardPost("/aiserver.v1.DashboardService/GetPlanInfo", accessToken, "{}")
             }.getOrNull()
             parseCursorUsage(usage, hardLimit, plan) ?: CursorUsage()
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: CursorSessionException) {
+            throw error
+        } catch (error: Throwable) {
+            throw CursorSessionException(cursorFriendlyError(scrubCursorSecret(error.message.orEmpty(), key)))
+        }
+    }
+
+    /**
+     * Plan usage, credits, account details, and the month's daily spend in one call.
+     * Every part is best-effort: a section Cursor does not answer for this plan stays null
+     * instead of failing the whole refresh.
+     */
+    suspend fun fetchOverview(): CursorOverview = withContext(Dispatchers.IO) {
+        val key = apiKey()?.takeIf(String::isNotBlank) ?: throw CursorSessionException(CURSOR_NEEDS_KEY)
+        try {
+            val accessToken = exchangeCursorApiKey(key) ?: throw CursorSessionException(CURSOR_NEEDS_KEY)
+            suspend fun rpc(method: String, payload: String = "{}"): JSONObject? = runCatching {
+                cursorDashboardPost("/aiserver.v1.DashboardService/$method", accessToken, payload)
+            }.getOrNull()
+
+            val usageJson = rpc("GetCurrentPeriodUsage")
+            val account = parseCursorAccount(rpc("GetMe"))
+            val credits = parseCursorCredits(rpc("GetCreditGrantsBalance"))
+            val hardLimit = rpc("GetHardLimit")
+            val plan = rpc("GetPlanInfo")
+
+            val month = cursorCurrentMonthRange()
+            val spendJson = rpc(
+                "GetDailySpendByCategory",
+                """{"periodStartMs":"${month.first}","periodEndMs":"${month.second}"}""",
+            )
+            val usage = parseCursorUsage(usageJson ?: JSONObject(), hardLimit, plan)
+            if (usage == null && account == null && credits == null && spendJson == null) {
+                throw CursorSessionException(CURSOR_USAGE_UNAVAILABLE)
+            }
+            CursorOverview(
+                account = account,
+                usage = usage,
+                credits = credits,
+                spend = parseCursorSpend(spendJson),
+            )
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: CursorSessionException) {

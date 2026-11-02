@@ -60,7 +60,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import com.jarves.mh.runtime.CursorAccount
+import com.jarves.mh.runtime.CursorCredits
 import com.jarves.mh.runtime.CursorOnDemandKind
+import com.jarves.mh.runtime.CursorOverview
+import com.jarves.mh.runtime.CursorSpendDay
 import com.jarves.mh.runtime.CursorUsage
 import com.jarves.mh.runtime.CursorVendor
 import com.jarves.mh.runtime.cursorVendorOf
@@ -2458,6 +2462,7 @@ internal fun cursorVendorLabel(vendor: CursorVendor): String = when (vendor) {
 @Composable
 internal fun CursorUsagePanel(
     usage: CursorUsage?,
+    overview: CursorOverview?,
     loading: Boolean,
     message: String?,
     updatedAt: Long,
@@ -2503,6 +2508,29 @@ internal fun CursorUsagePanel(
                 LinearProgressIndicator(
                     progress = { percent / 100f },
                     modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                )
+            }
+            val used = shown.includedUsedCents
+            val cap = shown.includedLimitCents
+            if (used != null && cap != null) {
+                Text(
+                    stringResource(R.string.settings_cursor_usage_amounts, cursorCents(used), cursorCents(cap)),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            shown.remainingCents?.takeIf { it > 0L }?.let {
+                Text(
+                    stringResource(R.string.settings_cursor_usage_remaining, cursorCents(it)),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            shown.bonusCents?.takeIf { it > 0L }?.let {
+                Text(
+                    stringResource(R.string.settings_cursor_usage_bonus, cursorCents(it)),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             val secondary = buildList {
@@ -2577,8 +2605,135 @@ internal fun CursorUsagePanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        overview?.account?.let { CursorAccountBlock(it) }
+        overview?.credits?.let { CursorCreditsBlock(it) }
+        overview?.spend?.takeIf { it.isNotEmpty() }?.let { CursorSpendBlock(it) }
+        if (overview != null) {
+            Text(
+                stringResource(R.string.settings_cursor_all_time_note),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
+
+@Composable
+private fun CursorAccountBlock(account: CursorAccount) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.settings_cursor_account_title), fontWeight = FontWeight.SemiBold)
+            account.email?.let { email ->
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    email,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        account.teamName?.let {
+            Text(stringResource(R.string.settings_cursor_account_team, it), fontSize = 12.sp)
+        }
+        val badges = buildList {
+            if (account.isTeamAdmin) add(stringResource(R.string.settings_cursor_account_admin))
+            if (account.isEnterpriseUser) add(stringResource(R.string.settings_cursor_account_enterprise))
+        }
+        if (badges.isNotEmpty()) {
+            Text(
+                badges.joinToString(" · "),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CursorCreditsBlock(credits: CursorCredits) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(stringResource(R.string.settings_cursor_credits_title), fontWeight = FontWeight.SemiBold)
+        Text(
+            if (credits.totalCents > 0L) {
+                stringResource(
+                    R.string.settings_cursor_credits_balance,
+                    cursorCents(credits.balanceCents),
+                    cursorCents(credits.totalCents),
+                )
+            } else {
+                cursorCents(credits.balanceCents)
+            },
+            fontSize = 13.sp,
+        )
+        if (credits.usedCents > 0L) {
+            Text(
+                stringResource(R.string.settings_cursor_credits_used, cursorCents(credits.usedCents)),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (credits.totalCents > 0L) {
+            val usedFraction = (credits.usedCents.toFloat() / credits.totalCents).coerceIn(0f, 1f)
+            LinearProgressIndicator(
+                progress = { usedFraction },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            )
+        }
+    }
+}
+
+/** Daily spend as a small bar row, so the month is readable without a chart library. */
+@Composable
+private fun CursorSpendBlock(spend: List<CursorSpendDay>) {
+    val total = spend.sumOf { it.spendCents }
+    val peak = spend.maxOf { it.spendCents }.coerceAtLeast(1L)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.settings_cursor_spend_title),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                stringResource(R.string.settings_cursor_spend_total, cursorCents(total)),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (total <= 0L) {
+            Text(
+                stringResource(R.string.settings_cursor_spend_empty),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Row(
+                Modifier.fillMaxWidth().height(48.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                spend.forEach { day ->
+                    val fraction = (day.spendCents.toFloat() / peak).coerceIn(0.04f, 1f)
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight(fraction)
+                            .clip(RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
+                            .background(
+                                if (day.spendCents > 0L) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun cursorCents(cents: Long): String = cursorDollars(cents / 100.0)
 
 private fun cursorDollars(value: Double): String {
     val rounded = (value * 100).roundToInt() / 100.0
@@ -2689,6 +2844,7 @@ private fun AgentCursorCard(
         )
         CursorUsagePanel(
             usage = state.cursorUsage,
+            overview = state.cursorOverview,
             loading = state.cursorUsageLoading,
             message = state.cursorUsageMessage,
             updatedAt = state.cursorUsageUpdatedAt,

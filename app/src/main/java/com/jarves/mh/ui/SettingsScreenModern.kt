@@ -1240,6 +1240,7 @@ private fun CursorKeySettings(
         )
         CursorUsagePanel(
             usage = state.cursorUsage,
+            overview = state.cursorOverview,
             loading = state.cursorUsageLoading,
             message = state.cursorUsageMessage,
             updatedAt = state.cursorUsageUpdatedAt,

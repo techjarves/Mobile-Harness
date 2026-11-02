@@ -391,6 +391,7 @@ data class AppUiState(
     val cursorUsageLoading: Boolean = false,
     val cursorUsageMessage: String? = null,
     val cursorUsageUpdatedAt: Long = 0L,
+    val cursorOverview: com.jarves.mh.runtime.CursorOverview? = null,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
     val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
@@ -522,6 +523,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cursorHasKey = cursorKeySaved(),
             cursorUsage = preferences.cursorUsage,
             cursorUsageUpdatedAt = preferences.cursorUsageUpdatedAt,
+            cursorOverview = preferences.cursorOverview,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
             languageCode = preferences.languageCode,
@@ -2505,15 +2507,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(cursorUsageLoading = true, cursorUsageMessage = null) }
         viewModelScope.launch {
             try {
-                val usage = cursorRuntime.fetchUsage()
+                val overview = cursorRuntime.fetchOverview()
                 val now = System.currentTimeMillis()
-                if (usage.hasPercent() || usage.onDemand != null || usage.planName != null) {
+                val usage = overview.usage
+                if (usage != null) {
                     preferences.cursorUsage = usage
                     preferences.cursorUsageUpdatedAt = now
                 }
+                preferences.cursorOverview = overview
                 _state.update {
                     it.copy(
-                        cursorUsage = usage,
+                        cursorUsage = usage ?: it.cursorUsage,
+                        cursorOverview = overview,
                         cursorUsageLoading = false,
                         cursorUsageMessage = null,
                         cursorUsageUpdatedAt = now,

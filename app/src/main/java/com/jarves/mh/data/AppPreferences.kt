@@ -68,6 +68,14 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getLong("agent_cursor_usage_at", 0L)
         set(value) { preferences.edit().putLong("agent_cursor_usage_at", value).apply() }
 
+    /** Last full dashboard reading: account, credits, and the month's daily spend. */
+    var cursorOverview: com.jarves.mh.runtime.CursorOverview?
+        get() = preferences.getString("agent_cursor_overview", null)
+            ?.let { runCatching { com.jarves.mh.runtime.CursorOverview.fromJson(org.json.JSONObject(it)) }.getOrNull() }
+        set(value) {
+            preferences.edit().putString("agent_cursor_overview", value?.toJson()?.toString()).apply()
+        }
+
     var antigravityEffort: String
         get() = preferences.getString("agent_antigravity_effort", "high") ?: "high"
         set(value) { preferences.edit().putString("agent_antigravity_effort", value).apply() }

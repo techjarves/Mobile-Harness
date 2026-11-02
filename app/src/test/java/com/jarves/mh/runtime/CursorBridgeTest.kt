@@ -117,17 +117,90 @@ class CursorBridgeTest {
     fun usageNoteShowsOnlyTheDetailsCursorProvided() {
         val usage = CursorTokenUsage(inputTokens = 2_000_000, outputTokens = 8_000_000)
         assertEquals(
-            "Model: claude-opus-4-5\nInput: 2,000,000\nOutput: 8,000,000",
+            "Model: claude-opus-4-5 · In: 2M · Out: 8M",
             cursorUsageNote(cursorShownModel(null, "claude-opus-4-5"), usage),
         )
         assertEquals(
-            "Input: 2,000,000\nOutput: 8,000,000",
+            "In: 2M · Out: 8M",
             cursorUsageNote(cursorShownModel(null, "default"), usage),
         )
         assertEquals("Model: grok-4.5", cursorUsageNote(cursorShownModel("grok-4.5", null), null))
         assertNull(cursorUsageNote(cursorShownModel(null, "auto"), null))
         val cached = cursorUsageNote(cursorShownModel(null, "gpt-5.5"), usage.copy(cacheReadTokens = 1_000))
-        assertTrue(cached!!.contains("Cache: 1,000"))
+        assertTrue(cached!!.contains("Cache: 1K"))
+    }
+
+    @Test
+    fun tokenCountsUseShortUnits() {
+        assertEquals("999", formatTokenCount(999))
+        assertEquals("1K", formatTokenCount(1_000))
+        assertEquals("101.4K", formatTokenCount(101_400))
+        assertEquals("101K", formatTokenCount(101_000))
+        assertEquals("1M", formatTokenCount(1_000_000))
+        assertEquals("1.2M", formatTokenCount(1_234_567))
+        assertEquals("12M", formatTokenCount(12_000_000))
+        assertEquals("-2.5M", formatTokenCount(-2_500_000))
+    }
+
+    @Test
+    fun accountAndCreditsParseFromDashboardPayloads() {
+        val account = parseCursorAccount(
+            org.json.JSONObject(
+                """{"email":"dev@example.com","firstName":"Ajay","lastName":"Sharma","teamName":"Team X","isTeamAdmin":true,"createdAt":"1700000000000"}""",
+            ),
+        )
+        requireNotNull(account)
+        assertEquals("dev@example.com", account.email)
+        assertEquals("Ajay Sharma", account.name)
+        assertEquals("Team X", account.teamName)
+        assertTrue(account.isTeamAdmin)
+        assertEquals(1_700_000_000_000L, account.createdAtMillis)
+
+        val credits = parseCursorCredits(
+            org.json.JSONObject("""{"hasCreditGrants":true,"creditBalanceCents":"2500","totalCents":"10000","usedCents":"7500"}"""),
+        )
+        requireNotNull(credits)
+        assertEquals(2_500L, credits.balanceCents)
+        assertEquals(10_000L, credits.totalCents)
+        assertEquals(7_500L, credits.usedCents)
+
+        assertNull(parseCursorAccount(org.json.JSONObject("{}")))
+        assertNull(parseCursorCredits(org.json.JSONObject("{}")))
+    }
+
+    @Test
+    fun spendIsSortedAndSkipsEntriesWithoutADay() {
+        val days = parseCursorSpend(
+            org.json.JSONObject(
+                """{"dailySpend":[{"day":"2000","spendCents":"300"},{"spendCents":"99"},{"day":"1000","spendCents":"150","totalTokens":"5000"}]}""",
+            ),
+        )
+        assertEquals(listOf(1_000L, 2_000L), days.map { it.dayMillis })
+        assertEquals(150L, days.first().spendCents)
+        assertEquals(5_000L, days.first().totalTokens)
+    }
+
+    @Test
+    fun overviewSurvivesCacheRoundTrip() {
+        val overview = CursorOverview(
+            account = CursorAccount(email = "dev@example.com", name = "Dev", teamName = null),
+            usage = CursorUsage(planName = "Pro", includedPercent = 45f),
+            credits = CursorCredits(2_500L, 10_000L, 7_500L),
+            spend = listOf(CursorSpendDay(1_000L, 150L, 5_000L)),
+        )
+        val restored = CursorOverview.fromJson(overview.toJson())
+        assertEquals(overview, restored)
+    }
+
+    @Test
+    fun monthRangeStartsAtMidnightUtc() {
+        val (start, end) = cursorCurrentMonthRange(1_700_000_000_000L)
+        val startCalendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+            timeInMillis = start
+        }
+        assertEquals(1, startCalendar.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(0, startCalendar.get(java.util.Calendar.HOUR_OF_DAY))
+        assertTrue(end > start)
     }
 
     @Test
@@ -335,6 +408,20 @@ class CursorBridgeTest {
         assertEquals(CursorOnDemandKind.FIXED, usage.onDemand?.kind)
         assertEquals(12.5, usage.onDemand?.usedDollars ?: 0.0, 0.001)
         assertEquals(50.0, usage.onDemand?.limitDollars ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun usageReadsDollarAmountsFromPlanBlock() {
+        val usage = parseCursorUsage(
+            org.json.JSONObject(
+                """{"planUsage":{"totalPercentUsed":30,"includedSpend":"1200","limit":"4000","remaining":"2800","bonusSpend":"500"}}""",
+            ),
+        )
+        requireNotNull(usage)
+        assertEquals(1_200L, usage.includedUsedCents)
+        assertEquals(4_000L, usage.includedLimitCents)
+        assertEquals(2_800L, usage.remainingCents)
+        assertEquals(500L, usage.bonusCents)
     }
 
     @Test

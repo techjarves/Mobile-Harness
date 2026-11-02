@@ -502,8 +502,8 @@
     <string name="settings_cursor_model_none">No models match \"%1$s\".</string>
     <string name="settings_cursor_model_use">Use model</string>
     <string name="cursor_usage_model">Model: %1$s</string>
-    <string name="cursor_usage_input">Input: %1$s</string>
-    <string name="cursor_usage_output">Output: %1$s</string>
+    <string name="cursor_usage_input">In: %1$s</string>
+    <string name="cursor_usage_output">Out: %1$s</string>
     <string name="cursor_usage_cache">Cache: %1$s</string>
     <string name="settings_cursor_usage_title">Plan usage</string>
     <string name="settings_cursor_usage_refresh">Load usage</string>
@@ -520,4 +520,18 @@
     <string name="settings_cursor_usage_updated">Updated %1$s</string>
     <string name="settings_cursor_usage_empty">Cursor did not return usage numbers for this account.</string>
     <string name="settings_cursor_usage_note">Read from your Cursor account. No browser login needed.</string>
+    <string name="settings_cursor_account_title">Account</string>
+    <string name="settings_cursor_account_team">Team: %1$s</string>
+    <string name="settings_cursor_account_admin">Team admin</string>
+    <string name="settings_cursor_account_enterprise">Enterprise account</string>
+    <string name="settings_cursor_credits_title">Credits</string>
+    <string name="settings_cursor_credits_balance">%1$s left of %2$s</string>
+    <string name="settings_cursor_credits_used">%1$s used</string>
+    <string name="settings_cursor_spend_title">Spend this month</string>
+    <string name="settings_cursor_spend_total">%1$s total</string>
+    <string name="settings_cursor_spend_empty">No spend recorded this month yet.</string>
+    <string name="settings_cursor_all_time_note">Amounts come from Cursor. Billing details and invoices stay on cursor.com.</string>
+    <string name="settings_cursor_usage_amounts">%1$s of %2$s used</string>
+    <string name="settings_cursor_usage_remaining">%1$s remaining</string>
+    <string name="settings_cursor_usage_bonus">%1$s bonus credit</string>
 </resources>
