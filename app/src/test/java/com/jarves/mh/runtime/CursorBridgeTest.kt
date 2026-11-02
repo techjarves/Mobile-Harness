@@ -162,11 +162,13 @@ class CursorBridgeTest {
 
     @Test
     fun existingProviderSetsStayTheSame() {
-        assertTrue(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        // Upstream v1.0.8 stopped offering OpenCode Zen; saved profiles still load the enum entry.
+        assertFalse(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        assertFalse(ProviderKind.OPENCODE_ZEN in DEEPSEEK_HARNESS_PROVIDERS)
         assertFalse(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.CLAUDE_CODE))
         assertFalse(ProviderKind.CLAUDE in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
-        assertEquals(7, DEEPSEEK_HARNESS_PROVIDERS.size)
+        assertEquals(6, DEEPSEEK_HARNESS_PROVIDERS.size)
         assertTrue(providersForAgent(AgentKind.ANTIGRAVITY).isEmpty())
     }
 

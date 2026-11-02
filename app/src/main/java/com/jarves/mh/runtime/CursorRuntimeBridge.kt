@@ -110,7 +110,7 @@ internal object CursorEventParser {
         val sessionId = root.optString("session_id").takeIf(String::isNotBlank)
         val isError = root.optBoolean("is_error", false)
         val subtype = root.optString("subtype")
-        val usage = parseCursorUsage(root)
+        val usage = parseCursorTokenUsage(root)
         if (!isError && subtype == "success") {
             return CursorParsedEvent.Success(sessionId, root.optString("result").takeIf(String::isNotBlank), usage)
         }
@@ -129,7 +129,7 @@ internal fun cursorShownModel(requested: String?, reported: String?): String? {
     return requested?.trim()?.takeIf { it.isNotEmpty() }
 }
 
-internal fun parseCursorUsage(root: JSONObject): CursorTokenUsage? {
+internal fun parseCursorTokenUsage(root: JSONObject): CursorTokenUsage? {
     val usage = root.optJSONObject("usage") ?: return null
     fun long(vararg names: String): Long {
         names.forEach { name ->

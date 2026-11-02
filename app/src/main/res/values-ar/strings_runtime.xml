@@ -95,6 +95,8 @@
     <string name="rt_agy_start_again">ابدأ تسجيل الدخول عبر Google مرة أخرى</string>
     <string name="rt_agy_session_expired">انتهت صلاحية جلسة تسجيل الدخول. ابدأ من جديد.</string>
     <string name="rt_agy_completing">جارٍ إكمال تسجيل الدخول عبر Google…</string>
+    <string name="rt_agy_checking_sign_in">جارٍ التحقق من أن Antigravity يمكنه استخدام حساب Google الخاص بك…</string>
+    <string name="rt_agy_sign_in_not_kept">اكتمل تسجيل الدخول عبر Google، لكن Antigravity لم يحتفظ به. سجّل الدخول مرة أخرى.</string>
     <string name="rt_agy_signing_out">جارٍ تسجيل الخروج من Antigravity…</string>
     <string name="rt_agy_remove_credential_failed">تعذّرت إزالة بيانات اعتماد Antigravity الرسمية. لا يزال حسابك متصلًا.</string>
     <string name="rt_agy_logout_incomplete">لم يكتمل تسجيل الخروج من Antigravity.</string>

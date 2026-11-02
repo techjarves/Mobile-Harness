@@ -70,7 +70,7 @@
     <string name="ws_github_signin">تسجيل الدخول باستخدام GitHub</string>
     <string name="ws_github_starting">جارٍ بدء تسجيل الدخول إلى GitHub…</string>
     <string name="ws_github_enter_code">أدخل هذا الرمز لمرة واحدة في صفحة GitHub المفتوحة في متصفحك.</string>
-    <string name="ws_github_tap_code">انقر على الرمز لنسخه. سيتصل PocketDev تلقائيًا بعد الموافقة.</string>
+    <string name="ws_github_tap_code">انقر على الرمز لنسخه. سيتصل Mobile Harness تلقائيًا بعد الموافقة.</string>
     <string name="ws_github_new_code">إنشاء رمز جديد</string>
     <string name="ws_github_select_repo">اختر مستودعًا</string>
     <string name="ws_github_refresh_repos">تحديث المستودعات</string>

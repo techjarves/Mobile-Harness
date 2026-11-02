@@ -1,0 +1,9 @@
+Antigravity stays signed in after Google sign-in.
+A broken Antigravity conversation now starts fresh.
+GitHub sign-in copies the one-time code first.
+ARM64 phones with unusual CPU names are supported.
+The C/C++ stack can build native npm packages.
+Skip AI setup on first run and set it up later.
+Uploads are limited by free storage, not 100 MB.
+NVIDIA NIM hides models that cannot chat; OpenCode Zen removed.
+App updates signed with older keys verify correctly.

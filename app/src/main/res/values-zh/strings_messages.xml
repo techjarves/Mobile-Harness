@@ -97,7 +97,7 @@
     <string name="vm_git_local_unsupported">不支持本地 Git 链接</string>
     <string name="vm_git_url_not_repo">链接必须指向一个 Git 仓库</string>
     <string name="vm_github_preparing_signin">正在准备官方 GitHub 登录…</string>
-    <string name="vm_github_enter_code">请在 GitHub 上输入此一次性验证码</string>
+    <string name="vm_github_enter_code">请在 GitHub 上输入此一次性验证码</string><string name="vm_github_code_copied">已复制代码 %1$s，请粘贴到 GitHub 页面。</string>
     <string name="vm_github_signin_failed_exit">GitHub 登录失败（退出 %1$d）</string>
     <string name="vm_github_account_unknown">GitHub 已连接，但无法识别账号</string>
     <string name="vm_github_connected_as">已连接为 @%1$s</string>
@@ -179,4 +179,8 @@
     </plurals>
     <string name="vm_claude_hello">正在请求 Claude Code 回复…</string>
     <string name="vm_claude_working">Claude 订阅可用！</string>
+    <string name="ws_terminal_leave_title">终端仍在运行</string>
+    <string name="ws_terminal_leave_body">“%1$s”仍在终端中运行。</string>
+    <string name="ws_terminal_leave_stop">停止并返回</string>
+    <string name="ws_terminal_leave_keep">继续运行</string>
 </resources>

@@ -23,7 +23,7 @@
     <string name="fm_failed">无法完成：%1$s</string>
     <string name="fm_busy">请先停止正在运行的任务、终端命令、构建或导出</string>
     <string name="fm_share_title">分享 %1$s</string>
-    <string name="fm_too_large">%1$s 超过 100 MB</string>
+    <string name="fm_too_large">%1$s 超过可上传的 %2$s</string>
     <string name="fm_protected">此项目受保护，无法更改</string>
     <plurals name="fm_uploaded">
         <item quantity="other">已上传 %1$d 个文件</item>

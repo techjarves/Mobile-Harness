@@ -23,7 +23,7 @@
     <string name="fm_failed">تعذر الإكمال: %1$s</string>
     <string name="fm_busy">أوقف المهمة أو أمر الطرفية أو البناء أو التصدير الجاري أولًا</string>
     <string name="fm_share_title">مشاركة %1$s</string>
-    <string name="fm_too_large">حجم %1$s أكبر من 100 ميغابايت</string>
+    <string name="fm_too_large">حجم %1$s أكبر من المساحة المتاحة للرفع (%2$s)</string>
     <string name="fm_protected">هذا العنصر محمي ولا يمكن تغييره</string>
     <plurals name="fm_uploaded">
         <item quantity="zero">لم يتم رفع أي ملف</item>

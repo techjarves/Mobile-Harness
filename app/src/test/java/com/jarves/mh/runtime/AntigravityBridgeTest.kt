@@ -196,4 +196,45 @@ class AntigravityBridgeTest {
         assertTrue("Do not create project output" in prompt)
         assertTrue(prompt.endsWith("Create hello.py"))
     }
+
+    @Test
+    fun `sign-in check fails when agy models asks for sign in`() {
+        val output = "Fetching available models...\nError: Please sign in to view available models. " +
+            "Launch the CLI without arguments to sign in.\n"
+        assertEquals(AntigravitySignInCheck.SIGNED_OUT, antigravitySignInCheck(output, 0))
+    }
+
+    @Test
+    fun `sign-in check fails on headless authentication required`() {
+        val output = "Error: authentication required. Run 'agy' to log in, then retry."
+        assertEquals(AntigravitySignInCheck.SIGNED_OUT, antigravitySignInCheck(output, 1))
+    }
+
+    @Test
+    fun `sign-in check passes when models are listed`() {
+        val output = "Fetching available models...\ngemini-3.8-flash-medium\ngemini-3.1-pro-high\n"
+        assertEquals(AntigravitySignInCheck.SIGNED_IN, antigravitySignInCheck(output, 0))
+    }
+
+    @Test
+    fun `network failure during sign-in check does not sign out`() {
+        val output = "Error: dial tcp: lookup cloudcode-pa.googleapis.com: i/o timeout"
+        assertEquals(AntigravitySignInCheck.UNKNOWN, antigravitySignInCheck(output, 1))
+    }
+
+    @Test
+    fun `invalid conversation project is treated as stale`() {
+        val error = "The project associated with this conversation is no longer valid."
+        assertTrue(isStaleAntigravityConversation(error))
+        assertEquals(
+            "The previous Antigravity conversation is no longer available. Send your message again to start a new one.",
+            antigravityFriendlyError(error),
+        )
+    }
+
+    @Test
+    fun `missing conversation warning is not treated as stale`() {
+        // agy prints this, ignores --conversation and continues on its own.
+        assertTrue(!isStaleAntigravityConversation("warning: conversation \"0f0e6a52\" not found"))
+    }
 }

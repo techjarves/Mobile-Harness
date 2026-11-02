@@ -80,6 +80,16 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_antigravity_account_email", "") ?: ""
         set(value) { preferences.edit().putString("agent_antigravity_account_email", value).apply() }
 
+    /** versionCode whose "What's new" dialog the user has already seen. */
+    var whatsNewSeenVersionCode: Int
+        get() = preferences.getInt("whats_new_seen_code", 0)
+        set(value) { preferences.edit().putInt("whats_new_seen_code", value).apply() }
+
+    /** Whether the user has opened Backup & Restore since it was introduced (clears the "new" dot). */
+    var backupFeatureSeen: Boolean
+        get() = preferences.getBoolean("backup_feature_seen", false)
+        set(value) { preferences.edit().putBoolean("backup_feature_seen", value).apply() }
+
     var githubLogin: String
         get() = preferences.getString("github_login", "") ?: ""
         set(value) { preferences.edit().putString("github_login", value).apply() }
@@ -160,6 +170,58 @@ class AppPreferences(private val context: Context) {
             preferences.edit().putString("selected_dev_stacks", arr.toString()).apply()
         }
 
+
+    /** Every portable setting, typed, for backups. Device-only state stays out. */
+    fun exportAll(): JSONObject {
+        val result = JSONObject()
+        preferences.all.forEach { (key, value) ->
+            if (key in DEVICE_ONLY_KEYS || value == null) return@forEach
+            val (type, encoded) = when (value) {
+                is Boolean -> "bool" to value
+                is Int -> "int" to value
+                is Long -> "long" to value
+                is Float -> "float" to value.toDouble()
+                is String -> "string" to value
+                is Set<*> -> "set" to JSONArray(value.filterIsInstance<String>())
+                else -> return@forEach
+            }
+            result.put(key, JSONObject().put("t", type).put("v", encoded))
+        }
+        return result
+    }
+
+    /** Replaces portable settings with [backup] while keeping this device's install state. */
+    fun importAll(backup: JSONObject) {
+        val kept = preferences.all.filterKeys { it in DEVICE_ONLY_KEYS }
+        val editor = preferences.edit().clear()
+        kept.forEach { (key, value) -> editor.putTyped(key, value) }
+        backup.keys().forEach { key ->
+            if (key in DEVICE_ONLY_KEYS) return@forEach
+            val item = backup.optJSONObject(key) ?: return@forEach
+            when (item.optString("t")) {
+                "bool" -> editor.putBoolean(key, item.optBoolean("v"))
+                "int" -> editor.putInt(key, item.optInt("v"))
+                "long" -> editor.putLong(key, item.optLong("v"))
+                "float" -> editor.putFloat(key, item.optDouble("v").toFloat())
+                "string" -> editor.putString(key, item.optString("v"))
+                "set" -> item.optJSONArray("v")?.let { array ->
+                    editor.putStringSet(key, (0 until array.length()).map(array::optString).toSet())
+                }
+            }
+        }
+        editor.commit()
+    }
+
+    private fun android.content.SharedPreferences.Editor.putTyped(key: String, value: Any?) {
+        when (value) {
+            is Boolean -> putBoolean(key, value)
+            is Int -> putInt(key, value)
+            is Long -> putLong(key, value)
+            is Float -> putFloat(key, value)
+            is String -> putString(key, value)
+            is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+        }
+    }
 
     fun saveProvider(profile: ProviderProfile, agent: AgentKind? = null) {
         val editor = preferences.edit()
@@ -493,5 +555,19 @@ class AppPreferences(private val context: Context) {
     private fun String.toChatTitle(): String {
         val clean = replace(Regex("\\s+"), " ").trim()
         return if (clean.length <= 42) clean else clean.take(39).trimEnd() + "…"
+    }
+
+    companion object {
+        /** Install and update state that describes this phone, not the user's work. */
+        val DEVICE_ONLY_KEYS = setOf(
+            "runtime_setup_complete",
+            "background_setup_complete",
+            "last_app_update_check_millis",
+            "debug_update_manifest_url",
+            "test_provider_defaults_version",
+            "dsh_version",
+            "whats_new_seen_code",
+            "backup_feature_seen",
+        )
     }
 }

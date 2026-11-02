@@ -19,12 +19,12 @@
       ]
     },
     "claude": {
-      "version": "2026.09.1",
-      "file": "pocketdev-claude-arm64-2026.09.1.tar.zst",
-      "sha256": "0f68e15630e8c0fc941afe3f61ab5a3eb4407b334018de6dbdabfa5eca627724",
-      "compressedBytes": 75289800,
-      "uncompressedBytes": 215224320,
-      "includes": ["Claude Code 2.1.263 ARM64", "Version marker"],
+      "version": "2026.11.1",
+      "file": "pocketdev-claude-arm64-2026.11.1.tar.zst",
+      "sha256": "26316a6481983e5f42d362b4b6fdfa0441a1c27e9ddc74eb33fd4fcbba4fe3eb",
+      "compressedBytes": 116997995,
+      "uncompressedBytes": 328468480,
+      "includes": ["Claude Code 2.1.316 ARM64", "Version marker"],
       "excludes": ["Authentication", "Settings", "Conversations", "Projects", "Device data"]
     },
     "python": {

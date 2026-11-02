@@ -64,7 +64,7 @@ class ProviderApiClient(private val context: Context? = null) {
                     lastProviderMessage = providerErrorMessage(response.body)
                 }
                 response.code in 200..299 -> {
-                    val models = ModelResponseParser.parse(response.body)
+                    val models = chatCapableModels(ModelResponseParser.parse(response.body), endpoint)
                     if (models.isNotEmpty()) return@withContext ModelDiscoveryResult.Success(models, endpoint)
                     lastMessage = text(
                         R.string.rt_api_empty_model_list,
@@ -86,6 +86,19 @@ class ProviderApiClient(private val context: Context? = null) {
             },
             lastProviderMessage,
         )
+    }
+
+    /**
+     * NVIDIA's /models lists embedding, reranking, image, speech and safety models alongside chat
+     * models, but the coding agents can only use /chat/completions. Hide the ones that cannot work.
+     */
+    private fun chatCapableModels(models: List<DiscoveredModel>, endpoint: String): List<DiscoveredModel> {
+        if (!endpoint.contains("integrate.api.nvidia.com")) return models
+        val chat = models.filterNot { model ->
+            val id = model.id.lowercase()
+            NON_CHAT_NVIDIA_MODEL_MARKERS.any { it in id }
+        }
+        return chat.ifEmpty { models }
     }
 
     suspend fun validate(
@@ -314,6 +327,12 @@ class ProviderApiClient(private val context: Context? = null) {
         // small while working across OpenAI chat, Anthropic-compatible and router APIs.
         const val VALIDATION_MAX_TOKENS = 8
         const val MAX_PROVIDER_RESPONSE_CHARS = 2 * 1024 * 1024
+        val NON_CHAT_NVIDIA_MODEL_MARKERS = listOf(
+            "embed", "rerank", "retriever", "flux", "sdxl", "stable-diffusion",
+            "parakeet", "whisper", "canary", "riva", "tts", "asr", "ocdrnet", "paddleocr",
+            "nemoretriever", "clip", "deplot", "kosmos", "cosmos-predict", "guard",
+            "reward", "video-detector", "nemotron-parse",
+        )
     }
 }
 

@@ -95,6 +95,8 @@
     <string name="rt_agy_start_again">Google साइन-इन फिर से शुरू करें</string>
     <string name="rt_agy_session_expired">साइन-इन सत्र समाप्त हो गया। फिर से शुरू करें।</string>
     <string name="rt_agy_completing">Google साइन-इन पूरा हो रहा है…</string>
+    <string name="rt_agy_checking_sign_in">जाँच रहे हैं कि Antigravity आपके Google खाते का उपयोग कर सकता है…</string>
+    <string name="rt_agy_sign_in_not_kept">Google साइन-इन पूरा हुआ, लेकिन Antigravity ने इसे सहेजा नहीं। फिर से साइन इन करें।</string>
     <string name="rt_agy_signing_out">Antigravity से साइन आउट हो रहा है…</string>
     <string name="rt_agy_remove_credential_failed">आधिकारिक Antigravity क्रेडेंशियल हटाया नहीं जा सका। आपका खाता अभी भी कनेक्टेड है।</string>
     <string name="rt_agy_logout_incomplete">Antigravity लॉगआउट पूरा नहीं हुआ।</string>

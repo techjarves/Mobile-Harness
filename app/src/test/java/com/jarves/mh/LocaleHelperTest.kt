@@ -19,6 +19,8 @@ class LocaleHelperTest {
         assertEquals(AppLanguage.ARABIC, AppLanguage.fromCode("ar"))
         assertEquals(AppLanguage.HINDI, AppLanguage.fromCode("hi"))
         assertEquals(AppLanguage.RUSSIAN, AppLanguage.fromCode("ru"))
+        assertEquals(AppLanguage.GREEK, AppLanguage.fromCode("el"))
+        assertEquals("el", LocaleHelper.getLocale("el")?.language)
         assertEquals(AppLanguage.SYSTEM, AppLanguage.fromCode("system"))
         assertEquals(AppLanguage.SYSTEM, AppLanguage.fromCode(""))
         assertEquals(AppLanguage.SYSTEM, AppLanguage.fromCode(null))

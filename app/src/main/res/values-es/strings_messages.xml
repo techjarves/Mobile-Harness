@@ -97,7 +97,7 @@
     <string name="vm_git_local_unsupported">No se admiten URL Git locales</string>
     <string name="vm_git_url_not_repo">La URL debe identificar un repositorio Git</string>
     <string name="vm_github_preparing_signin">Preparando el inicio de sesión oficial de GitHub…</string>
-    <string name="vm_github_enter_code">Introduce este código de un solo uso en GitHub</string>
+    <string name="vm_github_enter_code">Introduce este código de un solo uso en GitHub</string><string name="vm_github_code_copied">Código %1$s copiado. Pégalo en la página de GitHub.</string>
     <string name="vm_github_signin_failed_exit">Falló el inicio de sesión en GitHub (salida %1$d)</string>
     <string name="vm_github_account_unknown">GitHub se conectó, pero no se pudo identificar la cuenta</string>
     <string name="vm_github_connected_as">Conectado como @%1$s</string>
@@ -185,4 +185,8 @@
     </plurals>
     <string name="vm_claude_hello">Pidiendo a Claude Code que responda…</string>
     <string name="vm_claude_working">¡La suscripción de Claude funciona!</string>
+    <string name="ws_terminal_leave_title">La terminal sigue en ejecución</string>
+    <string name="ws_terminal_leave_body">«%1$s» sigue ejecutándose en la terminal.</string>
+    <string name="ws_terminal_leave_stop">Detener y volver</string>
+    <string name="ws_terminal_leave_keep">Seguir ejecutando</string>
 </resources>

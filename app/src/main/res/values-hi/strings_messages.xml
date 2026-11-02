@@ -97,7 +97,7 @@
     <string name="vm_git_local_unsupported">लोकल Git URL समर्थित नहीं हैं</string>
     <string name="vm_git_url_not_repo">URL को किसी Git रिपॉज़िटरी की पहचान करनी चाहिए</string>
     <string name="vm_github_preparing_signin">आधिकारिक GitHub साइन-इन तैयार हो रहा है…</string>
-    <string name="vm_github_enter_code">यह वन-टाइम कोड GitHub पर दर्ज करें</string>
+    <string name="vm_github_enter_code">यह वन-टाइम कोड GitHub पर दर्ज करें</string><string name="vm_github_code_copied">कोड %1$s कॉपी हो गया। इसे GitHub पेज पर पेस्ट करें।</string>
     <string name="vm_github_signin_failed_exit">GitHub साइन-इन विफल रहा (एग्ज़िट %1$d)</string>
     <string name="vm_github_account_unknown">GitHub कनेक्ट हो गया, लेकिन खाते की पहचान नहीं हो सकी</string>
     <string name="vm_github_connected_as">@%1$s के रूप में कनेक्टेड</string>
@@ -182,4 +182,8 @@
     </plurals>
     <string name="vm_claude_hello">Claude Code से जवाब माँगा जा रहा है…</string>
     <string name="vm_claude_working">Claude सब्सक्रिप्शन काम कर रहा है!</string>
+    <string name="ws_terminal_leave_title">टर्मिनल अभी चल रहा है</string>
+    <string name="ws_terminal_leave_body">टर्मिनल में “%1$s” अभी चल रहा है।</string>
+    <string name="ws_terminal_leave_stop">रोकें और वापस जाएं</string>
+    <string name="ws_terminal_leave_keep">चलने दें</string>
 </resources>

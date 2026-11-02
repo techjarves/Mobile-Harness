@@ -97,7 +97,7 @@
     <string name="vm_git_local_unsupported">Локальные адреса Git не поддерживаются</string>
     <string name="vm_git_url_not_repo">Адрес должен указывать на репозиторий Git</string>
     <string name="vm_github_preparing_signin">Подготовка официального входа в GitHub…</string>
-    <string name="vm_github_enter_code">Введите этот одноразовый код на GitHub</string>
+    <string name="vm_github_enter_code">Введите этот одноразовый код на GitHub</string><string name="vm_github_code_copied">Код %1$s скопирован. Вставьте его на странице GitHub.</string>
     <string name="vm_github_signin_failed_exit">Не удалось войти в GitHub (код %1$d)</string>
     <string name="vm_github_account_unknown">GitHub подключён, но не удалось определить аккаунт</string>
     <string name="vm_github_connected_as">Подключено как @%1$s</string>
@@ -188,4 +188,8 @@
     </plurals>
     <string name="vm_claude_hello">Просим Claude Code ответить…</string>
     <string name="vm_claude_working">Подписка Claude работает!</string>
+    <string name="ws_terminal_leave_title">Терминал всё ещё работает</string>
+    <string name="ws_terminal_leave_body">«%1$s» всё ещё выполняется в терминале.</string>
+    <string name="ws_terminal_leave_stop">Остановить и выйти</string>
+    <string name="ws_terminal_leave_keep">Оставить работать</string>
 </resources>

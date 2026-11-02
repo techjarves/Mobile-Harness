@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="whats_new_title">الجديد</string>
+    <string name="whats_new_version">الإصدار %1$s</string>
+    <string name="whats_new_open_backup">فتح النسخ الاحتياطي والاستعادة</string>
+    <string name="whats_new_got_it">حسنًا</string>
+    <string-array name="whats_new_items">
+        <item>النسخ الاحتياطي والاستعادة: احفظ مشاريعك وملفاتك ودردشاتك وإعداداتك في ملف واحد. ستجده في الإعدادات.</item>
+        <item>أضف كلمة مرور لحفظ مفاتيح API وبيانات تسجيل الدخول أيضًا (GitHub وgit وSSH ووكلاء البرمجة).</item>
+        <item>تضيف الاستعادة مشاريع النسخة الاحتياطية بجانب المشاريع الموجودة على هاتفك، فلا يضيع أي شيء هنا.</item>
+        <item>بعد إعادة التثبيت، استعد من شاشة الإعداد لاسترجاع كل شيء.</item>
+        <item>تستمر النسخ الاحتياطية في العمل مع إطفاء الشاشة وتعرض التقدم مباشرةً.</item>
+    </string-array>
+</resources>

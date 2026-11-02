@@ -11,6 +11,12 @@ class RuntimeCompatibilityTest {
     }
 
     @Test
+    fun acceptsArm64DevicesReportingVendorOsArch() {
+        assertTrue(supportsArm64Runtime(arrayOf("arm64-v8a", "armeabi-v7a", "armeabi"), "armv8l"))
+        assertTrue(supportsArm64Runtime(arrayOf("arm64-v8a"), null))
+    }
+
+    @Test
     fun rejectsX8664EvenWhenTranslationAdvertisesArm64() {
         assertFalse(supportsArm64Runtime(arrayOf("arm64-v8a", "x86_64"), "x86_64"))
     }

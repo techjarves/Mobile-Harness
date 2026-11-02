@@ -41,7 +41,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -159,6 +161,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
@@ -303,6 +307,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             viewModel.consumeToast()
         }
     }
+    BackupRestartEffect()
     when {
         state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(
             state = state,
@@ -372,6 +377,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
                 onStartLogin = viewModel::startAntigravityLogin,
                 onSubmitCode = viewModel::submitAntigravityCode,
                 onContinue = viewModel::finishAntigravityOnboarding,
+                onSkip = viewModel::skipOnboarding,
                 onSelectAgent = viewModel::chooseOnboardingAgent,
                 onToggleTheme = viewModel::toggleTheme,
             )
@@ -383,6 +389,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             currentLanguageCode = state.languageCode,
             onSetLanguage = viewModel::setLanguage,
             onSave = viewModel::finishOnboarding,
+            onSkip = viewModel::skipOnboarding,
             onDiscover = viewModel::discoverModels,
             onValidate = viewModel::validateProvider,
             onSelectAgent = viewModel::chooseOnboardingAgent,
@@ -482,6 +489,7 @@ private fun AntigravityOnboardingScreen(
     onStartLogin: () -> Unit,
     onSubmitCode: (String) -> Unit,
     onContinue: () -> Unit,
+    onSkip: () -> Unit,
     onSelectAgent: (AgentKind) -> Unit,
     onToggleTheme: () -> Unit,
 ) {
@@ -572,12 +580,7 @@ private fun AntigravityOnboardingScreen(
                     }
                 }
             }
-            TextButton(
-                onClick = { showAgentPicker = true },
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            ) {
-                Text(stringResource(R.string.provider_use_another_agent), fontSize = 12.sp)
-            }
+            OnboardingSecondaryActions(onChangeAgent = { showAgentPicker = true }, onSkip = onSkip)
             Surface(color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f), shape = RoundedCornerShape(14.dp)) {
                 Text(
                     stringResource(R.string.ws_agy_auto_approval_warning),
@@ -1314,7 +1317,26 @@ private fun RuntimeSetupPromptScreen(
                     }
                 }
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(16.dp))
+
+                // A fresh install can bring back a previous install's data before setup.
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            stringResource(R.string.backup_restore_on_setup_desc),
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        BackupRestoreSection(busy = false, compact = true)
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
 
                 Button(
                     onClick = { currentStep = 1 },
@@ -2464,6 +2486,18 @@ private fun RootScreenHost(
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
+    var openBackup by rememberSaveable { mutableStateOf(false) }
+
+    if (state.showWhatsNew) {
+        WhatsNewDialog(
+            onDismiss = viewModel::dismissWhatsNew,
+            onOpenBackup = {
+                viewModel.dismissWhatsNew()
+                openBackup = true
+                screen = RootScreen.SETTINGS
+            },
+        )
+    }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
@@ -2478,7 +2512,11 @@ private fun RootScreenHost(
                     NavigationBarItem(
                         selected = screen == tab,
                         onClick = { screen = tab },
-                        icon = { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) },
+                        icon = {
+                            BadgedBox(
+                                badge = { if (tab == RootScreen.SETTINGS && !state.backupFeatureSeen) Badge() },
+                            ) { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) }
+                        },
                         label = { Text(stringResource(tab.labelRes), fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -2555,6 +2593,12 @@ private fun RootScreenHost(
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
+                    showBackupDot = !state.backupFeatureSeen,
+                    onBackupOpened = {
+                        openBackup = false
+                        viewModel.markBackupFeatureSeen()
+                    },
+                    openBackup = openBackup,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
                     },
@@ -2761,6 +2805,8 @@ private fun ProviderSetupScreen(
     currentLanguageCode: String = "system",
     onSetLanguage: ((String) -> Unit)? = null,
     onSave: (ProviderProfile, String) -> Unit,
+    // Onboarding only: finish first run without a provider; it can be configured later in Settings.
+    onSkip: (() -> Unit)? = null,
     onDiscover: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidate: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSelectAgent: (AgentKind) -> Unit,
@@ -2848,6 +2894,7 @@ private fun ProviderSetupScreen(
                     },
                     onContinue = { step = 2 },
                     onChangeAgent = { showAgentPicker = true },
+                    onSkip = onSkip,
                 )
                 else -> ProviderCredentialsStep(
                     provider = selected,
@@ -2879,6 +2926,7 @@ private fun ProviderSetupScreen(
                         onSave(ProviderProfile(selected, url, model.trim(), dshApi = dshApi), apiKey)
                     },
                     onChangeAgent = { showAgentPicker = true },
+                    onSkip = onSkip,
                 )
             }
         }
@@ -2985,6 +3033,7 @@ private fun ProviderChoiceStep(
     onSelected: (ProviderKind) -> Unit,
     onContinue: () -> Unit,
     onChangeAgent: () -> Unit,
+    onSkip: (() -> Unit)? = null,
 ) {
     val visibleProviders = remember(agentKind) { providersForAgent(agentKind) }
     Column(Modifier.fillMaxHeight()) {
@@ -3069,11 +3118,33 @@ private fun ProviderChoiceStep(
             Spacer(Modifier.width(8.dp))
             Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp))
         }
-        TextButton(
-            onClick = onChangeAgent,
-            modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 6.dp),
-        ) {
+        OnboardingSecondaryActions(
+            onChangeAgent = onChangeAgent,
+            onSkip = onSkip,
+            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
+        )
+    }
+}
+
+/** "Use another coding agent" plus, during first run, a quieter skip link directly beneath it. */
+@Composable
+private fun OnboardingSecondaryActions(
+    onChangeAgent: () -> Unit,
+    onSkip: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        TextButton(onClick = onChangeAgent, modifier = Modifier.heightIn(min = 36.dp)) {
             Text(stringResource(R.string.provider_use_another_agent), fontSize = 12.sp)
+        }
+        if (onSkip != null) {
+            TextButton(
+                onClick = onSkip,
+                modifier = Modifier.heightIn(min = 36.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            ) {
+                Text(stringResource(R.string.provider_skip_setup_later), fontSize = 12.sp)
+            }
         }
     }
 }
@@ -3213,6 +3284,7 @@ private fun ProviderCredentialsStep(
     onValidate: suspend (List<DiscoveredModel>) -> ConnectionValidation,
     onSave: () -> Unit,
     onChangeAgent: () -> Unit,
+    onSkip: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3241,6 +3313,7 @@ private fun ProviderCredentialsStep(
             onToken = onApiKey,
             onSave = onSave,
             onChangeAgent = onChangeAgent,
+            onSkip = onSkip,
         )
         return
     }
@@ -3498,12 +3571,7 @@ private fun ProviderCredentialsStep(
             }
         }
         item {
-            TextButton(
-                onClick = onChangeAgent,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(R.string.provider_use_another_agent), fontSize = 12.sp)
-            }
+            OnboardingSecondaryActions(onChangeAgent = onChangeAgent, onSkip = onSkip)
         }
     }
 }
@@ -3515,6 +3583,7 @@ private fun ClaudeSubscriptionCredentialsStep(
     onToken: (String) -> Unit,
     onSave: () -> Unit,
     onChangeAgent: () -> Unit,
+    onSkip: (() -> Unit)? = null,
 ) {
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
     val hasToken = token.isNotBlank() || hasStoredToken
@@ -3590,9 +3659,7 @@ private fun ClaudeSubscriptionCredentialsStep(
             }
         }
         item {
-            TextButton(onClick = onChangeAgent, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.provider_use_another_agent), fontSize = 12.sp)
-            }
+            OnboardingSecondaryActions(onChangeAgent = onChangeAgent, onSkip = onSkip)
         }
     }
 }
@@ -4476,7 +4543,42 @@ private fun WorkspaceScreen(
     onCleanAndroid: () -> Unit,
     onInstallAndroidTools: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
+    // Leaving while a terminal command runs asks whether to stop it or keep it running.
+    var confirmLeaveTerminal by rememberSaveable { mutableStateOf(false) }
+    val requestBack: () -> Unit = {
+        if (state.projectTerminalRunning) confirmLeaveTerminal = true else onBack()
+    }
+    BackHandler(onBack = requestBack)
+    if (confirmLeaveTerminal) {
+        AlertDialog(
+            onDismissRequest = { confirmLeaveTerminal = false },
+            title = { Text(stringResource(R.string.ws_terminal_leave_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.ws_terminal_leave_body,
+                        state.projectTerminalCommand ?: stringResource(R.string.workspace_project_terminal),
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLeaveTerminal = false
+                    onTerminalStop()
+                    onBack()
+                }) { Text(stringResource(R.string.ws_terminal_leave_stop)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { confirmLeaveTerminal = false }) { Text(stringResource(R.string.cancel)) }
+                    TextButton(onClick = {
+                        confirmLeaveTerminal = false
+                        onBack()
+                    }) { Text(stringResource(R.string.ws_terminal_leave_keep)) }
+                }
+            },
+        )
+    }
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -4544,32 +4646,37 @@ private fun WorkspaceScreen(
         if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
     }
 
-    // When the user actively scrolls/touches the screen, detect if they scrolled up to read thinking/messages.
+    // Only a finger drag pauses follow mode; our own scrolls (and the Latest button) must not.
+    val chatDragged by chatListState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(chatDragged) {
+        if (chatDragged) userScrolledUp = true
+    }
+    // Reaching the bottom again, by hand or via Latest, re-enables follow mode.
     LaunchedEffect(chatListState.isScrollInProgress) {
-        if (chatListState.isScrollInProgress) {
-            if (chatListState.canScrollForward) {
-                userScrolledUp = true
-            }
-        } else {
-            // If user scrolled back down to the very bottom, re-enable follow mode
-            if (!chatListState.canScrollForward) {
-                userScrolledUp = false
-            }
+        if (!chatListState.isScrollInProgress && !chatListState.canScrollForward) {
+            userScrolledUp = false
         }
     }
+    // A new run always starts following.
+    LaunchedEffect(state.isRunning) {
+        if (state.isRunning) userScrolledUp = false
+    }
 
-    // Follow new tokens/updates only when user is at the bottom and has not scrolled up to read.
+    // Follow new tokens/updates unless the user has scrolled up to read.
     LaunchedEffect(
         state.messages.size,
         state.messages.lastOrNull()?.text?.length,
         state.liveProcess.size,
         state.liveProcess.lastOrNull()?.detail,
         state.pendingApproval,
+        state.isRunning,
     ) {
-        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress) return@LaunchedEffect
-        if (!chatListState.canScrollForward) {
-            chatListState.scrollToItem(chatItemCount - 1)
-        }
+        if (chatItemCount <= 0 || userScrolledUp || chatDragged) return@LaunchedEffect
+        // Don't gate on canScrollForward: this runs before the new item is laid out, so the list
+        // still looks "at bottom". Scrolling past the end is clamped, so this is a no-op when already there.
+        chatListState.scrollToItem(chatItemCount - 1)
+        // The newest item can be taller than the screen; land on its end, not its top.
+        chatListState.scrollBy(100_000f)
     }
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
@@ -4705,7 +4812,7 @@ private fun WorkspaceScreen(
                         )
                     }
                 },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
+                navigationIcon = { IconButton(onClick = requestBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
                 actions = {
                     if (isAndroidProject) {
                         IconButton(

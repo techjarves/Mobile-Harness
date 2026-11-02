@@ -927,7 +927,7 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.ANDROID -> removeAndroidStack()
             DevStack.CPP -> aptRemove(
                 runtime.proot,
-                listOf("build-essential", "gcc", "g++", "make", "cmake", "gdb"),
+                listOf("build-essential", "gcc", "g++", "gcc-10", "g++-10", "make", "cmake", "gdb"),
                 0.45f,
                 onProgress,
             )
@@ -1041,14 +1041,16 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.CPP -> {
                 aptInstall(
                     proot,
-                    listOf("build-essential", "cmake", "gdb"),
+                    // Node 24's native addons (node-gyp) need C++20 and Python;
+                    // Ubuntu 20.04's default GCC 9 cannot build them.
+                    listOf("build-essential", "gcc-10", "g++-10", "python3", "cmake", "gdb"),
                     str(R.string.rt_install_cpp),
                     from,
                     onProgress,
                 )
                 verifyGuest(
                     proot,
-                    "gcc --version && g++ --version && make --version && cmake --version",
+                    "gcc --version && g++ --version && gcc-10 --version && g++-10 --version && python3 --version && make --version && cmake --version",
                     str(R.string.rt_install_verify_failed, "C/C++"),
                 )
             }
@@ -1375,6 +1377,8 @@ class RuntimeInstaller(private val context: Context) {
 
     fun isStackInstalled(stack: DevStack): Boolean {
         if (readDevStackState()[stack.name] != true) return false
+        // Older C/C++ installs lack GCC 10 and Python, which native npm packages need.
+        if (stack == DevStack.CPP) return hasNativeAddonToolchain(rootfs)
         if (stack != DevStack.ANDROID) return true
         return File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION &&
             File(rootfs, "root/android-sdk/platforms/android-36/android.jar").isFile &&
@@ -1383,6 +1387,11 @@ class RuntimeInstaller(private val context: Context) {
             File(rootfs, "root/maven/localMvnRepository").let { it.isDirectory && !it.list().isNullOrEmpty() } &&
             File(rootfs, "root/.gradle/init.d/pocketdev-android.gradle").isFile
     }
+
+    private fun hasNativeAddonToolchain(targetRootfs: File): Boolean =
+        File(targetRootfs, "usr/bin/gcc-10").canExecute() &&
+            File(targetRootfs, "usr/bin/g++-10").canExecute() &&
+            File(targetRootfs, "usr/bin/python3").canExecute()
 
     private fun readDevStackState(): MutableMap<String, Boolean> {
         if (!devStacksFile.isFile) return mutableMapOf()
@@ -1801,6 +1810,17 @@ class RuntimeInstaller(private val context: Context) {
                 put("PROOT_LOADER", File(context.applicationInfo.nativeLibraryDir, "libprootloader.so").absolutePath)
                 // Also protects any glibc helper Claude starts later.
                 put("GLIBC_TUNABLES", "glibc.pthread.rseq=0")
+                if (hasNativeAddonToolchain(rootfs)) {
+                    // node-gyp compiles native npm packages with $CC/$CXX and
+                    // Node 24 headers need C++20, which Ubuntu's default GCC 9 lacks.
+                    // It finds python3 on PATH; npm 11 rejects npm_config_python.
+                    put("CC", "/usr/bin/gcc-10")
+                    put("CXX", "/usr/bin/g++-10")
+                }
+                // agy otherwise replaces its own binary in the background on any
+                // run, moving users to an untested release behind the installed
+                // version marker. Only "true" is honoured; "1" is ignored.
+                put("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
                 putAll(environment)
             },
             cwd = context.filesDir.absolutePath,
@@ -2154,13 +2174,13 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             sha256 = "df0cf7251c74f82d424231e3804114a4ca66b16130eea9abab11e220dc7ac012",
             compressedBytes = 72_185_773L,
         )
-        private const val CLAUDE_BUNDLED_VERSION = "2.1.263"
+        private const val CLAUDE_BUNDLED_VERSION = "2.1.316"
         private const val CLAUDE_GUEST_PATH = "/usr/local/bin/claude"
         private val CLAUDE_BUNDLE = RuntimeBundle(
             label = "Claude Code",
-            fileName = "pocketdev-claude-arm64-2026.09.1.tar.zst",
-            sha256 = "0f68e15630e8c0fc941afe3f61ab5a3eb4407b334018de6dbdabfa5eca627724",
-            compressedBytes = 75_289_800L,
+            fileName = "pocketdev-claude-arm64-2026.11.1.tar.zst",
+            sha256 = "26316a6481983e5f42d362b4b6fdfa0441a1c27e9ddc74eb33fd4fcbba4fe3eb",
+            compressedBytes = 116_997_995L,
         )
         private val PYTHON_BUNDLE = RuntimeBundle(
             label = "Python",
