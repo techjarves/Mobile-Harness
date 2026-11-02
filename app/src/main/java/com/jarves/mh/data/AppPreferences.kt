@@ -576,6 +576,11 @@ class AppPreferences(private val context: Context) {
             "dsh_version",
             "whats_new_seen_code",
             "backup_feature_seen",
+            // Cursor account usage, credits, and daily spend describe this phone's reading,
+            // not user work. Keep them out of exported backups.
+            "agent_cursor_usage",
+            "agent_cursor_usage_at",
+            "agent_cursor_overview",
         )
     }
 }

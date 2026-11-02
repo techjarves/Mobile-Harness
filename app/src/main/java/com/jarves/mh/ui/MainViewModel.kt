@@ -2432,10 +2432,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         vault.remove(CURSOR_VAULT_ID)
         preferences.cursorUsage = null
         preferences.cursorUsageUpdatedAt = 0L
+        preferences.cursorOverview = null
         _state.update {
             it.copy(
                 cursorHasKey = false,
                 cursorUsage = null,
+                cursorOverview = null,
                 cursorUsageUpdatedAt = 0L,
                 cursorUsageMessage = null,
                 toastMessage = str(R.string.settings_cursor_key_removed),

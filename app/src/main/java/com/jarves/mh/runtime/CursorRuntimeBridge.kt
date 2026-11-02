@@ -1492,9 +1492,10 @@ class CursorRuntimeBridge(
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.use { it.readBytes().decodeToString() }.orEmpty()
             when {
+                // The key itself is never part of the message, only the reason.
                 code == HttpURLConnection.HTTP_UNAUTHORIZED -> null
                 code !in 200..299 -> throw CursorSessionException(
-                    cursorFriendlyError("HTTP $code ${text.take(200)}"),
+                    cursorFriendlyError("HTTP $code ${cursorRedact(text).take(200)}"),
                 )
                 text.isBlank() -> null
                 else -> runCatching { JSONObject(text) }.getOrNull()
@@ -1504,7 +1505,8 @@ class CursorRuntimeBridge(
         }
     }
 
-    private suspend fun runUtility(command: List<String>, apiKey: String?): String {        val installed = installer.installedRuntime()
+    private suspend fun runUtility(command: List<String>, apiKey: String?): String {
+        val installed = installer.installedRuntime()
         val workspace = File(context.cacheDir, "cursor-util").apply { mkdirs() }
         val outputFile = File(context.cacheDir, "cursor-util-${System.nanoTime()}.log")
         val process = installer.process(

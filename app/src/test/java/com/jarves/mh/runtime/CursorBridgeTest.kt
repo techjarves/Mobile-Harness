@@ -146,12 +146,12 @@ class CursorBridgeTest {
     fun accountAndCreditsParseFromDashboardPayloads() {
         val account = parseCursorAccount(
             org.json.JSONObject(
-                """{"email":"dev@example.com","firstName":"Ajay","lastName":"Sharma","teamName":"Team X","isTeamAdmin":true,"createdAt":"1700000000000"}""",
+                """{"email":"dev@example.com","firstName":"Test","lastName":"User","teamName":"Team X","isTeamAdmin":true,"createdAt":"1700000000000"}""",
             ),
         )
         requireNotNull(account)
         assertEquals("dev@example.com", account.email)
-        assertEquals("Ajay Sharma", account.name)
+        assertEquals("Test User", account.name)
         assertEquals("Team X", account.teamName)
         assertTrue(account.isTeamAdmin)
         assertEquals(1_700_000_000_000L, account.createdAtMillis)
