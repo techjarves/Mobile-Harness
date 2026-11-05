@@ -100,7 +100,9 @@
     <string name="st_text_size">文字大小</string>
     <string name="st_text_size_large">大</string>
     <string name="st_text_size_normal">标准</string>
+    <string name="st_text_size_small">小</string>
     <string name="st_text_size_xlarge">特大</string>
+    <string name="st_text_size_xsmall">特小</string>
     <string name="st_tier_open_source">开源</string>
     <string name="st_tier_pro_reasoning">专业推理</string>
     <string name="st_tier_stable">稳定</string>

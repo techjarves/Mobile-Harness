@@ -441,6 +441,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onTerminalOpened = viewModel::openProjectTerminal,
             onTerminalStop = viewModel::stopProjectTerminalCommand,
             onTerminalClear = viewModel::clearProjectTerminal,
+            onTerminalViewportChanged = viewModel::setProjectTerminalViewport,
             onTerminalConfirm = viewModel::confirmProjectTerminalCommand,
             onTerminalCancel = viewModel::cancelProjectTerminalCommand,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
@@ -4439,6 +4440,7 @@ private fun WorkspaceScreen(
     onTerminalOpened: () -> Unit,
     onTerminalStop: () -> Unit,
     onTerminalClear: () -> Unit,
+    onTerminalViewportChanged: (Int, Int) -> Unit,
     onTerminalConfirm: () -> Unit,
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
@@ -4891,6 +4893,7 @@ private fun WorkspaceScreen(
                     compactHeader = true,
                     showHeader = false,
                     fontSize = state.terminalFontSize,
+                    onViewportSizeChanged = onTerminalViewportChanged,
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
@@ -6349,7 +6352,7 @@ private fun ChatTab(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(messages, key = { it.id }) { message ->
@@ -7052,7 +7055,7 @@ private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Uni
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth(if (message.fromUser) .82f else .92f),
+            modifier = Modifier.fillMaxWidth(if (message.fromUser) .9f else 1f),
         ) {
             Column(Modifier.padding(top = 12.dp)) {
                 SelectionContainer {

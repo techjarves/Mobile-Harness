@@ -2,7 +2,7 @@ package com.jarves.mh.model
 
 import kotlin.math.abs
 
-val UI_SCALE_OPTIONS = listOf(1f, 1.15f, 1.3f)
+val UI_SCALE_OPTIONS = listOf(0.75f, 0.85f, 1f, 1.15f, 1.3f)
 const val DEFAULT_UI_SCALE = 1f
 
 val TERMINAL_FONT_SIZE_OPTIONS = listOf(12, 14, 16)

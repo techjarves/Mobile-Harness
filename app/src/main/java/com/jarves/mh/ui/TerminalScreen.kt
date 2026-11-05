@@ -75,13 +75,16 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
@@ -90,6 +93,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.jarves.mh.R
@@ -122,6 +126,7 @@ fun TerminalScreen(
     compactHeader: Boolean = false,
     showHeader: Boolean = true,
     fontSize: Int = DEFAULT_TERMINAL_FONT_SIZE,
+    onViewportSizeChanged: (columns: Int, rows: Int) -> Unit = { _, _ -> },
 ) {
     var commandInput by remember { mutableStateOf(TextFieldValue()) }
     var commandHistory by remember { mutableStateOf(emptyList<String>()) }
@@ -134,6 +139,24 @@ fun TerminalScreen(
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalFontSize = fontSize.sp
     val terminalLineHeight = (fontSize * 1.5f).sp
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    var consoleSize by remember { mutableStateOf(IntSize.Zero) }
+    val charWidthPx = remember(fontSize, density, textMeasurer) {
+        textMeasurer.measure(
+            text = AnnotatedString("M".repeat(10)),
+            style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize.sp),
+        ).size.width / 10f
+    }
+    LaunchedEffect(consoleSize, charWidthPx, density) {
+        if (consoleSize.width <= 0 || charWidthPx <= 0f) return@LaunchedEffect
+        val horizontalPadding = with(density) { 28.dp.toPx() }
+        val verticalPadding = with(density) { 28.dp.toPx() }
+        val columns = ((consoleSize.width - horizontalPadding) / charWidthPx).toInt().coerceIn(20, 400)
+        val rows = ((consoleSize.height - verticalPadding) / with(density) { terminalLineHeight.toPx() })
+            .toInt().coerceIn(4, 200)
+        onViewportSizeChanged(columns, rows)
+    }
     val scope = rememberCoroutineScope()
     val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
     val openTerminalKeyboard = {
@@ -347,6 +370,7 @@ fun TerminalScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            .onSizeChanged { consoleSize = it }
                             .verticalScroll(terminalScrollState)
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),

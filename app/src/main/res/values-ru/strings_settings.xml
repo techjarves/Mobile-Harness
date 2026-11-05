@@ -100,7 +100,9 @@
     <string name="st_text_size">Размер текста</string>
     <string name="st_text_size_large">Крупный</string>
     <string name="st_text_size_normal">Обычный</string>
+    <string name="st_text_size_small">Мелкий</string>
     <string name="st_text_size_xlarge">Очень крупный</string>
+    <string name="st_text_size_xsmall">Очень мелкий</string>
     <string name="st_tier_open_source">Открытый код</string>
     <string name="st_tier_pro_reasoning">Продвинутые рассуждения</string>
     <string name="st_tier_stable">Стабильная</string>

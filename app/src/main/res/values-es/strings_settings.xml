@@ -100,7 +100,9 @@
     <string name="st_text_size">Tamaño de texto</string>
     <string name="st_text_size_large">Grande</string>
     <string name="st_text_size_normal">Normal</string>
+    <string name="st_text_size_small">Pequeño</string>
     <string name="st_text_size_xlarge">Muy grande</string>
+    <string name="st_text_size_xsmall">Muy pequeño</string>
     <string name="st_tier_open_source">Código abierto</string>
     <string name="st_tier_pro_reasoning">Razonamiento Pro</string>
     <string name="st_tier_stable">Estable</string>

@@ -100,7 +100,9 @@
     <string name="st_text_size">Text size</string>
     <string name="st_text_size_large">Large</string>
     <string name="st_text_size_normal">Normal</string>
+    <string name="st_text_size_small">Small</string>
     <string name="st_text_size_xlarge">Extra large</string>
+    <string name="st_text_size_xsmall">Extra small</string>
     <string name="st_tier_open_source">Open Source</string>
     <string name="st_tier_pro_reasoning">Pro Reasoning</string>
     <string name="st_tier_stable">Stable</string>

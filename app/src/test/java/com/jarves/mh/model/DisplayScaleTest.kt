@@ -6,7 +6,9 @@ import org.junit.Test
 class DisplayScaleTest {
     @Test
     fun `ui scale snaps to nearest option`() {
-        assertEquals(1f, normalizeUiScale(0.5f))
+        assertEquals(0.75f, normalizeUiScale(0.5f))
+        assertEquals(0.75f, normalizeUiScale(0.8f))
+        assertEquals(0.85f, normalizeUiScale(0.9f))
         assertEquals(1.15f, normalizeUiScale(1.11f))
         assertEquals(1.3f, normalizeUiScale(9f))
     }

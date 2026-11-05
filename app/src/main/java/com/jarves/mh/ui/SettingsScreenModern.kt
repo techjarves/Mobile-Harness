@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -115,7 +118,7 @@ import kotlinx.coroutines.launch
 
 private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     state: AppUiState,
@@ -252,14 +255,25 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(14.dp))
                     Text(stringResource(R.string.st_text_size), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         UI_SCALE_OPTIONS.forEach { scale ->
                             val label = when (scale) {
+                                0.75f -> stringResource(R.string.st_text_size_xsmall)
+                                0.85f -> stringResource(R.string.st_text_size_small)
                                 1f -> stringResource(R.string.st_text_size_normal)
                                 1.15f -> stringResource(R.string.st_text_size_large)
                                 else -> stringResource(R.string.st_text_size_xlarge)
                             }
-                            DisplayChoice(label, state.uiScale == scale, { onSetUiScale(scale) }, Modifier.weight(1f))
+                            DisplayChoice(
+                                label,
+                                state.uiScale == scale,
+                                { onSetUiScale(scale) },
+                                Modifier.widthIn(min = 92.dp),
+                            )
                         }
                     }
                     Spacer(Modifier.height(14.dp))

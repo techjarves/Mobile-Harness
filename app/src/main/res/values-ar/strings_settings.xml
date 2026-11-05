@@ -100,7 +100,9 @@
     <string name="st_text_size">حجم النص</string>
     <string name="st_text_size_large">كبير</string>
     <string name="st_text_size_normal">عادي</string>
+    <string name="st_text_size_small">صغير</string>
     <string name="st_text_size_xlarge">كبير جدًا</string>
+    <string name="st_text_size_xsmall">صغير جدًا</string>
     <string name="st_tier_open_source">مفتوح المصدر</string>
     <string name="st_tier_pro_reasoning">استدلال احترافي</string>
     <string name="st_tier_stable">مستقر</string>

@@ -230,7 +230,10 @@ private val ANSI_TERMINAL_SEQUENCE = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\
 
 internal fun sanitizeTerminalOutput(text: String): String = text
     .replace(ANSI_TERMINAL_SEQUENCE, "")
-    .filter { it == '\n' || it == '\r' || it == '\t' || it.code >= 0x20 }
+    .replace("\r\n", "\n")
+    .split('\n')
+    .joinToString("\n") { line -> line.substringAfterLast('\r') }
+    .filter { it == '\n' || it == '\t' || it.code >= 0x20 }
 
 private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
 
@@ -353,6 +356,8 @@ data class AppUiState(
     val projectTerminalCwd: String = "/workspace",
     val projectTerminalCommand: String? = null,
     val projectTerminalDraft: String? = null,
+    val projectTerminalColumns: Int = 80,
+    val projectTerminalRows: Int = 24,
     val pendingTerminalCommand: String? = null,
     val suggestedProjectRoot: String? = null,
     val selectedDevStacks: Set<DevStack> = emptySet(),
@@ -891,6 +896,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
     }
 
+    /** Keeps the guest terminal's columns in sync with the visible console area. */
+    fun setProjectTerminalViewport(columns: Int, rows: Int) {
+        val nextColumns = columns.coerceIn(20, 400)
+        val nextRows = rows.coerceIn(4, 200)
+        _state.update { current ->
+            if (current.projectTerminalColumns == nextColumns && current.projectTerminalRows == nextRows) current
+            else current.copy(projectTerminalColumns = nextColumns, projectTerminalRows = nextRows)
+        }
+    }
+
     fun refreshDeveloperDiagnostics() {
         if (diagnosticsJob?.isActive == true) return
         val now = SystemClock.elapsedRealtime()
@@ -1044,13 +1059,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             printf '\n$marker%s\n' "${'$'}PWD"
             exit ${'$'}pocket_status
         """.trimIndent()
+        val columns = _state.value.projectTerminalColumns
+        val rows = _state.value.projectTerminalRows
         val process = installer.process(
             proot = installed.proot,
             rootfs = installed.rootfs,
             workspace = workspace,
-            environment = emptyMap(),
+            environment = mapOf(
+                "COLUMNS" to columns.toString(),
+                "LINES" to rows.toString(),
+                "PAGER" to "cat",
+                "GIT_PAGER" to "cat",
+                "SYSTEMD_PAGER" to "cat",
+            ),
             guestCommand = listOf("/usr/bin/bash", "-lc", script),
             guestWorkspacePath = guestWorkspacePath,
+            pseudoTerminal = true,
+            ptyRows = rows,
+            ptyColumns = columns,
         )
         projectTerminalProcess = process
         projectTerminalProjectId = projectId

@@ -100,7 +100,9 @@
     <string name="st_text_size">टेक्स्ट आकार</string>
     <string name="st_text_size_large">बड़ा</string>
     <string name="st_text_size_normal">सामान्य</string>
+    <string name="st_text_size_small">छोटा</string>
     <string name="st_text_size_xlarge">बहुत बड़ा</string>
+    <string name="st_text_size_xsmall">बहुत छोटा</string>
     <string name="st_tier_open_source">ओपन सोर्स</string>
     <string name="st_tier_pro_reasoning">प्रो तर्क</string>
     <string name="st_tier_stable">स्थिर</string>
