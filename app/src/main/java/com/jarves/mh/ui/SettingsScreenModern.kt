@@ -98,6 +98,8 @@ import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.TERMINAL_FONT_SIZE_OPTIONS
+import com.jarves.mh.model.UI_SCALE_OPTIONS
 import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
@@ -121,6 +123,8 @@ fun SettingsScreen(
     onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSetThemeMode: (AppThemeMode) -> Unit,
+    onSetUiScale: (Float) -> Unit = {},
+    onSetTerminalFontSize: (Int) -> Unit = {},
     onSetLanguage: (String) -> Unit = {},
     onPing: () -> Unit,
     onClearTerminal: () -> Unit,
@@ -245,6 +249,25 @@ fun SettingsScreen(
                         ModernThemeChoice(stringResource(R.string.theme_dark), Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_light), Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text(stringResource(R.string.st_text_size), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        UI_SCALE_OPTIONS.forEach { scale ->
+                            val label = when (scale) {
+                                1f -> stringResource(R.string.st_text_size_normal)
+                                1.15f -> stringResource(R.string.st_text_size_large)
+                                else -> stringResource(R.string.st_text_size_xlarge)
+                            }
+                            DisplayChoice(label, state.uiScale == scale, { onSetUiScale(scale) }, Modifier.weight(1f))
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text(stringResource(R.string.st_terminal_text), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TERMINAL_FONT_SIZE_OPTIONS.forEach { size ->
+                            DisplayChoice("$size sp", state.terminalFontSize == size, { onSetTerminalFontSize(size) }, Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -1077,6 +1100,27 @@ private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolea
             Icon(icon, title, Modifier.size(20.dp), tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(5.dp))
             Text(title, fontSize = 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        }
+    }
+}
+
+@Composable
+private fun DisplayChoice(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) PocketOrange.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Box(Modifier.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
