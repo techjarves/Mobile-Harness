@@ -18,4 +18,19 @@ class TerminalOutputTest {
     fun `ansi colors are removed`() {
         assertEquals("ok", sanitizeTerminalOutput("\u001B[31mok\u001B[0m"))
     }
+
+    @Test
+    fun `trailing carriage return keeps the last frame`() {
+        assertEquals("50%", sanitizeTerminalOutput("50%\r"))
+    }
+
+    @Test
+    fun `trailing carriage return after frames keeps the last`() {
+        assertEquals("b", sanitizeTerminalOutput("a\rb\r"))
+    }
+
+    @Test
+    fun `blank carriage return frame is dropped`() {
+        assertEquals("a\nb", sanitizeTerminalOutput("a\r\r\nb"))
+    }
 }

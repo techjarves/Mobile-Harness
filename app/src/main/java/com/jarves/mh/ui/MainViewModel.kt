@@ -229,11 +229,16 @@ data class TerminalOutputLine(
 
 private val ANSI_TERMINAL_SEQUENCE = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
 
+/**
+ * Strips ANSI escapes and turns carriage-return progress frames into plain lines.
+ * A trailing `\r` is removed before the last `\r`-separated segment is taken, so
+ * `"50%\r"` renders `"50%"` instead of an empty last frame.
+ */
 internal fun sanitizeTerminalOutput(text: String): String = text
     .replace(ANSI_TERMINAL_SEQUENCE, "")
     .replace("\r\n", "\n")
     .split('\n')
-    .joinToString("\n") { line -> line.substringAfterLast('\r') }
+    .joinToString("\n") { line -> line.trimEnd('\r').substringAfterLast('\r') }
     .filter { it == '\n' || it == '\t' || it.code >= 0x20 }
 
 private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
@@ -901,6 +906,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val viewport = TerminalViewport.clamped(columns, rows)
         val changed = _state.value.projectTerminalViewport != viewport
         if (changed) _state.update { it.copy(projectTerminalViewport = viewport) }
+        if (changed && _state.value.projectTerminalRunning) {
+            (projectTerminalProcess as? NativeSpawnProcess)?.resizePty(viewport.rows, viewport.columns)
+        }
     }
 
     fun refreshDeveloperDiagnostics() {
@@ -1085,39 +1093,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val output = StringBuilder()
         var autoConfirmed = false
         while (process.isAlive || native.outputFile.length() > offset) {
-            val available = native.outputFile.length() - offset
-            if (available <= 0) {
+            val chunk = readTerminalOutputChunk(native.outputFile, offset)
+            if (chunk == null) {
                 Thread.sleep(50)
                 continue
             }
-            val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-            val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                file.seek(offset)
-                file.read(bytes)
+            offset = chunk.nextOffset
+            output.append(chunk.text)
+            val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
+                .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+            if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
+                process.outputStream.write("y\n".toByteArray())
+                process.outputStream.flush()
+                autoConfirmed = true
             }
-            if (count > 0) {
-                offset += count
-                output.append(bytes.decodeToString(0, count))
-                val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
-                    .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
-                    process.outputStream.write("y\n".toByteArray())
-                    process.outputStream.flush()
-                    autoConfirmed = true
-                }
-                val detectedPreviewUrl = detectPreviewUrl(visible)
-                _state.update { current ->
-                    if (current.activeProject?.id == projectId) {
-                        current.copy(
-                            projectTerminalLiveOutput = visible,
-                            previewReady = current.previewReady || detectedPreviewUrl != null,
-                            previewUrl = detectedPreviewUrl ?: current.previewUrl,
-                        )
-                    } else current
-                }
+            val detectedPreviewUrl = detectPreviewUrl(visible)
+            _state.update { current ->
+                if (current.activeProject?.id == projectId) {
+                    current.copy(
+                        projectTerminalLiveOutput = visible,
+                        previewReady = current.previewReady || detectedPreviewUrl != null,
+                        previewUrl = detectedPreviewUrl ?: current.previewUrl,
+                    )
+                } else current
             }
         }
         val exitCode = process.waitFor()
+        native.awaitOutputPump()
+        while (true) {
+            val chunk = readTerminalOutputChunk(native.outputFile, offset) ?: break
+            offset = chunk.nextOffset
+            output.append(chunk.text)
+        }
         runCatching { process.outputStream.close() }
         val raw = output.toString()
         val cwdAfter = raw.substringAfter(marker, "")
