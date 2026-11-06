@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -84,6 +85,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -260,18 +262,11 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        UI_SCALE_OPTIONS.forEach { scale ->
-                            val label = when (scale) {
-                                0.75f -> stringResource(R.string.st_text_size_xsmall)
-                                0.85f -> stringResource(R.string.st_text_size_small)
-                                1f -> stringResource(R.string.st_text_size_normal)
-                                1.15f -> stringResource(R.string.st_text_size_large)
-                                else -> stringResource(R.string.st_text_size_xlarge)
-                            }
+                        UI_SCALE_OPTIONS.forEach { option ->
                             DisplayChoice(
-                                label,
-                                state.uiScale == scale,
-                                { onSetUiScale(scale) },
+                                stringResource(option.labelRes),
+                                state.uiScale == option.scale,
+                                { onSetUiScale(option.scale) },
                                 Modifier.widthIn(min = 92.dp),
                             )
                         }
@@ -280,7 +275,7 @@ fun SettingsScreen(
                     Text(stringResource(R.string.st_terminal_text), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TERMINAL_FONT_SIZE_OPTIONS.forEach { size ->
-                            DisplayChoice("$size sp", state.terminalFontSize == size, { onSetTerminalFontSize(size) }, Modifier.weight(1f))
+                            DisplayChoice(stringResource(R.string.st_terminal_text_size_value, size), state.terminalFontSize == size, { onSetTerminalFontSize(size) }, Modifier.weight(1f))
                         }
                     }
                 }
@@ -1121,7 +1116,7 @@ private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolea
 @Composable
 private fun DisplayChoice(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
         shape = RoundedCornerShape(10.dp),
         color = if (selected) PocketOrange.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),

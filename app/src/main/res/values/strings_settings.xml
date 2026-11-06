@@ -95,6 +95,7 @@
     <string name="st_tap_to_activate">Tap to activate</string>
     <string name="st_tap_to_make_active">Tap to make active</string>
     <string name="st_terminal_text">Terminal text</string>
+    <string name="st_terminal_text_size_value" translatable="false">%1$d sp</string>
     <string name="st_test_connection_and_save">Test connection and save</string>
     <string name="st_testing_connection">Testing connection…</string>
     <string name="st_text_size">Text size</string>
