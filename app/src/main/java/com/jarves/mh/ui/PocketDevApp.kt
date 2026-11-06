@@ -4731,7 +4731,7 @@ private fun WorkspaceScreen(
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
                             if (selectedTab == WorkspaceTab.TERMINAL) {
-                                "${state.projectTerminalCwd} · Ubuntu PRoot"
+                                "${state.projectTerminalCwd} · ${stringResource(R.string.ws_terminal_environment)}"
                             } else {
                                 "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}"
                             },
@@ -4881,7 +4881,6 @@ private fun WorkspaceScreen(
                     onToggleTheme = {},
                     themeMode = state.themeMode,
                     title = stringResource(R.string.workspace_project_terminal),
-                    subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
                     liveOutput = state.projectTerminalLiveOutput,
                     currentCommand = state.projectTerminalCommand,
                     commandDraft = state.projectTerminalDraft,

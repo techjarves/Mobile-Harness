@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
@@ -96,6 +97,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.TextUnit
 import com.jarves.mh.R
 import com.jarves.mh.model.DEFAULT_TERMINAL_FONT_SIZE
 import com.jarves.mh.ui.theme.AppThemeMode
@@ -138,7 +143,7 @@ fun TerminalScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalFontSize = fontSize.sp
-    val terminalLineHeight = (fontSize * 1.5f).sp
+    val terminalLineHeightUnit = terminalLineHeight(fontSize)
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     var consoleSize by remember { mutableStateOf(IntSize.Zero) }
@@ -153,7 +158,7 @@ fun TerminalScreen(
         val horizontalPadding = with(density) { 28.dp.toPx() }
         val verticalPadding = with(density) { 28.dp.toPx() }
         val columns = ((consoleSize.width - horizontalPadding) / charWidthPx).toInt()
-        val rows = ((consoleSize.height - verticalPadding) / with(density) { terminalLineHeight.toPx() })
+        val rows = ((consoleSize.height - verticalPadding) / with(density) { terminalLineHeightUnit.toPx() })
             .toInt()
         onViewportSizeChanged(columns, rows)
     }
@@ -399,7 +404,7 @@ fun TerminalScreen(
                                                 text = sanitizeTerminalOutput(item.output),
                                                 fontFamily = FontFamily.Monospace,
                                                 fontSize = terminalFontSize,
-                                                lineHeight = terminalLineHeight,
+                                                lineHeight = terminalLineHeightUnit,
                                                 color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else outputTextColor,
                                                 modifier = Modifier.padding(start = 8.dp),
                                             )
@@ -421,7 +426,7 @@ fun TerminalScreen(
                                         sanitizeTerminalOutput(liveOutput),
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = terminalFontSize,
-                                        lineHeight = terminalLineHeight,
+                                        lineHeight = terminalLineHeightUnit,
                                         color = outputTextColor,
                                     )
                                 }
@@ -491,7 +496,7 @@ fun TerminalScreen(
                                 textStyle = androidx.compose.ui.text.TextStyle(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = terminalFontSize,
-                                    lineHeight = terminalLineHeight,
+                                    lineHeight = terminalLineHeightUnit,
                                     fontWeight = FontWeight.SemiBold,
                                     color = commandTextColor,
                                 ),
@@ -509,7 +514,7 @@ fun TerminalScreen(
 
             // Keyboard helper row. These operate on the command draft, so they are
             // useful even when the phone keyboard does not expose terminal keys.
-            // Kept visible with the keyboard open: that is when ↑/↓, ALT, ESC and CTRL are needed.
+            // Kept visible with the keyboard open: that is when the arrows and modifiers are needed.
             FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -536,9 +541,9 @@ fun TerminalScreen(
                 TerminalIconKeyButton(Icons.Default.ArrowForward, stringResource(R.string.ws_terminal_cursor_right)) {
                     commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
                 }
-                TerminalKeyButton("ALT", stringResource(R.string.ws_terminal_alt_modifier), active = altActive, fixedWidth = true, fontSize = fontSize) { altActive = !altActive }
-                TerminalKeyButton("ESC", stringResource(R.string.ws_terminal_escape), fontSize = fontSize) { commandInput = TextFieldValue() }
-                TerminalKeyButton("CTRL", stringResource(R.string.ws_terminal_ctrl_modifier), active = ctrlActive, fixedWidth = true, fontSize = fontSize) {
+                TerminalKeyButton(stringResource(R.string.ws_terminal_key_alt), stringResource(R.string.ws_terminal_alt_modifier), active = altActive, fixedWidth = true, showActiveState = true, fontSize = fontSize) { altActive = !altActive }
+                TerminalKeyButton(stringResource(R.string.ws_terminal_key_esc), stringResource(R.string.ws_terminal_escape), fontSize = fontSize) { commandInput = TextFieldValue() }
+                TerminalKeyButton(stringResource(R.string.ws_terminal_key_ctrl), stringResource(R.string.ws_terminal_ctrl_modifier), active = ctrlActive, fixedWidth = true, showActiveState = true, fontSize = fontSize) {
                     ctrlActive = !ctrlActive
                     if (ctrlActive) openTerminalKeyboard()
                 }
@@ -547,19 +552,31 @@ fun TerminalScreen(
     }
 }
 
+private fun terminalLineHeight(fontSize: Int): TextUnit = (fontSize * 1.5f).sp
+
 @Composable
 private fun TerminalKeyButton(
     label: String,
     description: String,
     active: Boolean = false,
     fixedWidth: Boolean = false,
+    showActiveState: Boolean = false,
     fontSize: Int = DEFAULT_TERMINAL_FONT_SIZE,
     onClick: () -> Unit,
 ) {
+    val activeStateDescription = stringResource(
+        if (active) R.string.ws_terminal_modifier_active else R.string.ws_terminal_modifier_inactive,
+    )
     androidx.compose.material3.OutlinedButton(
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-        modifier = Modifier.heightIn(min = 34.dp).then(if (fixedWidth) Modifier.widthIn(min = 70.dp) else Modifier),
+        modifier = Modifier
+            .heightIn(min = 34.dp)
+            .then(if (fixedWidth) Modifier.widthIn(min = 70.dp) else Modifier)
+            .semantics {
+                contentDescription = description
+                if (showActiveState) stateDescription = activeStateDescription
+            },
         colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
             containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else Color.Transparent,
             contentColor = if (active) PocketOrange else MaterialTheme.colorScheme.onSurface,
@@ -573,8 +590,12 @@ private fun TerminalKeyButton(
             label,
             fontFamily = FontFamily.Monospace,
             fontSize = fontSize.sp,
-            maxLines = 1,
+            lineHeight = terminalLineHeight(fontSize),
         )
+        if (showActiveState && active) {
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
+        }
     }
 }
 
@@ -609,7 +630,7 @@ private fun TerminalCommandPrompt(
         modifier = Modifier.fillMaxWidth(),
         fontFamily = FontFamily.Monospace,
         fontSize = fontSize.sp,
-        lineHeight = (fontSize * 1.5f).sp,
+        lineHeight = terminalLineHeight(fontSize),
         softWrap = true,
     )
 }
