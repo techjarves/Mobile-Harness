@@ -152,9 +152,9 @@ fun TerminalScreen(
         if (consoleSize.width <= 0 || charWidthPx <= 0f) return@LaunchedEffect
         val horizontalPadding = with(density) { 28.dp.toPx() }
         val verticalPadding = with(density) { 28.dp.toPx() }
-        val columns = ((consoleSize.width - horizontalPadding) / charWidthPx).toInt().coerceIn(20, 400)
+        val columns = ((consoleSize.width - horizontalPadding) / charWidthPx).toInt()
         val rows = ((consoleSize.height - verticalPadding) / with(density) { terminalLineHeight.toPx() })
-            .toInt().coerceIn(4, 200)
+            .toInt()
         onViewportSizeChanged(columns, rows)
     }
     val scope = rememberCoroutineScope()

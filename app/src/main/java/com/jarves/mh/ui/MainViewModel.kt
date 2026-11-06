@@ -45,6 +45,7 @@ import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
+import com.jarves.mh.model.TerminalViewport
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
 import com.jarves.mh.model.projectSlug
@@ -356,8 +357,7 @@ data class AppUiState(
     val projectTerminalCwd: String = "/workspace",
     val projectTerminalCommand: String? = null,
     val projectTerminalDraft: String? = null,
-    val projectTerminalColumns: Int = 80,
-    val projectTerminalRows: Int = 24,
+    val projectTerminalViewport: TerminalViewport = TerminalViewport.Default,
     val pendingTerminalCommand: String? = null,
     val suggestedProjectRoot: String? = null,
     val selectedDevStacks: Set<DevStack> = emptySet(),
@@ -896,14 +896,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
     }
 
-    /** Keeps the guest terminal's columns in sync with the visible console area. */
+    /** Keeps the guest terminal's columns and rows in sync with the visible console area. */
     fun setProjectTerminalViewport(columns: Int, rows: Int) {
-        val nextColumns = columns.coerceIn(20, 400)
-        val nextRows = rows.coerceIn(4, 200)
-        _state.update { current ->
-            if (current.projectTerminalColumns == nextColumns && current.projectTerminalRows == nextRows) current
-            else current.copy(projectTerminalColumns = nextColumns, projectTerminalRows = nextRows)
-        }
+        val viewport = TerminalViewport.clamped(columns, rows)
+        val changed = _state.value.projectTerminalViewport != viewport
+        if (changed) _state.update { it.copy(projectTerminalViewport = viewport) }
     }
 
     fun refreshDeveloperDiagnostics() {
@@ -1059,8 +1056,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             printf '\n$marker%s\n' "${'$'}PWD"
             exit ${'$'}pocket_status
         """.trimIndent()
-        val columns = _state.value.projectTerminalColumns
-        val rows = _state.value.projectTerminalRows
+        val viewport = _state.value.projectTerminalViewport
+        val columns = viewport.columns
+        val rows = viewport.rows
         val process = installer.process(
             proot = installed.proot,
             rootfs = installed.rootfs,
