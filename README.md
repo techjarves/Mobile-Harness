@@ -19,7 +19,6 @@
   <br />
 
   [**Download Online APK**](https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-online.apk) &nbsp;•&nbsp;
-  [**Download Offline APK**](https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-offline.apk) &nbsp;•&nbsp;
   [**Watch Walkthrough (3 min)**](https://youtu.be/QzAau52Z7yQ) &nbsp;•&nbsp;
   [**Quickstart Guide**](#quickstart) &nbsp;•&nbsp;
   [**Architecture**](#architecture) &nbsp;•&nbsp;
@@ -52,30 +51,11 @@
 ## Download Mobile Harness
 
 <div align="center">
-  <h3>Choose the edition that fits your setup</h3>
-  <p>Both editions contain the complete Mobile Harness app and support secure in-app updates beginning with v1.0.3.</p>
+  <p><strong>89.1 MB</strong> · Core, Python, and Android runtime bundles are downloaded only when needed. Supports secure in-app updates.</p>
+  <a href="https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-online.apk">
+    <img src="https://img.shields.io/badge/Download-Online_APK-F28C52?style=for-the-badge&logo=android&logoColor=white" alt="Download Online APK" />
+  </a>
 </div>
-
-<table>
-  <tr>
-    <td width="50%" valign="top" align="center">
-      <h3>Online Edition</h3>
-      <p><strong>89.1 MB · Recommended</strong></p>
-      <p>Start with the smaller APK. Core, Python, and Android runtime bundles are downloaded only when needed.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-online.apk">
-        <img src="https://img.shields.io/badge/Download-Online_APK-F28C52?style=for-the-badge&logo=android&logoColor=white" alt="Download Online APK" />
-      </a>
-    </td>
-    <td width="50%" valign="top" align="center">
-      <h3>Offline Edition</h3>
-      <p><strong>889.4 MB · Everything included</strong></p>
-      <p>Includes the Core, Python, and Android runtime bundles for setup with limited or unavailable internet.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-offline.apk">
-        <img src="https://img.shields.io/badge/Download-Offline_APK-5B8DEF?style=for-the-badge&logo=android&logoColor=white" alt="Download Offline APK" />
-      </a>
-    </td>
-  </tr>
-</table>
 
 <p align="center">
   <strong>ARM64 Android 9+</strong><br />
