@@ -94,8 +94,13 @@
     <string name="st_sync">مزامنة</string>
     <string name="st_tap_to_activate">اضغط للتفعيل</string>
     <string name="st_tap_to_make_active">اضغط لجعله نشطًا</string>
+    <string name="st_terminal_text">نص الطرفية</string>
     <string name="st_test_connection_and_save">اختبار الاتصال والحفظ</string>
     <string name="st_testing_connection">جارٍ اختبار الاتصال…</string>
+    <string name="st_text_size">حجم النص</string>
+    <string name="st_text_size_large">كبير</string>
+    <string name="st_text_size_normal">عادي</string>
+    <string name="st_text_size_xlarge">كبير جدًا</string>
     <string name="st_tier_open_source">مفتوح المصدر</string>
     <string name="st_tier_pro_reasoning">استدلال احترافي</string>
     <string name="st_tier_stable">مستقر</string>

@@ -94,8 +94,13 @@
     <string name="st_sync">Sync</string>
     <string name="st_tap_to_activate">Tap to activate</string>
     <string name="st_tap_to_make_active">Tap to make active</string>
+    <string name="st_terminal_text">Terminal text</string>
     <string name="st_test_connection_and_save">Test connection and save</string>
     <string name="st_testing_connection">Testing connection…</string>
+    <string name="st_text_size">Text size</string>
+    <string name="st_text_size_large">Large</string>
+    <string name="st_text_size_normal">Normal</string>
+    <string name="st_text_size_xlarge">Extra large</string>
     <string name="st_tier_open_source">Open Source</string>
     <string name="st_tier_pro_reasoning">Pro Reasoning</string>
     <string name="st_tier_stable">Stable</string>

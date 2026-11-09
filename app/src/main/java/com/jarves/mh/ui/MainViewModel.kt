@@ -33,6 +33,10 @@ import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.DevStack
+import com.jarves.mh.model.DEFAULT_TERMINAL_FONT_SIZE
+import com.jarves.mh.model.DEFAULT_UI_SCALE
+import com.jarves.mh.model.normalizeTerminalFontSize
+import com.jarves.mh.model.normalizeUiScale
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectType
@@ -291,6 +295,8 @@ data class AppUiState(
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
     val activeApiKeyName: String? = null,
     val themeMode: com.jarves.mh.ui.theme.AppThemeMode = com.jarves.mh.ui.theme.AppThemeMode.DARK,
+    val uiScale: Float = DEFAULT_UI_SCALE,
+    val terminalFontSize: Int = DEFAULT_TERMINAL_FONT_SIZE,
     val languageCode: String = "system",
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
@@ -498,6 +504,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             antigravityEffort = preferences.antigravityEffort,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
+            uiScale = preferences.uiScale,
+            terminalFontSize = preferences.terminalFontSize,
             languageCode = preferences.languageCode,
             projects = preferences.loadProjects(),
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
@@ -2007,6 +2015,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setThemeMode(mode: com.jarves.mh.ui.theme.AppThemeMode) {
         preferences.themeMode = mode.name.lowercase()
         _state.update { it.copy(themeMode = mode) }
+    }
+
+    fun setUiScale(scale: Float) {
+        val normalized = normalizeUiScale(scale)
+        preferences.uiScale = normalized
+        _state.update { it.copy(uiScale = normalized) }
+    }
+
+    fun setTerminalFontSize(size: Int) {
+        val normalized = normalizeTerminalFontSize(size)
+        preferences.terminalFontSize = normalized
+        _state.update { it.copy(terminalFontSize = normalized) }
     }
 
     fun setLanguage(code: String) {
