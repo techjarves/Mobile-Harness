@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,8 +24,11 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -81,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -98,6 +104,8 @@ import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.TERMINAL_FONT_SIZE_OPTIONS
+import com.jarves.mh.model.UI_SCALE_OPTIONS
 import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
@@ -113,7 +121,7 @@ import kotlinx.coroutines.launch
 
 private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     state: AppUiState,
@@ -121,6 +129,8 @@ fun SettingsScreen(
     onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSetThemeMode: (AppThemeMode) -> Unit,
+    onSetUiScale: (Float) -> Unit = {},
+    onSetTerminalFontSize: (Int) -> Unit = {},
     onSetLanguage: (String) -> Unit = {},
     onPing: () -> Unit,
     onClearTerminal: () -> Unit,
@@ -245,6 +255,29 @@ fun SettingsScreen(
                         ModernThemeChoice(stringResource(R.string.theme_dark), Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_light), Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
                         ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text(stringResource(R.string.st_text_size), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp).selectableGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        UI_SCALE_OPTIONS.forEach { option ->
+                            DisplayChoice(
+                                stringResource(option.labelRes),
+                                state.uiScale == option.scale,
+                                { onSetUiScale(option.scale) },
+                                Modifier.widthIn(min = 92.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text(stringResource(R.string.st_terminal_text), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TERMINAL_FONT_SIZE_OPTIONS.forEach { size ->
+                            DisplayChoice(stringResource(R.string.st_terminal_text_size_value, size), state.terminalFontSize == size, { onSetTerminalFontSize(size) }, Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -1077,6 +1110,27 @@ private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolea
             Icon(icon, title, Modifier.size(20.dp), tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(5.dp))
             Text(title, fontSize = 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        }
+    }
+}
+
+@Composable
+private fun DisplayChoice(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) PocketOrange.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Box(Modifier.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

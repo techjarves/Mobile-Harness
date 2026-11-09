@@ -8,7 +8,11 @@ import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.RecoveryDecision
+import com.jarves.mh.model.RecoveryFailureInfo
 import com.jarves.mh.model.RuntimeEvent
+import com.jarves.mh.model.RuntimeRecoveryContext
+import com.jarves.mh.model.RuntimeRecoveryProfile
 import com.jarves.mh.model.ToolRequest
 import java.io.File
 import java.io.RandomAccessFile
@@ -190,10 +194,72 @@ class AntigravityRuntimeBridge(
     @Volatile private var activeProcess: Process? = null
     @Volatile private var activeSessionId: String? = null
     @Volatile private var userStopRequested = false
+    @Volatile private var sawToolCall = false
+    @Volatile private var sawMutatingTool = false
+    @Volatile private var lastSessionId: String? = null
     @Volatile private var foregroundResultPosted = false
     @Volatile private var activeProjectSlug = ""
     @Volatile private var taskStartedAtElapsedRealtime = 0L
     @Volatile private var lastForegroundProgressAt = 0L
+
+    override val recoveryProfile: RuntimeRecoveryProfile = ANTIGRAVITY_RECOVERY_PROFILE
+
+    override fun recoveryContext(sessionId: String, projectId: String): RuntimeRecoveryContext? {
+        // Report the real tracked flags even after the process died and
+        // `activeSessionId` was nulled: `lastSessionId` still names the failed
+        // session until the next `startSession` begins.
+        if (activeSessionId != sessionId && lastSessionId != sessionId) return null
+        return RuntimeRecoveryContext(
+            sessionId = sessionId,
+            // agy runs one-shot stream-json turns: there is no live session to steer.
+            inPlaceContinuationAvailable = false,
+            persistedHandle = antigravityPersistedHandle(conversationId(projectId)),
+            toolsExecuted = sawToolCall,
+            mutatingToolsExecuted = sawMutatingTool,
+            interruptedToolOutcomeKnown = false,
+            checkpointAvailable = false,
+            userStopped = userStopRequested,
+        )
+    }
+
+    override suspend fun recover(action: RecoveryAction, decision: RecoveryDecision): Boolean {
+        return when (decision) {
+            RecoveryDecision.RESUME_PERSISTED -> {
+                // A resume must actually continue the saved conversation: without a
+                // handle, startSession would silently open a brand-new one instead.
+                antigravityPersistedHandle(conversationId(action.projectId)) ?: return false
+                // Defense in depth on top of the policy: agy cannot report the
+                // outcome of an interrupted tool, so never auto-resume a turn
+                // that already ran tools.
+                // A missing context means the bridge cannot prove no tools ran, so it declines.
+                if (!canAutoRestartWithoutTools(recoveryContext(action.sessionId, action.projectId))) return false
+                // startSession passes the saved id as --conversation on its own.
+                startSession(
+                    action.projectId,
+                    action.projectSlug,
+                    action.projectKind,
+                    action.instruction,
+                    action.history,
+                    action.provider,
+                )
+                true
+            }
+            RecoveryDecision.RETRY_NEW_SESSION_SAFE -> {
+                // A missing context means the bridge cannot prove no tools ran, so it declines.
+                if (!canAutoRestartWithoutTools(recoveryContext(action.sessionId, action.projectId))) return false
+                startSession(
+                    action.projectId,
+                    action.projectSlug,
+                    action.projectKind,
+                    action.originalPrompt,
+                    action.history,
+                    action.provider,
+                )
+                true
+            }
+            else -> false
+        }
+    }
 
     fun configureProjectRoot(projectId: String, rootPath: String) = checkpoints.configureProjectRoot(projectId, rootPath)
 
@@ -320,6 +386,9 @@ class AntigravityRuntimeBridge(
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         val sessionStartedAtMillis = System.currentTimeMillis()
+        lastSessionId = sessionId
+        sawToolCall = false
+        sawMutatingTool = false
         activeSessionId = sessionId
         userStopRequested = false
         foregroundResultPosted = false
@@ -382,6 +451,7 @@ class AntigravityRuntimeBridge(
                         eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.value))
                     }
                     is AntigravityParsedEvent.ToolStarted -> {
+                        recordToolActivity(event.name)
                         activeToolName = event.name
                         activeToolDetail = event.detail
                         activeToolStartedAtMillis = System.currentTimeMillis()
@@ -392,6 +462,7 @@ class AntigravityRuntimeBridge(
                         eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.name, event.detail))
                     }
                     is AntigravityParsedEvent.ToolCompleted -> {
+                        recordToolActivity(event.name)
                         if (activeToolName == event.name) activeToolName = null
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
                         eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
@@ -562,11 +633,36 @@ class AntigravityRuntimeBridge(
     }
 
     private suspend fun emitCompleted(sessionId: String) {
-        if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+        if (finished.add(sessionId)) {
+            // A completed session leaves no recovery facts behind: drop the handle so a
+            // later query cannot read stale tool flags for it.
+            if (lastSessionId == sessionId) lastSessionId = null
+            eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+        }
+    }
+
+    /** Session-scoped tool facts for the recovery policy; unknown names count as mutating. */
+    private fun recordToolActivity(name: String) {
+        sawToolCall = true
+        if (isAntigravityMutatingTool(name)) sawMutatingTool = true
     }
 
     private suspend fun emitFailure(sessionId: String, reason: String) {
-        if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+        if (finished.add(sessionId)) {
+            // Every terminal failure carries the side-effect facts so the manual
+            // retry card can warn; a user stop reports retryAvailable = false.
+            eventBus.emit(
+                RuntimeEvent.SessionFailed(
+                    sessionId,
+                    reason,
+                    RecoveryFailureInfo(
+                        retryAvailable = !userStopRequested,
+                        sideEffectsPossible = sawMutatingTool,
+                        toolsExecuted = sawToolCall,
+                    ),
+                ),
+            )
+        }
     }
 
     private fun startForegroundRuntime(projectName: String) {
@@ -674,6 +770,21 @@ internal fun antigravityFriendlyError(raw: String, diagnostic: String = ""): Str
  */
 internal fun isStaleAntigravityConversation(value: String): Boolean =
     ANTIGRAVITY_STALE_CONVERSATION_ERRORS.any { value.contains(it, ignoreCase = true) }
+
+/** The saved agy conversation id is the resume handle; blank or missing means none. */
+internal fun antigravityPersistedHandle(conversationId: String?): String? =
+    conversationId?.takeIf { it.isNotBlank() }
+
+private val ANTIGRAVITY_READ_ONLY_TOOLS = setOf(
+    "read", "list files", "search",
+    // Raw agy names and their prettified synonyms, in case one ever reaches the
+    // classifier without going through antigravityToolDisplayName.
+    "view_file", "view file", "list_dir", "list dir", "grep_search", "search_files",
+)
+
+/** True for agy tools that can mutate the workspace; unknown names default to mutating. */
+internal fun isAntigravityMutatingTool(name: String): Boolean =
+    name.lowercase() !in ANTIGRAVITY_READ_ONLY_TOOLS
 
 private val ANTIGRAVITY_STALE_CONVERSATION_ERRORS = listOf(
     "project associated with this conversation is no longer valid",

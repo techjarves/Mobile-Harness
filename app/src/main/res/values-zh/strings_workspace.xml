@@ -33,6 +33,8 @@
     <string name="ws_terminal_alt_modifier">Alt 修饰键</string>
     <string name="ws_terminal_escape">Esc 退出键</string>
     <string name="ws_terminal_ctrl_modifier">Control 修饰键；按 C 中断</string>
+    <string name="ws_terminal_modifier_active">已激活</string>
+    <string name="ws_terminal_modifier_inactive">未激活</string>
     <string name="ws_md_code_label">代码</string>
     <string name="ws_md_run_in_terminal">在项目终端中运行</string>
     <string name="ws_md_copy_code">复制代码</string>

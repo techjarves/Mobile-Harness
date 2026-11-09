@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -257,6 +258,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
@@ -407,6 +412,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
             onStop = viewModel::stopTask,
+            onRetry = viewModel::retryLastTurn,
             onSteerFollowUp = viewModel::steerQueuedFollowUp,
             onRemoveFollowUp = viewModel::removeQueuedFollowUp,
             onApproval = viewModel::answerApproval,
@@ -440,6 +446,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onTerminalOpened = viewModel::openProjectTerminal,
             onTerminalStop = viewModel::stopProjectTerminalCommand,
             onTerminalClear = viewModel::clearProjectTerminal,
+            onTerminalViewportChanged = viewModel::setProjectTerminalViewport,
             onTerminalConfirm = viewModel::confirmProjectTerminalCommand,
             onTerminalCancel = viewModel::cancelProjectTerminalCommand,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
@@ -2588,6 +2595,8 @@ private fun RootScreenHost(
                     onDiscoverModels = viewModel::discoverModels,
                     onValidateProvider = viewModel::validateProvider,
                     onSetThemeMode = viewModel::setThemeMode,
+                    onSetUiScale = viewModel::setUiScale,
+                    onSetTerminalFontSize = viewModel::setTerminalFontSize,
                     onSetLanguage = viewModel::setLanguage,
                     onPing = viewModel::pingApi,
                     onClearTerminal = viewModel::clearTerminal,
@@ -2635,6 +2644,7 @@ private fun RootScreenHost(
                 showThemeAction = false,
                 showQuickCommands = true,
                 compactHeader = true,
+                fontSize = state.terminalFontSize,
             )
         }
     }
@@ -4387,6 +4397,9 @@ private fun ReadOnlyProjectScreen(
                 onRemoveAttachment = {},
                 onOpenAttachment = {},
                 onRunInTerminal = {},
+                recovery = null,
+                onRetry = {},
+                onViewChanges = {},
                 readOnly = true,
                 readOnlyBlocked = state.isRunning || state.projectTerminalRunning,
                 onContinueHere = onContinueHere,
@@ -4402,6 +4415,7 @@ private fun WorkspaceScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
+    onRetry: () -> Unit,
     onSteerFollowUp: (String) -> Unit,
     onRemoveFollowUp: (String) -> Unit,
     onApproval: (Boolean) -> Unit,
@@ -4435,6 +4449,7 @@ private fun WorkspaceScreen(
     onTerminalOpened: () -> Unit,
     onTerminalStop: () -> Unit,
     onTerminalClear: () -> Unit,
+    onTerminalViewportChanged: (Int, Int) -> Unit,
     onTerminalConfirm: () -> Unit,
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
@@ -4724,7 +4739,11 @@ private fun WorkspaceScreen(
                         )
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                            if (selectedTab == WorkspaceTab.TERMINAL) {
+                                "${state.projectTerminalCwd} · ${stringResource(R.string.ws_terminal_environment)}"
+                            } else {
+                                "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}"
+                            },
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -4734,6 +4753,16 @@ private fun WorkspaceScreen(
                 },
                 navigationIcon = { IconButton(onClick = requestBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
                 actions = {
+                    if (selectedTab == WorkspaceTab.TERMINAL) {
+                        if (state.projectTerminalRunning) {
+                            IconButton(onClick = onTerminalStop) {
+                                Icon(Icons.Default.Stop, stringResource(R.string.chat_stop))
+                            }
+                        }
+                        IconButton(onClick = onTerminalClear) {
+                            Icon(Icons.Default.ClearAll, stringResource(R.string.ws_terminal_clear_output))
+                        }
+                    }
                     if (isAndroidProject) {
                         IconButton(
                             onClick = { showAndroidBuild = true },
@@ -4771,7 +4800,7 @@ private fun WorkspaceScreen(
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             when (selectedTab) {
                 WorkspaceTab.CHAT -> ChatTab(
                     state.messages,
@@ -4807,6 +4836,9 @@ private fun WorkspaceScreen(
                         onTerminalOpened()
                         onTerminalPrepare(command)
                     },
+                    recovery = state.recovery,
+                    onRetry = onRetry,
+                    onViewChanges = { selectedTab = WorkspaceTab.CHANGES },
                     queuedFollowUps = state.queuedFollowUps,
                     onSteerFollowUp = onSteerFollowUp,
                     onRemoveFollowUp = onRemoveFollowUp,
@@ -4861,7 +4893,6 @@ private fun WorkspaceScreen(
                     onToggleTheme = {},
                     themeMode = state.themeMode,
                     title = stringResource(R.string.workspace_project_terminal),
-                    subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
                     liveOutput = state.projectTerminalLiveOutput,
                     currentCommand = state.projectTerminalCommand,
                     commandDraft = state.projectTerminalDraft,
@@ -4871,6 +4902,9 @@ private fun WorkspaceScreen(
                     showThemeAction = false,
                     showQuickCommands = false,
                     compactHeader = true,
+                    showHeader = false,
+                    fontSize = state.terminalFontSize,
+                    onViewportSizeChanged = onTerminalViewportChanged,
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
@@ -6283,6 +6317,148 @@ private fun createCameraPhotoUri(context: Context): Uri {
 }
 
 @Composable
+private fun RecoveryBanner(
+    recovery: RecoveryUiState?,
+    isRunning: Boolean,
+    onRetry: () -> Unit,
+    onStop: () -> Unit,
+    onViewChanges: () -> Unit,
+) {
+    val mode = recoveryBannerMode(recovery)
+    val label = recoveryBannerLabel(
+        recovery = recovery,
+        reconnectingText = stringResource(R.string.vm_recovery_reconnecting),
+        attemptTemplate = stringResource(R.string.vm_recovery_attempt),
+        bannerTemplate = stringResource(R.string.vm_recovery_banner_attempt),
+        exhaustedText = stringResource(R.string.vm_recovery_exhausted),
+        failedText = stringResource(R.string.vm_recovery_failed),
+    )
+    val warningText = recoveryWarningText(
+        recovery = recovery,
+        warningText = stringResource(R.string.vm_recovery_side_effects),
+    )
+    var showRetryConfirmation by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(recovery) {
+        if (recovery == null) showRetryConfirmation = false
+    }
+
+    if (mode != null && label != null && recovery != null) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                // The visible Text is the announced source; a container description
+                // would make TalkBack read the sentence twice.
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            color = when (mode) {
+                RecoveryBannerMode.RECONNECTING -> MaterialTheme.colorScheme.tertiaryContainer
+                RecoveryBannerMode.EXHAUSTED -> MaterialTheme.colorScheme.errorContainer
+            },
+        ) {
+            when (mode) {
+                RecoveryBannerMode.RECONNECTING -> Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Decorative: the visible label already announces the reconnect state.
+                    CircularProgressIndicator(
+                        Modifier
+                            .size(18.dp)
+                            .clearAndSetSemantics {},
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = label,
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = onStop) {
+                        Text(stringResource(R.string.vm_recovery_stop))
+                    }
+                }
+                RecoveryBannerMode.EXHAUSTED -> RetryCard(
+                    recovery = recovery,
+                    label = label,
+                    isRunning = isRunning,
+                    onRetry = onRetry,
+                    onShowRetryConfirmation = { showRetryConfirmation = true },
+                    onViewChanges = onViewChanges,
+                )
+            }
+        }
+    }
+
+    if (showRetryConfirmation && warningText != null) {
+        AlertDialog(
+            onDismissRequest = { showRetryConfirmation = false },
+            text = { Text(warningText) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRetryConfirmation = false
+                    onRetry()
+                }) {
+                    Text(stringResource(R.string.vm_recovery_retry_anyway))
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        showRetryConfirmation = false
+                        onViewChanges()
+                    }) {
+                        Text(stringResource(R.string.vm_recovery_view_changes))
+                    }
+                    TextButton(onClick = { showRetryConfirmation = false }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RetryCard(
+    recovery: RecoveryUiState,
+    label: String,
+    isRunning: Boolean,
+    onRetry: () -> Unit,
+    onShowRetryConfirmation: () -> Unit,
+    onViewChanges: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (shouldOfferRetry(recovery, isRunning)) {
+                Button(
+                    onClick = {
+                        if (shouldWarnSideEffects(recovery)) onShowRetryConfirmation() else onRetry()
+                    },
+                ) {
+                    Text(stringResource(R.string.vm_recovery_retry))
+                }
+            }
+            TextButton(onClick = onViewChanges) {
+                Text(stringResource(R.string.vm_recovery_view_changes))
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChatTab(
     messages: List<ChatMessage>,
     approval: ToolRequest?,
@@ -6301,6 +6477,9 @@ private fun ChatTab(
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onRunInTerminal: (String) -> Unit,
+    recovery: RecoveryUiState?,
+    onRetry: () -> Unit,
+    onViewChanges: () -> Unit,
     onTakePhoto: () -> Unit = {},
     queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     onSteerFollowUp: (String) -> Unit = {},
@@ -6329,7 +6508,7 @@ private fun ChatTab(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(messages, key = { it.id }) { message ->
@@ -6389,6 +6568,13 @@ private fun ChatTab(
                 }
             }
         }
+        RecoveryBanner(
+            recovery = recovery,
+            isRunning = isRunning,
+            onRetry = onRetry,
+            onStop = onStop,
+            onViewChanges = onViewChanges,
+        )
         if (readOnly) {
             Surface(
                 color = MaterialTheme.colorScheme.background,
@@ -7032,7 +7218,7 @@ private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Uni
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth(if (message.fromUser) .82f else .92f),
+            modifier = Modifier.fillMaxWidth(if (message.fromUser) .9f else 1f),
         ) {
             Column(Modifier.padding(top = 12.dp)) {
                 SelectionContainer {

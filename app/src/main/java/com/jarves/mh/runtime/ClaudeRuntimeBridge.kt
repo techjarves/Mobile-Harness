@@ -12,8 +12,12 @@ import com.jarves.mh.model.DiffLineType
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.RecoveryDecision
+import com.jarves.mh.model.RecoveryFailureInfo
 import com.jarves.mh.model.RiskLevel
 import com.jarves.mh.model.RuntimeEvent
+import com.jarves.mh.model.RuntimeRecoveryContext
+import com.jarves.mh.model.RuntimeRecoveryProfile
 import com.jarves.mh.model.ToolRequest
 import java.io.File
 import java.io.RandomAccessFile
@@ -82,6 +86,9 @@ class ClaudeRuntimeBridge(
     @Volatile private var activeProcess: Process? = null
     @Volatile private var activeSessionId: String? = null
     @Volatile private var userStopRequested: Boolean = false
+    @Volatile private var sawToolCall: Boolean = false
+    @Volatile private var sawMutatingTool: Boolean = false
+    @Volatile private var lastSessionId: String? = null
     @Volatile private var activeProjectSlug: String? = null
     @Volatile private var taskStartedAtElapsedRealtime: Long = 0L
     @Volatile private var lastForegroundProgressAt: Long = 0L
@@ -93,9 +100,54 @@ class ClaudeRuntimeBridge(
     private var lastThinkingUpdateAt = 0L
     private var currentThinkingBlockId = 0L
 
+    override val recoveryProfile: RuntimeRecoveryProfile = CLAUDE_RECOVERY_PROFILE
+
+    override fun recoveryContext(sessionId: String, projectId: String): RuntimeRecoveryContext? {
+        // Report the real tracked flags even after the process died and
+        // `activeSessionId` was nulled: `lastSessionId` still names the failed
+        // session until the next `startSession` begins.
+        if (activeSessionId != sessionId && lastSessionId != sessionId) return null
+        return RuntimeRecoveryContext(
+            sessionId = sessionId,
+            // Claude Code runs one-shot `-p` turns: there is no live session to
+            // steer and no persisted handle to resume after the process is gone.
+            inPlaceContinuationAvailable = false,
+            persistedHandle = null,
+            toolsExecuted = sawToolCall,
+            mutatingToolsExecuted = sawMutatingTool,
+            interruptedToolOutcomeKnown = false,
+            checkpointAvailable = false,
+            userStopped = userStopRequested,
+        )
+    }
+
+    override suspend fun recover(action: RecoveryAction, decision: RecoveryDecision): Boolean {
+        return when (decision) {
+            RecoveryDecision.RETRY_NEW_SESSION_SAFE -> {
+                // Defense in depth on top of the policy: never auto-restart a turn
+                // that already ran tools, even if the caller chose the "safe" path.
+                // A missing context means the bridge cannot prove no tools ran, so it declines.
+                if (!canAutoRestartWithoutTools(recoveryContext(action.sessionId, action.projectId))) return false
+                startSession(
+                    action.projectId,
+                    action.projectSlug,
+                    action.projectKind,
+                    action.originalPrompt,
+                    action.history,
+                    action.provider,
+                )
+                true
+            }
+            else -> false
+        }
+    }
+
     override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
+        lastSessionId = sessionId
+        sawToolCall = false
+        sawMutatingTool = false
         activeSessionId = sessionId
         userStopRequested = false
         activeProjectSlug = projectSlug
@@ -118,7 +170,17 @@ class ClaudeRuntimeBridge(
             } else {
                 "No API key is saved for ${provider.kind.title}."
             }
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, message))
+            eventBus.emit(
+                RuntimeEvent.SessionFailed(
+                    sessionId,
+                    message,
+                    RecoveryFailureInfo(
+                        retryAvailable = !userStopRequested,
+                        sideEffectsPossible = sawMutatingTool,
+                        toolsExecuted = sawToolCall,
+                    ),
+                ),
+            )
             return@withContext sessionId
         }
 
@@ -456,6 +518,7 @@ class ClaudeRuntimeBridge(
                     val response = File(file.parentFile, "$approvalId.response")
                     response.writeText("allow")
 
+                    recordToolActivity(toolName)
                     eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, toolName, explanation))
                 }.onFailure {
                     File(file.parentFile, "$approvalId.response").writeText("allow")
@@ -562,6 +625,7 @@ class ClaudeRuntimeBridge(
                     if (block.optString("type") == "tool_result") {
                         val toolId = block.optString("tool_use_id")
                         val toolName = toolNames.remove(toolId) ?: "Tool"
+                        recordToolActivity(toolName)
                         val result = block.optString("content")
                             .ifBlank { if (block.optBoolean("is_error")) "Tool failed" else "Completed successfully" }
                         eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, toolName, sanitizeForDisplay(result)))
@@ -622,6 +686,7 @@ class ClaudeRuntimeBridge(
         val id = block.optString("id")
         if (id.isNotBlank() && !seenToolCalls.add(id)) return
         val name = block.optString("name", "Tool")
+        recordToolActivity(name)
         if (id.isNotBlank()) toolNames[id] = name
         val input = block.optJSONObject("input") ?: JSONObject()
         val detail = when (name) {
@@ -637,10 +702,19 @@ class ClaudeRuntimeBridge(
         pushForegroundProgress(R.string.rt_bridge_running_tool, name, detail.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { name })
     }
 
+    /** Session-scoped tool facts for the recovery policy; unknown names count as mutating. */
+    private fun recordToolActivity(name: String) {
+        sawToolCall = true
+        if (isClaudeMutatingTool(name)) sawMutatingTool = true
+    }
+
     private fun terminalStatus(line: String): Pair<String, String>? = null
 
     private suspend fun emitCompletedOnce(sessionId: String) {
         if (finishedSessions.add(sessionId)) {
+            // A completed session leaves no recovery facts behind: drop the handle so a
+            // later query cannot read stale tool flags for it.
+            if (lastSessionId == sessionId) lastSessionId = null
             eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
             // Post the completion notification immediately. Waiting for process
             // teardown is unsafe: the PRoot/Node wrapper can hang after the answer
@@ -655,7 +729,19 @@ class ClaudeRuntimeBridge(
 
     private suspend fun emitFailureOnce(sessionId: String, reason: String) {
         if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+            // Every terminal failure carries the side-effect facts so the manual
+            // retry card can warn; a user stop reports retryAvailable = false.
+            eventBus.emit(
+                RuntimeEvent.SessionFailed(
+                    sessionId,
+                    reason,
+                    RecoveryFailureInfo(
+                        retryAvailable = !userStopRequested,
+                        sideEffectsPossible = sawMutatingTool,
+                        toolsExecuted = sawToolCall,
+                    ),
+                ),
+            )
             if (userStopRequested) {
                 cancelForegroundRuntime()
             } else {
@@ -1128,3 +1214,9 @@ class ClaudeRuntimeBridge(
         )
     }
 }
+
+private val CLAUDE_READ_ONLY_TOOLS = setOf("read", "glob", "grep", "websearch", "webfetch")
+
+/** True for Claude tools that can mutate the workspace; unknown names default to mutating. */
+internal fun isClaudeMutatingTool(name: String): Boolean =
+    name.lowercase() !in CLAUDE_READ_ONLY_TOOLS

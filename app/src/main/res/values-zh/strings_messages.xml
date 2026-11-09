@@ -168,6 +168,19 @@
     <string name="vm_using_key">正在使用 %1$s</string>
     <string name="vm_task_interrupted">任务已中断</string>
     <string name="vm_task_interrupted_detail">代理进程在报告完成前已停止。继续此聊天即可恢复其官方会话。</string>
+    <string name="vm_transport_reconnecting">连接已断开。正在重新连接…</string>
+    <string name="vm_recovery_reconnecting">连接已断开。正在重新连接…</string>
+    <string name="vm_recovery_attempt">第 %1$d 次尝试，共 %2$d 次</string>
+    <string name="vm_recovery_exhausted">无法重新连接</string>
+    <string name="vm_recovery_retry">重试</string>
+    <string name="vm_recovery_stop">停止</string>
+    <string name="vm_recovery_view_changes">查看更改</string>
+    <string name="vm_recovery_side_effects">上一次尝试可能已执行操作。重试可能会重复执行这些操作。</string>
+    <string name="vm_recovery_retry_anyway">仍然重试</string>
+    <string name="vm_recovery_failed">任务未能完成</string>
+    <string name="vm_recovery_banner_attempt">%1$s (%2$s)</string>
+    <string name="md_reason_dsh_no_final_answer">DeepSeek Harness 已结束，但没有最终回答。</string>
+    <string name="vm_dsh_final_answer_retry">代理已结束，但没有最终消息。正在请求一条…</string>
     <plurals name="vm_agent_updates_available">
         <item quantity="other">有 %1$d 个代理更新可用</item>
     </plurals>
