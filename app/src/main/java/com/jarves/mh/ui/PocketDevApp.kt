@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -440,6 +441,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onTerminalOpened = viewModel::openProjectTerminal,
             onTerminalStop = viewModel::stopProjectTerminalCommand,
             onTerminalClear = viewModel::clearProjectTerminal,
+            onTerminalViewportChanged = viewModel::setProjectTerminalViewport,
             onTerminalConfirm = viewModel::confirmProjectTerminalCommand,
             onTerminalCancel = viewModel::cancelProjectTerminalCommand,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
@@ -2588,6 +2590,8 @@ private fun RootScreenHost(
                     onDiscoverModels = viewModel::discoverModels,
                     onValidateProvider = viewModel::validateProvider,
                     onSetThemeMode = viewModel::setThemeMode,
+                    onSetUiScale = viewModel::setUiScale,
+                    onSetTerminalFontSize = viewModel::setTerminalFontSize,
                     onSetLanguage = viewModel::setLanguage,
                     onPing = viewModel::pingApi,
                     onClearTerminal = viewModel::clearTerminal,
@@ -2635,6 +2639,7 @@ private fun RootScreenHost(
                 showThemeAction = false,
                 showQuickCommands = true,
                 compactHeader = true,
+                fontSize = state.terminalFontSize,
             )
         }
     }
@@ -4435,6 +4440,7 @@ private fun WorkspaceScreen(
     onTerminalOpened: () -> Unit,
     onTerminalStop: () -> Unit,
     onTerminalClear: () -> Unit,
+    onTerminalViewportChanged: (Int, Int) -> Unit,
     onTerminalConfirm: () -> Unit,
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
@@ -4724,7 +4730,11 @@ private fun WorkspaceScreen(
                         )
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                            if (selectedTab == WorkspaceTab.TERMINAL) {
+                                "${state.projectTerminalCwd} · ${stringResource(R.string.ws_terminal_environment)}"
+                            } else {
+                                "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}"
+                            },
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -4734,6 +4744,16 @@ private fun WorkspaceScreen(
                 },
                 navigationIcon = { IconButton(onClick = requestBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
                 actions = {
+                    if (selectedTab == WorkspaceTab.TERMINAL) {
+                        if (state.projectTerminalRunning) {
+                            IconButton(onClick = onTerminalStop) {
+                                Icon(Icons.Default.Stop, stringResource(R.string.chat_stop))
+                            }
+                        }
+                        IconButton(onClick = onTerminalClear) {
+                            Icon(Icons.Default.ClearAll, stringResource(R.string.ws_terminal_clear_output))
+                        }
+                    }
                     if (isAndroidProject) {
                         IconButton(
                             onClick = { showAndroidBuild = true },
@@ -4771,7 +4791,7 @@ private fun WorkspaceScreen(
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             when (selectedTab) {
                 WorkspaceTab.CHAT -> ChatTab(
                     state.messages,
@@ -4861,7 +4881,6 @@ private fun WorkspaceScreen(
                     onToggleTheme = {},
                     themeMode = state.themeMode,
                     title = stringResource(R.string.workspace_project_terminal),
-                    subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
                     liveOutput = state.projectTerminalLiveOutput,
                     currentCommand = state.projectTerminalCommand,
                     commandDraft = state.projectTerminalDraft,
@@ -4871,6 +4890,9 @@ private fun WorkspaceScreen(
                     showThemeAction = false,
                     showQuickCommands = false,
                     compactHeader = true,
+                    showHeader = false,
+                    fontSize = state.terminalFontSize,
+                    onViewportSizeChanged = onTerminalViewportChanged,
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
@@ -6329,7 +6351,7 @@ private fun ChatTab(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(messages, key = { it.id }) { message ->
@@ -7032,7 +7054,7 @@ private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Uni
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth(if (message.fromUser) .82f else .92f),
+            modifier = Modifier.fillMaxWidth(if (message.fromUser) .9f else 1f),
         ) {
             Column(Modifier.padding(top = 12.dp)) {
                 SelectionContainer {
