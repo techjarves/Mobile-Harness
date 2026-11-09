@@ -168,6 +168,8 @@
     <string name="vm_api_key_switched">API key switched</string>
     <string name="vm_using_key">Using %1$s</string>
     <string name="vm_transport_reconnecting">Connection lost. Reconnecting…</string>
+    <string name="md_reason_dsh_no_final_answer">DeepSeek Harness finished without a final answer.</string>
+    <string name="vm_dsh_final_answer_retry">The agent finished without a final message. Asking for one…</string>
     <string name="vm_task_interrupted">Task interrupted</string>
     <string name="vm_task_interrupted_detail">The agent process stopped before reporting completion. Continue this chat to resume its official session.</string>
     <plurals name="vm_agent_updates_available">

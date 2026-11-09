@@ -167,6 +167,8 @@
     <string name="vm_api_key_switched">Clave de API cambiada</string>
     <string name="vm_using_key">Usando %1$s</string>
     <string name="vm_transport_reconnecting">Conexión perdida. Reconectando…</string>
+    <string name="md_reason_dsh_no_final_answer">DeepSeek Harness terminó sin una respuesta final.</string>
+    <string name="vm_dsh_final_answer_retry">El agente terminó sin mensaje final. Pidiendo uno…</string>
     <string name="vm_task_interrupted">Tarea interrumpida</string>
     <string name="vm_task_interrupted_detail">El proceso del agente se detuvo antes de informar que terminó. Continúa este chat para reanudar su sesión oficial.</string>
     <plurals name="vm_agent_updates_available">

@@ -49,9 +49,7 @@ class TransportRetryTest {
 
     @Test
     fun stopFinalizesLocallyOnlyDuringRetryGap() {
-        assertFalse(shouldFinalizeStopLocally(null, false))
-        assertTrue(shouldFinalizeStopLocally(null, true))
-        assertTrue(shouldFinalizeStopLocally("session-1", true))
-        assertFalse(shouldFinalizeStopLocally("session-1", false))
+        assertFalse(shouldFinalizeStopLocally(false))
+        assertTrue(shouldFinalizeStopLocally(true))
     }
 }

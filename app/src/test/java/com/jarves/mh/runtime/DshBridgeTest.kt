@@ -261,6 +261,38 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun reasoningOnlyAssistantMessageIsIgnored() {
+        val event = parser.parseLine(sessionEvent("assistant/message", JSONObject()
+            .put("message", JSONObject().put("content", JSONArray().put(
+                JSONObject().put("type", "reasoning").put("text", "thinking it over"),
+            )))))
+
+        assertEquals(DshSdkProtocolEvent.Ignored, event)
+    }
+
+    @Test
+    fun nudgePromptAccepted() {
+        assertEquals(
+            DshSdkProtocolEvent.NudgeAccepted,
+            parser.parseLine("{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{}}"),
+        )
+    }
+
+    @Test
+    fun nudgePromptRejectedIsNotFailed() {
+        val event = parser.parseLine(
+            JSONObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 4)
+                .put("error", JSONObject().put("message", "session busy"))
+                .toString(),
+        )
+
+        assertTrue(event is DshSdkProtocolEvent.NudgeRejected)
+        assertEquals("session busy", (event as DshSdkProtocolEvent.NudgeRejected).message)
+    }
+
+    @Test
     fun nullTurnErrorUsesUsefulFallback() {
         val failed = parser.parseLine(
             sessionEvent(

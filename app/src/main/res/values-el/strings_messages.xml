@@ -169,6 +169,9 @@
     <string name="vm_using_key">Χρήση %1$s</string>
     <string name="vm_task_interrupted">Η εργασία διακόπηκε</string>
     <string name="vm_task_interrupted_detail">Η διεργασία του agent σταμάτησε πριν αναφέρει ολοκλήρωση. Συνεχίστε αυτήν τη συνομιλία για να συνεχιστεί η επίσημη συνεδρία του.</string>
+    <string name="vm_transport_reconnecting">Η σύνδεση χάθηκε. Επανασύνδεση…</string>
+    <string name="md_reason_dsh_no_final_answer">Το DeepSeek Harness ολοκληρώθηκε χωρίς τελική απάντηση.</string>
+    <string name="vm_dsh_final_answer_retry">Ο agent ολοκληρώθηκε χωρίς τελικό μήνυμα. Ζητείται ένα…</string>
     <plurals name="vm_agent_updates_available">
         <item quantity="one">%1$d διαθέσιμη ενημέρωση agent</item>
         <item quantity="other">%1$d διαθέσιμες ενημερώσεις agent</item>

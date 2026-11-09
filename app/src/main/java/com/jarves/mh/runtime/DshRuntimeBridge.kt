@@ -223,6 +223,8 @@ class DshRuntimeBridge(
         var inputClosed = false
         var discardingOversizedLine = false
         var failure = ""
+        val finalAnswer = FinalAnswerStateMachine()
+        var nudgeSentAt = 0L
 
         fun send(method: String, id: Int, params: JSONObject? = null) {
             val frame = JSONObject()
@@ -252,6 +254,59 @@ class DshRuntimeBridge(
             send("shutdown", SDK_SHUTDOWN_ID)
         }
 
+        suspend fun emitNoFinalAnswerThenFinish() {
+            if (shutdownSent) return
+            if (userStopRequested) {
+                finishTurnAndShutdown()
+                return
+            }
+            // Emit the closure before shutdown so the VM still accepts it; after
+            // SessionCompleted late AssistantDelta events are dropped.
+            eventBus.emit(
+                RuntimeEvent.AssistantDelta(
+                    sessionId,
+                    AppStrings.get(context, R.string.md_reason_dsh_no_final_answer),
+                ),
+            )
+            finishTurnAndShutdown()
+        }
+
+        suspend fun sendNudge() {
+            if (userStopRequested) {
+                finishTurnAndShutdown()
+                return
+            }
+            // Same-session prompt queuing is confirmed for the pinned dsh SDK
+            // (0.1.2-rc.1) per its published docs. Reusing the session avoids
+            // restarting a fresh one, which would re-run tools and duplicate work.
+            pushForegroundProgress(R.string.vm_dsh_final_answer_retry)
+            val wrote = runCatching {
+                send(
+                    method = "session/prompt",
+                    id = SDK_NUDGE_PROMPT_ID,
+                    params = JSONObject()
+                        .put("sessionId", sessionId)
+                        .put(
+                            "contentBlocks",
+                            JSONArray().put(
+                                JSONObject()
+                                    .put("type", "text")
+                                    .put("text", "You ended the turn without a user-facing answer. Provide the final status/answer now."),
+                            ),
+                        ),
+                )
+            }.isSuccess
+            if (wrote) {
+                nudgeSentAt = android.os.SystemClock.elapsedRealtime()
+            } else {
+                // The nudge write failed (e.g. Broken pipe on a dying session).
+                // Close with the localized fallback instead of letting the IO
+                // error escape runSdkSession and mask the turn's real failure.
+                Log.w("DshBridge", "Nudge write failed; closing with localized fallback")
+                emitNoFinalAnswerThenFinish()
+            }
+        }
+
         send(
             method = "initialize",
             id = SDK_INITIALIZE_ID,
@@ -277,40 +332,71 @@ class DshRuntimeBridge(
                     promptSent = true
                 }
                 DshSdkProtocolEvent.PromptAccepted -> Unit
+                DshSdkProtocolEvent.NudgeAccepted -> Unit
+                is DshSdkProtocolEvent.NudgeRejected -> {
+                    // The SDK refused the follow-up prompt. Close with a visible
+                    // fallback instead of restarting a session (which duplicates
+                    // tool work). Deliberately non-fatal, and guarded so a late
+                    // rejection after the watchdog already fired cannot re-emit.
+                    if (!shutdownSent) {
+                        when (finalAnswer.step(FinalAnswerEvent.NUDGE_REJECTED)) {
+                            FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
+                            else -> Unit
+                        }
+                    }
+                }
                 is DshSdkProtocolEvent.Status -> {
                     if (protocolEvent.running) {
                         sawRunning = true
                         pushForegroundProgress(R.string.rt_bridge_working, "DeepSeek Harness")
-                    } else if (sawRunning && !shutdownSent) {
-                        finishTurnAndShutdown()
+                        finalAnswer.step(FinalAnswerEvent.RUNNING)
+                    } else if (shouldEvaluateNudgeOnIdle(failure, sawRunning, shutdownSent)) {
+                        when (finalAnswer.step(FinalAnswerEvent.IDLE)) {
+                            FinalAnswerAction.SEND_NUDGE -> sendNudge()
+                            FinalAnswerAction.FINISH -> finishTurnAndShutdown()
+                            FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
+                            FinalAnswerAction.CONTINUE -> Unit
+                        }
                     }
                 }
                 is DshSdkProtocolEvent.Reasoning -> {
                     sawActivity = true
-                    emitReasoningSummary(
-                        sessionId = sessionId,
-                        text = protocolEvent.text,
-                        blockId = protocolEvent.blockId,
-                        startsNewBlock = protocolEvent.startsNewBlock,
-                        isFinal = protocolEvent.isFinal,
-                        force = protocolEvent.startsNewBlock || protocolEvent.isFinal,
-                    )
+                    finalAnswer.step(FinalAnswerEvent.REASONING)
+                    if (!shutdownSent) {
+                        emitReasoningSummary(
+                            sessionId = sessionId,
+                            text = protocolEvent.text,
+                            blockId = protocolEvent.blockId,
+                            startsNewBlock = protocolEvent.startsNewBlock,
+                            isFinal = protocolEvent.isFinal,
+                            force = protocolEvent.startsNewBlock || protocolEvent.isFinal,
+                        )
+                    }
                 }
                 is DshSdkProtocolEvent.ToolStarted -> {
                     sawActivity = true
-                    eventBus.emit(
-                        RuntimeEvent.ToolStarted(sessionId, protocolEvent.name, protocolEvent.detail),
-                    )
+                    finalAnswer.step(FinalAnswerEvent.TOOL_ACTIVITY)
+                    if (!shutdownSent) {
+                        eventBus.emit(
+                            RuntimeEvent.ToolStarted(sessionId, protocolEvent.name, protocolEvent.detail),
+                        )
+                    }
                 }
                 is DshSdkProtocolEvent.ToolCompleted -> {
                     sawActivity = true
-                    eventBus.emit(
-                        RuntimeEvent.ToolCompleted(sessionId, protocolEvent.name, protocolEvent.summary),
-                    )
+                    finalAnswer.step(FinalAnswerEvent.TOOL_COMPLETED)
+                    if (!shutdownSent) {
+                        eventBus.emit(
+                            RuntimeEvent.ToolCompleted(sessionId, protocolEvent.name, protocolEvent.summary),
+                        )
+                    }
                 }
                 is DshSdkProtocolEvent.AssistantText -> if (protocolEvent.text.isNotEmpty()) {
                     sawActivity = true
-                    eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, protocolEvent.text))
+                    finalAnswer.step(FinalAnswerEvent.ASSISTANT_TEXT)
+                    if (!shutdownSent) {
+                        eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, protocolEvent.text))
+                    }
                 }
                 is DshSdkProtocolEvent.Failed -> failure = protocolEvent.message
                 DshSdkProtocolEvent.TurnCompleted -> {
@@ -318,7 +404,12 @@ class DshRuntimeBridge(
                     // follow-up `session.status: idle` notification. Treat turn/end
                     // as authoritative so the UI cannot remain stuck in Running.
                     sawActivity = true
-                    finishTurnAndShutdown()
+                    when (finalAnswer.step(FinalAnswerEvent.TURN_END)) {
+                        FinalAnswerAction.SEND_NUDGE -> sendNudge()
+                        FinalAnswerAction.FINISH -> finishTurnAndShutdown()
+                        FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
+                        FinalAnswerAction.CONTINUE -> Unit
+                    }
                 }
                 DshSdkProtocolEvent.ShutdownAcknowledged -> closeInput()
                 DshSdkProtocolEvent.Ignored -> Unit
@@ -326,6 +417,24 @@ class DshRuntimeBridge(
         }
 
         while (process.isAlive || nativeProcess.outputFile.length() > outputOffset) {
+            // Nudge watchdog: if the follow-up prompt produced no turn end within
+            // the bound, close out instead of spinning forever on a withheld
+            // shutdown. It must bound both outcomes: without text it emits the
+            // localized fallback; with text it is a normal completion. Otherwise
+            // a nudge that answered but never sent turn/end would leave the loop
+            // spinning or exit as a misleading failure after showing the answer.
+            if (
+                !shutdownSent &&
+                nudgeSentAt > 0L &&
+                finalAnswer.nudgeOutstanding() &&
+                android.os.SystemClock.elapsedRealtime() - nudgeSentAt >= SDK_NUDGE_WATCHDOG_MS
+            ) {
+                when (finalAnswer.onNudgeWatchdogExpired()) {
+                    FinalAnswerAction.FINISH -> finishTurnAndShutdown()
+                    FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
+                    else -> Unit
+                }
+            }
             if (
                 process.isAlive &&
                 !forcedShutdown &&
@@ -710,10 +819,184 @@ class DshRuntimeBridge(
         private const val SDK_PROMPT_ID = 2
         private const val SDK_SHUTDOWN_ID = 3
         private const val SDK_SHUTDOWN_TIMEOUT_MS = 3_000L
+        private const val SDK_NUDGE_WATCHDOG_MS = 30_000L
     }
 }
 
 private data class DshSdkRunResult(val completed: Boolean, val failure: String)
+
+/**
+ * JSON-RPC id reserved for the follow-up `session/prompt` nudge sent when a turn
+ * completes without a user-facing answer. It must not collide with the primary
+ * prompt id (2), so its acceptance/rejection can be classified independently.
+ */
+private const val SDK_NUDGE_PROMPT_ID = 4
+
+/** True only when the turn ran, produced no assistant text since the last tool,
+ * and we have not already sent the follow-up nudge. */
+internal fun needsFinalAnswerNudge(
+    sawAssistantText: Boolean,
+    sawActivity: Boolean,
+    followUpNudgeSent: Boolean,
+): Boolean = sawActivity && !sawAssistantText && !followUpNudgeSent
+
+/**
+ * True when a trailing `session.status: idle` should still be evaluated for the
+ * no-final-answer nudge. A failed turn must not nudge: its `turn/end error(...)`
+ * already recorded [failure], and the idle that follows belongs to a dying
+ * session, so nudging a dead stream can throw (e.g. Broken pipe) and mask the
+ * real failure. The idle is only meaningful after the turn started running and
+ * before shutdown has begun.
+ */
+internal fun shouldEvaluateNudgeOnIdle(failure: String, sawRunning: Boolean, shutdownSent: Boolean): Boolean =
+    failure.isBlank() && sawRunning && !shutdownSent
+
+internal enum class FinalAnswerPhase { INITIAL, NUDGE_SENT, AFTER_NUDGE, DONE }
+
+internal enum class FinalAnswerEvent {
+    ASSISTANT_TEXT,
+    REASONING,
+    TOOL_ACTIVITY,
+    TOOL_COMPLETED,
+    TURN_END,
+    IDLE,
+    RUNNING,
+    NUDGE_REJECTED,
+}
+
+internal enum class FinalAnswerAction {
+    CONTINUE,
+    SEND_NUDGE,
+    FINISH,
+    EMIT_FALLBACK,
+}
+
+/**
+ * Pure per-session state machine driving the "turn ended without a final answer"
+ * recovery. It is intentionally free of coroutine/Android types so the full
+ * sequence can be unit-tested.
+ *
+ * Phases:
+ *  - INITIAL: first (only) prompt turn is in flight.
+ *  - NUDGE_SENT: follow-up prompt written; the original turn's trailing idle is
+ *    still on its way and must be ignored.
+ *  - AFTER_NUDGE: the nudge turn has started running (or ended); evaluate its result.
+ *  - DONE: a terminal decision was reached; ignore any trailing events.
+ */
+internal class FinalAnswerStateMachine {
+    var phase: FinalAnswerPhase = FinalAnswerPhase.INITIAL
+        private set
+
+    private var sawAssistantText = false
+    private var sawActivity = false
+    private var followUpNudgeSent = false
+    private var producedTextAfterNudge = false
+
+    fun step(event: FinalAnswerEvent): FinalAnswerAction = when (event) {
+        FinalAnswerEvent.ASSISTANT_TEXT -> {
+            sawAssistantText = true
+            sawActivity = true
+            // Any text after the nudge is the nudge turn's answer, even if the
+            // running signal was skipped.
+            if (phase == FinalAnswerPhase.NUDGE_SENT || phase == FinalAnswerPhase.AFTER_NUDGE) {
+                producedTextAfterNudge = true
+            }
+            FinalAnswerAction.CONTINUE
+        }
+        FinalAnswerEvent.REASONING -> {
+            sawActivity = true
+            FinalAnswerAction.CONTINUE
+        }
+        FinalAnswerEvent.TOOL_ACTIVITY -> {
+            sawActivity = true
+            FinalAnswerAction.CONTINUE
+        }
+        FinalAnswerEvent.TOOL_COMPLETED -> {
+            sawActivity = true
+            sawAssistantText = false
+            FinalAnswerAction.CONTINUE
+        }
+        FinalAnswerEvent.RUNNING -> {
+            if (phase == FinalAnswerPhase.NUDGE_SENT) phase = FinalAnswerPhase.AFTER_NUDGE
+            FinalAnswerAction.CONTINUE
+        }
+        FinalAnswerEvent.NUDGE_REJECTED -> {
+            // A rejection arriving after we already decided (watchdog, prior
+            // rejection, or a finished turn) must not re-emit the fallback.
+            if (phase == FinalAnswerPhase.DONE) FinalAnswerAction.CONTINUE
+            else {
+                phase = FinalAnswerPhase.DONE
+                FinalAnswerAction.EMIT_FALLBACK
+            }
+        }
+        FinalAnswerEvent.TURN_END -> when (phase) {
+            FinalAnswerPhase.INITIAL -> {
+                if (needsFinalAnswerNudge(sawAssistantText, sawActivity, followUpNudgeSent)) {
+                    followUpNudgeSent = true
+                    sawAssistantText = false
+                    phase = FinalAnswerPhase.NUDGE_SENT
+                    FinalAnswerAction.SEND_NUDGE
+                } else {
+                    phase = FinalAnswerPhase.DONE
+                    FinalAnswerAction.FINISH
+                }
+            }
+            FinalAnswerPhase.NUDGE_SENT -> {
+                phase = FinalAnswerPhase.AFTER_NUDGE
+                evaluateNudge()
+            }
+            FinalAnswerPhase.AFTER_NUDGE -> evaluateNudge()
+            FinalAnswerPhase.DONE -> FinalAnswerAction.CONTINUE
+        }
+        FinalAnswerEvent.IDLE -> when (phase) {
+            FinalAnswerPhase.INITIAL -> {
+                if (needsFinalAnswerNudge(sawAssistantText, sawActivity, followUpNudgeSent)) {
+                    followUpNudgeSent = true
+                    sawAssistantText = false
+                    phase = FinalAnswerPhase.NUDGE_SENT
+                    FinalAnswerAction.SEND_NUDGE
+                } else {
+                    phase = FinalAnswerPhase.DONE
+                    FinalAnswerAction.FINISH
+                }
+            }
+            // The idle that belongs to the original turn arrives right after its
+            // turn/end; ignore it so it cannot finish the turn before the nudge.
+            FinalAnswerPhase.NUDGE_SENT -> FinalAnswerAction.CONTINUE
+            FinalAnswerPhase.AFTER_NUDGE -> evaluateNudge()
+            FinalAnswerPhase.DONE -> FinalAnswerAction.CONTINUE
+        }
+    }
+
+    /** True while a follow-up nudge is outstanding (sent but not yet decided). */
+    fun nudgeOutstanding(): Boolean =
+        phase == FinalAnswerPhase.NUDGE_SENT || phase == FinalAnswerPhase.AFTER_NUDGE
+
+    /** Forces the terminal phase so late events from an already-shut-down turn
+     * cannot advance the machine or emit a second fallback/answer. */
+    fun markDone() {
+        phase = FinalAnswerPhase.DONE
+    }
+
+    /**
+     * Terminal decision when the nudge watchdog expires. With text the nudge is
+     * a normal completion (FINISH); without, the localized fallback
+     * (EMIT_FALLBACK). Idempotent: once decided, a late nudge event cannot
+     * re-decide or emit a second answer.
+     */
+    fun onNudgeWatchdogExpired(): FinalAnswerAction {
+        if (!nudgeOutstanding()) return FinalAnswerAction.CONTINUE
+        phase = FinalAnswerPhase.DONE
+        return if (producedTextAfterNudge) FinalAnswerAction.FINISH else FinalAnswerAction.EMIT_FALLBACK
+    }
+
+    private fun evaluateNudge(): FinalAnswerAction {
+        val action = if (producedTextAfterNudge) FinalAnswerAction.FINISH else FinalAnswerAction.EMIT_FALLBACK
+        phase = FinalAnswerPhase.DONE
+        return action
+    }
+}
+
 
 /** dsh provider route resolved from our saved provider profile. */
 internal data class DshRoute(
@@ -801,6 +1084,8 @@ internal object DshHeadlessParser {
 internal sealed interface DshSdkProtocolEvent {
     data object Initialized : DshSdkProtocolEvent
     data object PromptAccepted : DshSdkProtocolEvent
+    data object NudgeAccepted : DshSdkProtocolEvent
+    data class NudgeRejected(val message: String) : DshSdkProtocolEvent
     data class Status(val running: Boolean) : DshSdkProtocolEvent
     data class Reasoning(
         val blockId: Long,
@@ -852,14 +1137,20 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
         if (frame.has("id")) {
             val id = frame.optInt("id", -1)
             frame.optJSONObject("error")?.let { error ->
-                return DshSdkProtocolEvent.Failed(
-                    error.optString("message").meaningfulDshText("DeepSeek Harness SDK request $id failed"),
-                )
+                val message = error.optString("message").meaningfulDshText("DeepSeek Harness SDK request $id failed")
+                return if (id == SDK_NUDGE_PROMPT_ID) {
+                    // A rejected nudge must stay non-fatal: turning it into `Failed`
+                    // would mark an already-completed turn as SessionFailed.
+                    DshSdkProtocolEvent.NudgeRejected(message)
+                } else {
+                    DshSdkProtocolEvent.Failed(message)
+                }
             }
             return when (id) {
                 1 -> DshSdkProtocolEvent.Initialized
                 2 -> DshSdkProtocolEvent.PromptAccepted
                 3 -> DshSdkProtocolEvent.ShutdownAcknowledged
+                SDK_NUDGE_PROMPT_ID -> DshSdkProtocolEvent.NudgeAccepted
                 else -> DshSdkProtocolEvent.Ignored
             }
         }

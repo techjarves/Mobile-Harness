@@ -168,6 +168,9 @@
     <string name="vm_using_key">يتم استخدام %1$s</string>
     <string name="vm_task_interrupted">تمت مقاطعة المهمة</string>
     <string name="vm_task_interrupted_detail">توقفت عملية الوكيل قبل الإبلاغ عن الاكتمال. تابع هذه المحادثة لاستئناف جلستها الرسمية.</string>
+    <string name="vm_transport_reconnecting">انقطع الاتصال. جارٍ إعادة الاتصال…</string>
+    <string name="md_reason_dsh_no_final_answer">انتهى DeepSeek Harness دون إجابة نهائية.</string>
+    <string name="vm_dsh_final_answer_retry">انتهى الوكيل دون رسالة نهائية. جارٍ طلب واحدة…</string>
     <plurals name="vm_agent_updates_available">
         <item quantity="zero">لا توجد تحديثات للوكلاء</item>
         <item quantity="one">يتوفر تحديث واحد للوكلاء (%1$d)</item>
