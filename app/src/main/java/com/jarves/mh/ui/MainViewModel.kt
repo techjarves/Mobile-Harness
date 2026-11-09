@@ -295,9 +295,17 @@ internal fun shouldHandleTransportFailure(reason: String, recovery: RecoveryFail
 internal fun shouldOfferRetry(recovery: RecoveryFailureInfo?, isRunning: Boolean): Boolean =
     recovery?.retryAvailable == true && !isRunning
 
+/** True when the recovery UI offers retry and no session is currently running. */
+internal fun shouldOfferRetry(recovery: RecoveryUiState?, isRunning: Boolean): Boolean =
+    recovery?.retryAvailable == true && !isRunning
+
 /** True when the failed turn ran mutating tools, so repeating it may duplicate side effects. */
 internal fun shouldWarnSideEffects(recovery: RecoveryFailureInfo?): Boolean =
     recovery?.sideEffectsPossible == true
+
+/** True when the failed turn ran any tools, so retry confirmation is required. */
+internal fun shouldWarnSideEffects(recovery: RecoveryUiState?): Boolean =
+    recovery?.toolsExecuted == true
 
 /**
  * Effective recovery facts for a terminal `SessionFailed`. A resolved user stop returns null,
@@ -394,6 +402,57 @@ data class RecoveryUiState(
     val retryAvailable: Boolean,
     val sideEffectsPossible: Boolean,
     val toolsExecuted: Boolean,
+)
+
+internal enum class RecoveryBannerMode {
+    RECONNECTING,
+    EXHAUSTED,
+}
+
+internal fun recoveryBannerMode(recovery: RecoveryUiState?): RecoveryBannerMode? = when {
+    recovery == null -> null
+    recovery.retryAvailable -> RecoveryBannerMode.EXHAUSTED
+    recovery.decision == RecoveryDecision.CONTINUE_IN_PLACE ||
+        recovery.decision == RecoveryDecision.RESUME_PERSISTED ||
+        recovery.decision == RecoveryDecision.RETRY_NEW_SESSION_SAFE -> RecoveryBannerMode.RECONNECTING
+    else -> null
+}
+
+internal fun recoveryBannerLabel(
+    recovery: RecoveryUiState?,
+    reconnectingText: String,
+    attemptTemplate: String,
+    exhaustedText: String,
+): String? {
+    val state = recovery ?: return null
+    return when (recoveryBannerMode(state)) {
+        RecoveryBannerMode.RECONNECTING -> {
+            val attempt = attemptTemplate.format(state.attempt, state.maxAttempts)
+            "$reconnectingText ($attempt)"
+        }
+        RecoveryBannerMode.EXHAUSTED -> exhaustedText
+        null -> null
+    }
+}
+
+internal fun recoveryWarningText(recovery: RecoveryUiState?, warningText: String): String? =
+    if (shouldWarnSideEffects(recovery)) warningText else null
+
+internal const val TRANSPORT_RETRY_MAX_ATTEMPTS = 2
+
+internal fun recoveryUiStateForFallbackAttempt(
+    decision: RecoveryDecision,
+    attempt: Int,
+    reason: String,
+    recovery: RecoveryFailureInfo,
+): RecoveryUiState = RecoveryUiState(
+    decision = decision,
+    attempt = attempt,
+    maxAttempts = TRANSPORT_RETRY_MAX_ATTEMPTS,
+    reason = reason,
+    retryAvailable = false,
+    sideEffectsPossible = recovery.sideEffectsPossible,
+    toolsExecuted = recovery.toolsExecuted,
 )
 
 internal fun recoveryUiStateFromEvent(event: RuntimeEvent.RecoveryStateChanged): RecoveryUiState =
@@ -5628,6 +5687,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // new-session retries at 5 s then 15 s before exhausting into manual retry.
         val delayMillis = transportRetryDelayMillis(transportRetryAttempts) ?: return false
         transportRetryAttempts += 1
+        val attempt = transportRetryAttempts
         val generation = ++transportRetryGeneration
         transportRetryWaiting = true
         transportRetryingFromSessionId = event.sessionId
@@ -5639,6 +5699,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             committed.copy(
                 activeSessionId = null,
                 pendingApproval = null,
+                recovery = recoveryUiStateForFallbackAttempt(decision, attempt, event.reason, effectiveInfo),
                 activity = listOf(ActivityItem(str(R.string.vm_transport_reconnecting), "", isComplete = false)) + committed.activity,
                 liveProcess = listOf(ActivityItem(str(R.string.vm_transport_reconnecting), "", isComplete = false)),
             )

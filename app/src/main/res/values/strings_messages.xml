@@ -168,6 +168,14 @@
     <string name="vm_api_key_switched">API key switched</string>
     <string name="vm_using_key">Using %1$s</string>
     <string name="vm_transport_reconnecting">Connection lost. Reconnecting…</string>
+    <string name="vm_recovery_reconnecting">Connection lost. Reconnecting…</string>
+    <string name="vm_recovery_attempt">Attempt %1$d of %2$d</string>
+    <string name="vm_recovery_exhausted">Could not reconnect</string>
+    <string name="vm_recovery_retry">Retry</string>
+    <string name="vm_recovery_stop">Stop</string>
+    <string name="vm_recovery_view_changes">View changes</string>
+    <string name="vm_recovery_side_effects">The previous attempt may have run actions. Retrying may repeat them.</string>
+    <string name="vm_recovery_retry_anyway">Retry anyway</string>
     <string name="md_reason_dsh_no_final_answer">DeepSeek Harness finished without a final answer.</string>
     <string name="vm_dsh_final_answer_retry">The agent finished without a final message. Asking for one…</string>
     <string name="vm_task_interrupted">Task interrupted</string>

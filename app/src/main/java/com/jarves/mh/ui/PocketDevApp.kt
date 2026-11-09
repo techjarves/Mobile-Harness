@@ -258,6 +258,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
@@ -408,6 +412,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
             onStop = viewModel::stopTask,
+            onRetry = viewModel::retryLastTurn,
             onSteerFollowUp = viewModel::steerQueuedFollowUp,
             onRemoveFollowUp = viewModel::removeQueuedFollowUp,
             onApproval = viewModel::answerApproval,
@@ -4392,6 +4397,9 @@ private fun ReadOnlyProjectScreen(
                 onRemoveAttachment = {},
                 onOpenAttachment = {},
                 onRunInTerminal = {},
+                recovery = null,
+                onRetry = {},
+                onViewChanges = {},
                 readOnly = true,
                 readOnlyBlocked = state.isRunning || state.projectTerminalRunning,
                 onContinueHere = onContinueHere,
@@ -4407,6 +4415,7 @@ private fun WorkspaceScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
+    onRetry: () -> Unit,
     onSteerFollowUp: (String) -> Unit,
     onRemoveFollowUp: (String) -> Unit,
     onApproval: (Boolean) -> Unit,
@@ -4827,6 +4836,9 @@ private fun WorkspaceScreen(
                         onTerminalOpened()
                         onTerminalPrepare(command)
                     },
+                    recovery = state.recovery,
+                    onRetry = onRetry,
+                    onViewChanges = { selectedTab = WorkspaceTab.CHANGES },
                     queuedFollowUps = state.queuedFollowUps,
                     onSteerFollowUp = onSteerFollowUp,
                     onRemoveFollowUp = onRemoveFollowUp,
@@ -6305,6 +6317,141 @@ private fun createCameraPhotoUri(context: Context): Uri {
 }
 
 @Composable
+private fun RecoveryBanner(
+    recovery: RecoveryUiState?,
+    isRunning: Boolean,
+    onRetry: () -> Unit,
+    onStop: () -> Unit,
+    onViewChanges: () -> Unit,
+) {
+    val mode = recoveryBannerMode(recovery)
+    val label = recoveryBannerLabel(
+        recovery = recovery,
+        reconnectingText = stringResource(R.string.vm_recovery_reconnecting),
+        attemptTemplate = stringResource(R.string.vm_recovery_attempt),
+        exhaustedText = stringResource(R.string.vm_recovery_exhausted),
+    )
+    val warningText = recoveryWarningText(
+        recovery = recovery,
+        warningText = stringResource(R.string.vm_recovery_side_effects),
+    )
+    var showRetryConfirmation by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(recovery) {
+        if (recovery == null) showRetryConfirmation = false
+    }
+
+    if (mode != null && label != null && recovery != null) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = label
+                    liveRegion = LiveRegionMode.Polite
+                },
+            color = when (mode) {
+                RecoveryBannerMode.RECONNECTING -> MaterialTheme.colorScheme.tertiaryContainer
+                RecoveryBannerMode.EXHAUSTED -> MaterialTheme.colorScheme.errorContainer
+            },
+        ) {
+            when (mode) {
+                RecoveryBannerMode.RECONNECTING -> Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = label,
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = onStop) {
+                        Text(stringResource(R.string.vm_recovery_stop))
+                    }
+                }
+                RecoveryBannerMode.EXHAUSTED -> RetryCard(
+                    recovery = recovery,
+                    label = label,
+                    isRunning = isRunning,
+                    onRetry = onRetry,
+                    onShowRetryConfirmation = { showRetryConfirmation = true },
+                    onViewChanges = onViewChanges,
+                )
+            }
+        }
+    }
+
+    if (showRetryConfirmation && warningText != null) {
+        AlertDialog(
+            onDismissRequest = { showRetryConfirmation = false },
+            text = { Text(warningText) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRetryConfirmation = false
+                    onRetry()
+                }) {
+                    Text(stringResource(R.string.vm_recovery_retry_anyway))
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        showRetryConfirmation = false
+                        onViewChanges()
+                    }) {
+                        Text(stringResource(R.string.vm_recovery_view_changes))
+                    }
+                    TextButton(onClick = { showRetryConfirmation = false }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RetryCard(
+    recovery: RecoveryUiState,
+    label: String,
+    isRunning: Boolean,
+    onRetry: () -> Unit,
+    onShowRetryConfirmation: () -> Unit,
+    onViewChanges: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (shouldOfferRetry(recovery, isRunning)) {
+                Button(
+                    onClick = {
+                        if (shouldWarnSideEffects(recovery)) onShowRetryConfirmation() else onRetry()
+                    },
+                ) {
+                    Text(stringResource(R.string.vm_recovery_retry))
+                }
+            }
+            TextButton(onClick = onViewChanges) {
+                Text(stringResource(R.string.vm_recovery_view_changes))
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChatTab(
     messages: List<ChatMessage>,
     approval: ToolRequest?,
@@ -6323,6 +6470,9 @@ private fun ChatTab(
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onRunInTerminal: (String) -> Unit,
+    recovery: RecoveryUiState?,
+    onRetry: () -> Unit,
+    onViewChanges: () -> Unit,
     onTakePhoto: () -> Unit = {},
     queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     onSteerFollowUp: (String) -> Unit = {},
@@ -6411,6 +6561,13 @@ private fun ChatTab(
                 }
             }
         }
+        RecoveryBanner(
+            recovery = recovery,
+            isRunning = isRunning,
+            onRetry = onRetry,
+            onStop = onStop,
+            onViewChanges = onViewChanges,
+        )
         if (readOnly) {
             Surface(
                 color = MaterialTheme.colorScheme.background,

@@ -55,7 +55,7 @@ class RecoveryStateTest {
         assertTrue(shouldOfferRetry(available, isRunning = false))
         assertFalse(shouldOfferRetry(available, isRunning = true))
         assertFalse(shouldOfferRetry(unavailable, isRunning = false))
-        assertFalse(shouldOfferRetry(null, isRunning = false))
+        assertFalse(shouldOfferRetry(null as RecoveryFailureInfo?, isRunning = false))
     }
 
     @Test
@@ -64,7 +64,7 @@ class RecoveryStateTest {
         val clean = RecoveryFailureInfo(retryAvailable = true, sideEffectsPossible = false, toolsExecuted = false)
         assertTrue(shouldWarnSideEffects(ran))
         assertFalse(shouldWarnSideEffects(clean))
-        assertFalse(shouldWarnSideEffects(null))
+        assertFalse(shouldWarnSideEffects(null as RecoveryFailureInfo?))
     }
 
     @Test

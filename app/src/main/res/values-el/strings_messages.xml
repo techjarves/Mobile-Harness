@@ -170,6 +170,14 @@
     <string name="vm_task_interrupted">Η εργασία διακόπηκε</string>
     <string name="vm_task_interrupted_detail">Η διεργασία του agent σταμάτησε πριν αναφέρει ολοκλήρωση. Συνεχίστε αυτήν τη συνομιλία για να συνεχιστεί η επίσημη συνεδρία του.</string>
     <string name="vm_transport_reconnecting">Η σύνδεση χάθηκε. Επανασύνδεση…</string>
+    <string name="vm_recovery_reconnecting">Η σύνδεση χάθηκε. Επανασύνδεση…</string>
+    <string name="vm_recovery_attempt">Προσπάθεια %1$d από %2$d</string>
+    <string name="vm_recovery_exhausted">Δεν ήταν δυνατή η επανασύνδεση</string>
+    <string name="vm_recovery_retry">Επανάληψη</string>
+    <string name="vm_recovery_stop">Διακοπή</string>
+    <string name="vm_recovery_view_changes">Προβολή αλλαγών</string>
+    <string name="vm_recovery_side_effects">Η προηγούμενη προσπάθεια ενδέχεται να εκτέλεσε ενέργειες. Η επανάληψη μπορεί να τις επαναλάβει.</string>
+    <string name="vm_recovery_retry_anyway">Επανάληψη ούτως ή άλλως</string>
     <string name="md_reason_dsh_no_final_answer">Το DeepSeek Harness ολοκληρώθηκε χωρίς τελική απάντηση.</string>
     <string name="vm_dsh_final_answer_retry">Ο agent ολοκληρώθηκε χωρίς τελικό μήνυμα. Ζητείται ένα…</string>
     <plurals name="vm_agent_updates_available">
