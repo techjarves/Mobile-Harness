@@ -12,6 +12,8 @@ import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
+import com.jarves.mh.model.RuntimeRecoveryContext
+import com.jarves.mh.model.RuntimeRecoveryProfile
 import com.jarves.mh.model.ToolRequest
 import java.io.File
 import java.io.RandomAccessFile
@@ -58,6 +60,20 @@ class DshRuntimeBridge(
     @Volatile private var lastForegroundProgressAt: Long = 0L
     @Volatile private var foregroundResultPosted: Boolean = false
     @Volatile private var lastThinkingUpdateAt: Long = 0L
+
+    override val recoveryProfile: RuntimeRecoveryProfile = DSH_RECOVERY_PROFILE
+
+    override fun recoveryContext(sessionId: String, projectId: String): RuntimeRecoveryContext? =
+        if (activeSessionId != sessionId) null else RuntimeRecoveryContext(
+            sessionId = sessionId,
+            inPlaceContinuationAvailable = false, // Task 2/5 refine this
+            persistedHandle = null,
+            toolsExecuted = false,
+            mutatingToolsExecuted = false,
+            interruptedToolOutcomeKnown = false,
+            checkpointAvailable = false,
+            userStopped = userStopRequested,
+        )
 
     override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()

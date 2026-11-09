@@ -5360,6 +5360,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         currentTaskRequest = null,
                     )
                 }
+                // Task 3 owns the recovery UI state; until then the event is a no-op.
+                is RuntimeEvent.RecoveryStateChanged -> current
             }
         }
         if (terminalEventForActiveSession) {
