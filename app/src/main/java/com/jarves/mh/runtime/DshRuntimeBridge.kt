@@ -245,7 +245,7 @@ class DshRuntimeBridge(
 
         fun finishTurnAndShutdown() {
             if (shutdownSent) return
-            completed = sawActivity && failure.isBlank()
+            completed = turnCompleted(sawActivity, failure)
             if (!completed && failure.isBlank()) {
                 failure = "DeepSeek Harness stopped before processing the prompt"
             }
@@ -398,7 +398,18 @@ class DshRuntimeBridge(
                         eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, protocolEvent.text))
                     }
                 }
-                is DshSdkProtocolEvent.Failed -> failure = protocolEvent.message
+                is DshSdkProtocolEvent.Failed -> {
+                    failure = protocolEvent.message
+                    // Terminal: a transport/agent error can never complete the turn, so
+                    // shut the session down instead of waiting on a live DSH server that
+                    // is still awaiting prompts (the read loop would spin forever).
+                    // `finishTurnAndShutdown` is idempotent and computes
+                    // `completed = turnCompleted(sawActivity, failure)` (false here),
+                    // preserving the non-blank failure and sending `shutdown`; the
+                    // forced-shutdown watchdog then guarantees the process exits so
+                    // `emitFailureOnce` runs and the transport retry path can fire.
+                    finishTurnAndShutdown()
+                }
                 DshSdkProtocolEvent.TurnCompleted -> {
                     // Some dsh builds finish a turn without publishing the expected
                     // follow-up `session.status: idle` notification. Treat turn/end
@@ -839,6 +850,15 @@ internal fun needsFinalAnswerNudge(
     sawActivity: Boolean,
     followUpNudgeSent: Boolean,
 ): Boolean = sawActivity && !sawAssistantText && !followUpNudgeSent
+
+/**
+ * Computes the `completed` flag recorded when a turn ends. A non-blank failure
+ * always yields `false` — the turn is terminal-but-failed — regardless of any
+ * activity seen before the failure. This is the pure core of the result
+ * computation in `finishTurnAndShutdown`; the shutdown side effect stays there.
+ */
+internal fun turnCompleted(sawActivity: Boolean, failure: String): Boolean =
+    sawActivity && failure.isBlank()
 
 /**
  * True when a trailing `session.status: idle` should still be evaluated for the

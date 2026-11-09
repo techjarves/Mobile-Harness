@@ -5446,6 +5446,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeSessionId = null,
                 pendingApproval = null,
                 activity = listOf(ActivityItem(str(R.string.vm_transport_reconnecting), "", isComplete = false)) + committed.activity,
+                liveProcess = listOf(ActivityItem(str(R.string.vm_transport_reconnecting), "", isComplete = false)),
             )
         }
         transportRetryJob = viewModelScope.launch {

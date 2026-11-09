@@ -139,6 +139,14 @@ class FinalAnswerStateMachineTest {
     }
 
     @Test
+    fun failureIsTerminalAndNeverCompletedEvenAfterActivity() {
+        assertFalse(turnCompleted(sawActivity = true, failure = "Connection error."))
+        assertFalse(turnCompleted(sawActivity = false, failure = "Connection error."))
+        assertTrue(turnCompleted(sawActivity = true, failure = ""))
+        assertFalse(turnCompleted(sawActivity = false, failure = ""))
+    }
+
+    @Test
     fun nudgeWatchdogWithTextFinishesWithoutFallback() {
         val sm = FinalAnswerStateMachine()
         sm.step(FinalAnswerEvent.REASONING)
