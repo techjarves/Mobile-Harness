@@ -177,6 +177,8 @@
     <string name="vm_recovery_view_changes">查看更改</string>
     <string name="vm_recovery_side_effects">上一次尝试可能已执行操作。重试可能会重复执行这些操作。</string>
     <string name="vm_recovery_retry_anyway">仍然重试</string>
+    <string name="vm_recovery_failed">任务未能完成</string>
+    <string name="vm_recovery_banner_attempt">%1$s (%2$s)</string>
     <string name="md_reason_dsh_no_final_answer">DeepSeek Harness 已结束，但没有最终回答。</string>
     <string name="vm_dsh_final_answer_retry">代理已结束，但没有最终消息。正在请求一条…</string>
     <plurals name="vm_agent_updates_available">

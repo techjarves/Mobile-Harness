@@ -423,15 +423,22 @@ internal fun recoveryBannerLabel(
     recovery: RecoveryUiState?,
     reconnectingText: String,
     attemptTemplate: String,
+    bannerTemplate: String,
     exhaustedText: String,
+    failedText: String,
 ): String? {
     val state = recovery ?: return null
     return when (recoveryBannerMode(state)) {
         RecoveryBannerMode.RECONNECTING -> {
             val attempt = attemptTemplate.format(state.attempt, state.maxAttempts)
-            "$reconnectingText ($attempt)"
+            // The bracket/parenthesis composition lives in the resource so translators
+            // can flip it for RTL or restyle it for CJK.
+            bannerTemplate.format(reconnectingText, attempt)
         }
-        RecoveryBannerMode.EXHAUSTED -> exhaustedText
+        // Only a transport failure can honestly say "could not reconnect"; a credential,
+        // installer, or agent error keeps the generic title.
+        RecoveryBannerMode.EXHAUSTED ->
+            if (isTransportFailure(state.reason)) exhaustedText else failedText
         null -> null
     }
 }

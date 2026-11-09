@@ -14,6 +14,7 @@ class RecoveryUiTextTest {
         decision: RecoveryDecision? = null,
         attempt: Int = 1,
         maxAttempts: Int = 2,
+        reason: String = "transport failure",
         retryAvailable: Boolean = true,
         sideEffectsPossible: Boolean = false,
         toolsExecuted: Boolean = false,
@@ -21,10 +22,26 @@ class RecoveryUiTextTest {
         decision = decision,
         attempt = attempt,
         maxAttempts = maxAttempts,
-        reason = "transport failure",
+        reason = reason,
         retryAvailable = retryAvailable,
         sideEffectsPossible = sideEffectsPossible,
         toolsExecuted = toolsExecuted,
+    )
+
+    private fun bannerLabel(
+        state: RecoveryUiState?,
+        reconnecting: String = "Conexión perdida. Reconectando…",
+        attempt: String = "Intento %1\$d de %2\$d",
+        banner: String = "%1\$s (%2\$s)",
+        exhausted: String = "No se pudo reconectar",
+        failed: String = "No se pudo completar",
+    ) = recoveryBannerLabel(
+        recovery = state,
+        reconnectingText = reconnecting,
+        attemptTemplate = attempt,
+        bannerTemplate = banner,
+        exhaustedText = exhausted,
+        failedText = failed,
     )
 
     @Test
@@ -36,11 +53,24 @@ class RecoveryUiTextTest {
 
         assertEquals(
             "Conexión perdida. Reconectando… (Intento 1 de 2)",
-            recoveryBannerLabel(
-                recovery = state,
-                reconnectingText = "Conexión perdida. Reconectando…",
-                attemptTemplate = "Intento %1\$d de %2\$d",
-                exhaustedText = "No se pudo reconectar",
+            bannerLabel(state),
+        )
+    }
+
+    @Test
+    fun bannerAttemptComesFromTheTemplateNotConcatenation() {
+        val state = recovery(
+            decision = RecoveryDecision.RETRY_NEW_SESSION_SAFE,
+            attempt = 2,
+            retryAvailable = false,
+        )
+
+        assertEquals(
+            "Reconectando… [Intento 2 de 2]",
+            bannerLabel(
+                state,
+                reconnecting = "Reconectando…",
+                banner = "%1\$s [%2\$s]",
             ),
         )
     }
@@ -49,11 +79,16 @@ class RecoveryUiTextTest {
     fun exhaustedLabelOffersRetry() {
         assertEquals(
             "No se pudo reconectar",
-            recoveryBannerLabel(
-                recovery = recovery(),
-                reconnectingText = "Conexión perdida. Reconectando…",
-                attemptTemplate = "Intento %1\$d de %2\$d",
-                exhaustedText = "No se pudo reconectar",
+            bannerLabel(recovery(reason = "Connection error.")),
+        )
+    }
+
+    @Test
+    fun nonTransportFailureShowsGenericTitle() {
+        assertEquals(
+            "No se pudo completar",
+            bannerLabel(
+                recovery(reason = "No hay ninguna clave de API guardada para OpenRouter."),
             ),
         )
     }

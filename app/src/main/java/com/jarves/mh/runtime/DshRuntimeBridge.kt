@@ -896,6 +896,9 @@ class DshRuntimeBridge(
 
     private suspend fun emitCompletedOnce(sessionId: String) {
         if (finishedSessions.add(sessionId)) {
+            // A completed session leaves no recovery facts behind: drop the handle so a
+            // later query cannot read stale tool flags for it.
+            if (lastSessionId == sessionId) lastSessionId = null
             eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
             finishForegroundRuntime(
                 completed = true,

@@ -178,6 +178,8 @@
     <string name="vm_recovery_view_changes">Προβολή αλλαγών</string>
     <string name="vm_recovery_side_effects">Η προηγούμενη προσπάθεια ενδέχεται να εκτέλεσε ενέργειες. Η επανάληψη μπορεί να τις επαναλάβει.</string>
     <string name="vm_recovery_retry_anyway">Επανάληψη ούτως ή άλλως</string>
+    <string name="vm_recovery_failed">Δεν ήταν δυνατή η ολοκλήρωση της εργασίας</string>
+    <string name="vm_recovery_banner_attempt">%1$s (%2$s)</string>
     <string name="md_reason_dsh_no_final_answer">Το DeepSeek Harness ολοκληρώθηκε χωρίς τελική απάντηση.</string>
     <string name="vm_dsh_final_answer_retry">Ο agent ολοκληρώθηκε χωρίς τελικό μήνυμα. Ζητείται ένα…</string>
     <plurals name="vm_agent_updates_available">

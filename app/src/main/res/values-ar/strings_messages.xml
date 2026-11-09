@@ -177,6 +177,8 @@
     <string name="vm_recovery_view_changes">عرض التغييرات</string>
     <string name="vm_recovery_side_effects">ربما نفّذت المحاولة السابقة إجراءات. قد تؤدي إعادة المحاولة إلى تكرارها.</string>
     <string name="vm_recovery_retry_anyway">إعادة المحاولة على أي حال</string>
+    <string name="vm_recovery_failed">تعذر إكمال المهمة</string>
+    <string name="vm_recovery_banner_attempt">%1$s (%2$s)</string>
     <string name="md_reason_dsh_no_final_answer">انتهى DeepSeek Harness دون إجابة نهائية.</string>
     <string name="vm_dsh_final_answer_retry">انتهى الوكيل دون رسالة نهائية. جارٍ طلب واحدة…</string>
     <plurals name="vm_agent_updates_available">

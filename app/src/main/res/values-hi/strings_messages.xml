@@ -177,6 +177,8 @@
     <string name="vm_recovery_view_changes">बदलाव देखें</string>
     <string name="vm_recovery_side_effects">पिछले प्रयास में कुछ क्रियाएँ चली हो सकती हैं। फिर से प्रयास करने पर वे दोबारा चल सकती हैं।</string>
     <string name="vm_recovery_retry_anyway">फिर भी पुनः प्रयास करें</string>
+    <string name="vm_recovery_failed">कार्य पूरा नहीं हो सका</string>
+    <string name="vm_recovery_banner_attempt">%1$s (%2$s)</string>
     <string name="md_reason_dsh_no_final_answer">DeepSeek Harness बिना अंतिम उत्तर के समाप्त हो गया।</string>
     <string name="vm_dsh_final_answer_retry">एजेंट बिना अंतिम संदेश के समाप्त हो गया। एक संदेश माँगा जा रहा है…</string>
     <plurals name="vm_agent_updates_available">

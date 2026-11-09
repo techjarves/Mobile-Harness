@@ -28,6 +28,10 @@ private val DarkColors = darkColorScheme(
     onSecondary = Color(0xFF001F58),
     tertiary = PocketGreen,
     onTertiary = Color(0xFF00391E),
+    // Amber "reconnecting" surface. Only the recovery banner uses this token, and the
+    // Material default is a mauve that does not read as "connection in progress".
+    tertiaryContainer = Color(0xFF4A3A12),
+    onTertiaryContainer = Color(0xFFFFE0A3),
     background = PocketBackground,
     onBackground = Color(0xFFE6EDF3),
     surface = PocketSurface,
@@ -47,6 +51,9 @@ private val LightColors = lightColorScheme(
     onSecondary = Color(0xFFFFFFFF),
     tertiary = Color(0xFF1B8A5A),
     onTertiary = Color(0xFFFFFFFF),
+    // Amber "reconnecting" surface (see DarkColors).
+    tertiaryContainer = Color(0xFFFFECC7),
+    onTertiaryContainer = Color(0xFF3F2E00),
     background = Color(0xFFF6F8FA),
     onBackground = Color(0xFF1F2328),
     surface = Color(0xFFFFFFFF),
