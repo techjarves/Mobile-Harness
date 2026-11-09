@@ -268,7 +268,16 @@ class DshRuntimeBridge(
         }.onFailure { error ->
             Log.e("DshBridge", "Session failed", error)
             val message = friendlyError(error)
-            emitFailureOnce(sessionId, message, lastFailureRecovery)
+            // An ordinary unexpected exit (no outstanding continuation) must still
+            // carry side-effect facts so the manual retry card can warn. Only a user
+            // stop keeps the metadata null; a continuation failure already recorded
+            // `lastFailureRecovery` and wins verbatim.
+            val recovery = lastFailureRecovery ?: if (userStopRequested) null else RecoveryFailureInfo(
+                retryAvailable = true,
+                sideEffectsPossible = sawMutatingTool,
+                toolsExecuted = sawToolCall,
+            )
+            emitFailureOnce(sessionId, message, recovery)
             if (userStopRequested) {
                 cancelForegroundRuntime()
             } else {
@@ -315,6 +324,7 @@ class DshRuntimeBridge(
         var finalAnswer = FinalAnswerStateMachine()
         var nudgeSentAt = 0L
         val retryState = DshTransportRetryState()
+        val continuation = DshContinuationState()
         var continuationDueAt = 0L
         var continuationSentAt = 0L
         var continuationAttempt = 0
@@ -351,6 +361,7 @@ class DshRuntimeBridge(
         }
 
         fun failContinuation(message: String) {
+            continuation.onTerminal()
             failure = message
             lastFailureRecovery = RecoveryFailureInfo(
                 retryAvailable = true,
@@ -444,7 +455,9 @@ class DshRuntimeBridge(
                     // fallback instead of restarting a session (which duplicates
                     // tool work). Deliberately non-fatal, and guarded so a late
                     // rejection after the watchdog already fired cannot re-emit.
-                    if (!shutdownSent) {
+                    // During continuation backoff a stale rejection from the
+                    // original turn must not end the session either.
+                    if (!continuation.suppressStaleTurnEvents() && !shutdownSent) {
                         when (finalAnswer.step(FinalAnswerEvent.NUDGE_REJECTED)) {
                             FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
                             else -> Unit
@@ -462,10 +475,17 @@ class DshRuntimeBridge(
                 is DshSdkProtocolEvent.Status -> {
                     if (protocolEvent.running) {
                         sawRunning = true
-                        continuationSentAt = 0L
+                        // Do NOT clear `continuationSentAt` here: `running` alone is
+                        // not meaningful progress. The continuation watchdog is an
+                        // *inactivity* bound, not a first-event bound — it must fire
+                        // when a resumed continuation starts running but then hangs,
+                        // so it is only reset on real progress (text/reasoning/tool/
+                        // turn-end), never on a bare running signal.
                         pushForegroundProgress(R.string.rt_bridge_working, "DeepSeek Harness")
                         finalAnswer.step(FinalAnswerEvent.RUNNING)
-                    } else if (shouldEvaluateNudgeOnIdle(failure, sawRunning, shutdownSent)) {
+                    } else if (!continuation.suppressIdle() &&
+                        shouldEvaluateNudgeOnIdle(failure, sawRunning, shutdownSent)
+                    ) {
                         when (finalAnswer.step(FinalAnswerEvent.IDLE)) {
                             FinalAnswerAction.SEND_NUDGE -> sendNudge()
                             FinalAnswerAction.FINISH -> finishTurnAndShutdown()
@@ -475,6 +495,7 @@ class DshRuntimeBridge(
                     }
                 }
                 is DshSdkProtocolEvent.Reasoning -> {
+                    continuation.onMeaningfulSignal()
                     sawActivity = true
                     continuationSentAt = 0L
                     finalAnswer.step(FinalAnswerEvent.REASONING)
@@ -490,6 +511,7 @@ class DshRuntimeBridge(
                     }
                 }
                 is DshSdkProtocolEvent.ToolStarted -> {
+                    continuation.onMeaningfulSignal()
                     sawActivity = true
                     continuationSentAt = 0L
                     sawToolCall = true
@@ -502,6 +524,7 @@ class DshRuntimeBridge(
                     }
                 }
                 is DshSdkProtocolEvent.ToolCompleted -> {
+                    continuation.onMeaningfulSignal()
                     sawActivity = true
                     continuationSentAt = 0L
                     sawToolCall = true
@@ -514,6 +537,7 @@ class DshRuntimeBridge(
                     }
                 }
                 is DshSdkProtocolEvent.AssistantText -> if (protocolEvent.text.isNotEmpty()) {
+                    continuation.onMeaningfulSignal()
                     sawActivity = true
                     continuationSentAt = 0L
                     finalAnswer.step(FinalAnswerEvent.ASSISTANT_TEXT)
@@ -529,6 +553,15 @@ class DshRuntimeBridge(
                     val decision = retryState.onFailure(protocolEvent.code, protocolEvent.message, userStopRequested)
                     when (decision.action) {
                         DshTransportRetryAction.RETRY -> {
+                            continuation.onTransportRetryScheduled()
+                            // Reset the per-turn final-answer state at retry scheduling
+                            // time (not only after the continuation write) so a trailing
+                            // idle/turn-end from the original turn cannot nudge, complete,
+                            // or fail the session during the backoff window. The session
+                            // id and the whole-turn tool flags are kept.
+                            val turn = resetContinuationTurn()
+                            sawRunning = turn.sawRunning
+                            finalAnswer = turn.finalAnswer
                             continuationDueAt = android.os.SystemClock.elapsedRealtime() + decision.delayMs
                             continuationAttempt = decision.attempt
                             continuationMessage = protocolEvent.message
@@ -546,6 +579,7 @@ class DshRuntimeBridge(
                         DshTransportRetryAction.USER_STOP,
                         DshTransportRetryAction.NOT_TRANSPORT,
                         -> {
+                            continuation.onTerminal()
                             failure = protocolEvent.message
                             finishTurnAndShutdown()
                         }
@@ -555,13 +589,24 @@ class DshRuntimeBridge(
                     // Some dsh builds finish a turn without publishing the expected
                     // follow-up `session.status: idle` notification. Treat turn/end
                     // as authoritative so the UI cannot remain stuck in Running.
-                    sawActivity = true
-                    continuationSentAt = 0L
-                    when (finalAnswer.step(FinalAnswerEvent.TURN_END)) {
-                        FinalAnswerAction.SEND_NUDGE -> sendNudge()
-                        FinalAnswerAction.FINISH -> finishTurnAndShutdown()
-                        FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
-                        FinalAnswerAction.CONTINUE -> Unit
+                    if (continuation.suppressStaleTurnEvents()) {
+                        // A stale turn-end from the original (failed) turn during
+                        // backoff must not complete or fail the session before the
+                        // continuation runs.
+                        Unit
+                    } else {
+                        // A turn-end is itself a meaningful continuation signal: in
+                        // AWAITING_SIGNAL it restores normal processing instead of
+                        // being suppressed forever.
+                        continuation.onMeaningfulSignal()
+                        sawActivity = true
+                        continuationSentAt = 0L
+                        when (finalAnswer.step(FinalAnswerEvent.TURN_END)) {
+                            FinalAnswerAction.SEND_NUDGE -> sendNudge()
+                            FinalAnswerAction.FINISH -> finishTurnAndShutdown()
+                            FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
+                            FinalAnswerAction.CONTINUE -> Unit
+                        }
                     }
                 }
                 DshSdkProtocolEvent.ShutdownAcknowledged -> closeInput()
@@ -577,6 +622,7 @@ class DshRuntimeBridge(
             // a nudge that answered but never sent turn/end would leave the loop
             // spinning or exit as a misleading failure after showing the answer.
             if (
+                !continuation.suppressStaleTurnEvents() &&
                 !shutdownSent &&
                 nudgeSentAt > 0L &&
                 finalAnswer.nudgeOutstanding() &&
@@ -619,10 +665,12 @@ class DshRuntimeBridge(
                     )
                 }.isSuccess
                 if (wrote) {
-                    // Keep the session id and its tool tracking; reset only the
-                    // per-turn flags (running + final-answer machine) so a trailing
-                    // idle/answer from the original turn cannot complete or nudge the
-                    // continuation before it has produced its own signal.
+                    // Leave backoff: the continuation is now outstanding. The
+                    // per-turn flags were already reset at scheduling time; reset
+                    // again here for defense in depth so a stray trailing
+                    // idle/answer from the original turn can never complete or
+                    // nudge the continuation before it has produced its own signal.
+                    continuation.onContinuationSent()
                     continuationSentAt = android.os.SystemClock.elapsedRealtime()
                     val turn = resetContinuationTurn()
                     sawRunning = turn.sawRunning
@@ -1109,6 +1157,80 @@ internal data class ContinuationTurnReset(
 
 internal fun resetContinuationTurn(): ContinuationTurnReset =
     ContinuationTurnReset(sawRunning = false, finalAnswer = FinalAnswerStateMachine())
+
+/**
+ * Which stage of the transport-recovery continuation the session is in. This is
+ * the pure core of the "trailing original-turn event" suppression: once a
+ * transport retry is scheduled, stale events from the dying original turn
+ * (idle, turn/end, nudge rejection, nudge watchdog) must not terminate, nudge,
+ * complete, or fail the session before the continuation has run.
+ */
+internal enum class DshContinuationPhase {
+    /** Normal processing: the original (or a resumed) turn is in flight. */
+    ORIGINAL_TURN,
+
+    /** A transport retry is scheduled; stale original-turn events are ignored. */
+    BACKOFF,
+
+    /** The continuation prompt was written; idle is ignored until the first signal. */
+    AWAITING_SIGNAL,
+
+    /** A terminal decision was reached; no further turn events are processed. */
+    TERMINAL,
+}
+
+/**
+ * Pure continuation phase state machine. Free of Android/coroutine types so the
+ * whole transition/suppression sequence is unit-testable. The bridge drives it
+ * from [runSdkSession]'s event loop and consults its predicates to decide which
+ * stale events to ignore.
+ */
+internal class DshContinuationState {
+    var phase: DshContinuationPhase = DshContinuationPhase.ORIGINAL_TURN
+        private set
+
+    /** A transport retry was scheduled: enter backoff (unless already terminal). */
+    fun onTransportRetryScheduled() {
+        if (phase != DshContinuationPhase.TERMINAL) phase = DshContinuationPhase.BACKOFF
+    }
+
+    /** The continuation prompt was written successfully. */
+    fun onContinuationSent() {
+        if (phase != DshContinuationPhase.TERMINAL) phase = DshContinuationPhase.AWAITING_SIGNAL
+    }
+
+    /**
+     * A meaningful continuation signal (assistant text, reasoning, tool, or a
+     * turn-end) arrived: back to normal processing.
+     */
+    fun onMeaningfulSignal() {
+        if (phase == DshContinuationPhase.AWAITING_SIGNAL) phase = DshContinuationPhase.ORIGINAL_TURN
+    }
+
+    /** A terminal decision was reached (exhaustion, stop, non-transport, write failure). */
+    fun onTerminal() {
+        phase = DshContinuationPhase.TERMINAL
+    }
+
+    /**
+     * True while stale original-turn events (idle, turn/end, nudge rejection,
+     * nudge watchdog) must be ignored: during backoff or after a terminal decision.
+     * In [DshContinuationPhase.AWAITING_SIGNAL] a turn/end is itself a meaningful
+     * signal, so it is not treated as stale here.
+     */
+    fun suppressStaleTurnEvents(): Boolean =
+        phase == DshContinuationPhase.BACKOFF || phase == DshContinuationPhase.TERMINAL
+
+    /**
+     * True while an `idle` must be ignored. Idle is ignored in every phase except
+     * normal processing, so a stale running+idle pair from the original turn can
+     * never reach the nudge/completion path before the continuation signals.
+     */
+    fun suppressIdle(): Boolean = phase != DshContinuationPhase.ORIGINAL_TURN
+
+    val inBackoff: Boolean get() = phase == DshContinuationPhase.BACKOFF
+    val isTerminal: Boolean get() = phase == DshContinuationPhase.TERMINAL
+}
 
 internal enum class FinalAnswerPhase { INITIAL, NUDGE_SENT, AFTER_NUDGE, DONE }
 

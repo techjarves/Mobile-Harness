@@ -1,5 +1,6 @@
 package com.jarves.mh.ui
 
+import com.jarves.mh.model.RecoveryFailureInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,5 +52,13 @@ class TransportRetryTest {
     fun stopFinalizesLocallyOnlyDuringRetryGap() {
         assertFalse(shouldFinalizeStopLocally(false))
         assertTrue(shouldFinalizeStopLocally(true))
+    }
+
+    @Test
+    fun transportFailureHandlingRequiresRecoveryEvidenceNotHarnessType() {
+        val evidence = RecoveryFailureInfo(retryAvailable = true, sideEffectsPossible = false, toolsExecuted = false)
+        assertTrue(shouldHandleTransportFailure("Connection error.", evidence))
+        assertFalse(shouldHandleTransportFailure("Connection error.", null))
+        assertFalse(shouldHandleTransportFailure("Invalid API key", evidence))
     }
 }

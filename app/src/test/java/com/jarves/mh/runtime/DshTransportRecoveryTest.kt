@@ -97,4 +97,66 @@ class DshTransportRecoveryTest {
             shouldEvaluateNudgeOnIdle(failure = "", sawRunning = reset.sawRunning, shutdownSent = false),
         )
     }
+
+    @Test
+    fun transportFailureEntersBackoff() {
+        val state = DshContinuationState()
+        state.onTransportRetryScheduled()
+
+        assertEquals(DshContinuationPhase.BACKOFF, state.phase)
+        assertTrue(state.inBackoff)
+    }
+
+    @Test
+    fun backoffSuppressesIdleAndTurnEnd() {
+        val state = DshContinuationState()
+        state.onTransportRetryScheduled()
+
+        assertTrue(state.suppressIdle())
+        assertTrue(state.suppressStaleTurnEvents())
+    }
+
+    @Test
+    fun continuationSendLeavesBackoff() {
+        val state = DshContinuationState()
+        state.onTransportRetryScheduled()
+        state.onContinuationSent()
+
+        assertEquals(DshContinuationPhase.AWAITING_SIGNAL, state.phase)
+        assertFalse(state.inBackoff)
+    }
+
+    @Test
+    fun awaitingSignalSuppressesIdleUntilMeaningfulSignal() {
+        val state = DshContinuationState()
+        state.onContinuationSent()
+
+        // Idle is suppressed while awaiting the continuation's first signal, but a
+        // turn-end is itself a meaningful signal (never suppressed forever).
+        assertTrue(state.suppressIdle())
+        assertFalse(state.suppressStaleTurnEvents())
+
+        state.onMeaningfulSignal()
+
+        assertEquals(DshContinuationPhase.ORIGINAL_TURN, state.phase)
+        assertFalse(state.suppressIdle())
+    }
+
+    @Test
+    fun terminalExitsAndSuppressesEverything() {
+        val state = DshContinuationState()
+        state.onTransportRetryScheduled()
+        state.onTerminal()
+
+        assertEquals(DshContinuationPhase.TERMINAL, state.phase)
+        assertTrue(state.isTerminal)
+        assertTrue(state.suppressStaleTurnEvents())
+        assertTrue(state.suppressIdle())
+
+        // Terminal is sticky: no later transition can leave it.
+        state.onTransportRetryScheduled()
+        state.onContinuationSent()
+        state.onMeaningfulSignal()
+        assertEquals(DshContinuationPhase.TERMINAL, state.phase)
+    }
 }

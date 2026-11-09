@@ -44,7 +44,10 @@ import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.RecoveryDecision
+import com.jarves.mh.model.RecoveryFailureInfo
 import com.jarves.mh.model.RuntimeEvent
+import com.jarves.mh.model.RuntimeRecoveryContext
 import com.jarves.mh.model.TerminalViewport
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
@@ -56,8 +59,11 @@ import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.network.ProviderApiClient
 import com.jarves.mh.network.GitHubRepository
 import com.jarves.mh.runtime.ClaudeRuntimeBridge
+import com.jarves.mh.runtime.DSH_CONTINUATION_INSTRUCTION
 import com.jarves.mh.runtime.DshRuntimeBridge
 import com.jarves.mh.runtime.AgentRegistry
+import com.jarves.mh.runtime.RecoveryAction
+import com.jarves.mh.runtime.RuntimeRecoveryPolicy
 import com.jarves.mh.runtime.AgentUpdateInfo
 import com.jarves.mh.runtime.AntigravityAuthController
 import com.jarves.mh.runtime.AntigravityAuthState
@@ -275,6 +281,58 @@ internal fun transportRetryDelayMillis(attempt: Int): Long? = when (attempt) {
 internal fun shouldFinalizeStopLocally(retryGapActive: Boolean): Boolean =
     retryGapActive
 
+/**
+ * True when a transport failure should be handed to the runtime recovery policy. Automatic
+ * recovery is fail-closed: the failure must be a transport drop-out AND the bridge must have
+ * supplied recovery evidence. The view model must not branch on harness type; any bridge that
+ * reports recovery is treated alike. A null [RecoveryFailureInfo] preserves the request for
+ * manual retry instead of starting a new session.
+ */
+internal fun shouldHandleTransportFailure(reason: String, recovery: RecoveryFailureInfo?): Boolean =
+    isTransportFailure(reason) && recovery != null
+
+/** True when a manual retry should be offered: the failed turn says so and nothing is running. */
+internal fun shouldOfferRetry(recovery: RecoveryFailureInfo?, isRunning: Boolean): Boolean =
+    recovery?.retryAvailable == true && !isRunning
+
+/** True when the failed turn ran mutating tools, so repeating it may duplicate side effects. */
+internal fun shouldWarnSideEffects(recovery: RecoveryFailureInfo?): Boolean =
+    recovery?.sideEffectsPossible == true
+
+/**
+ * Effective recovery facts for a terminal `SessionFailed`. A resolved user stop returns null,
+ * so a stop (which already cleared recovery/retry state) never recreates it. Otherwise the
+ * bridge's own facts win verbatim; when they are absent they are derived from the structured
+ * session context (mutating/tool facts) with the conservative `retryAvailable = true` default
+ * for a non-stop failure.
+ */
+internal fun terminalFailureRecoveryInfo(
+    recovery: RecoveryFailureInfo?,
+    context: RuntimeRecoveryContext?,
+    userStopped: Boolean,
+): RecoveryFailureInfo? =
+    if (userStopped) null
+    else recovery ?: RecoveryFailureInfo(
+        retryAvailable = true,
+        sideEffectsPossible = context?.mutatingToolsExecuted == true,
+        toolsExecuted = context?.toolsExecuted == true,
+    )
+
+/**
+ * Effective recovery facts for a transport failure. When the bridge supplied its own facts,
+ * they win verbatim; otherwise derive them from the structured session context (user stop,
+ * mutating tools, any tools). Used when a `recover` attempt returns false so the manual retry
+ * card still carries the correct side-effect warning.
+ */
+internal fun effectiveRecoveryInfo(
+    eventRecovery: RecoveryFailureInfo?,
+    context: RuntimeRecoveryContext?,
+): RecoveryFailureInfo = eventRecovery ?: RecoveryFailureInfo(
+    retryAvailable = context?.userStopped != true,
+    sideEffectsPossible = context?.mutatingToolsExecuted == true,
+    toolsExecuted = context?.toolsExecuted == true,
+)
+
 private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
 
 private fun antigravityEffortFromModel(model: String): String? =
@@ -296,7 +354,7 @@ private data class ProjectTerminalResult(
     val cwd: String,
 )
 
-private data class RuntimeRetryRequest(
+data class RuntimeRetryRequest(
     val runtime: com.jarves.mh.runtime.RuntimeBridge,
     val project: Project,
     val prompt: String,
@@ -321,6 +379,44 @@ private data class ImportedZipProject(
     val project: Project,
     val sourceAttachment: ChatAttachment,
 )
+
+/**
+ * User-facing recovery state painted after a transport failure. During an in-place retry the
+ * decision/attempt/reason come from [RuntimeEvent.RecoveryStateChanged]; once the session
+ * fails terminally, [retryAvailable]/[sideEffectsPossible]/[toolsExecuted] come from the
+ * bridge's [RecoveryFailureInfo] and drive the retry card and its side-effect warning.
+ */
+data class RecoveryUiState(
+    val decision: RecoveryDecision?,
+    val attempt: Int,
+    val maxAttempts: Int,
+    val reason: String,
+    val retryAvailable: Boolean,
+    val sideEffectsPossible: Boolean,
+    val toolsExecuted: Boolean,
+)
+
+internal fun recoveryUiStateFromEvent(event: RuntimeEvent.RecoveryStateChanged): RecoveryUiState =
+    RecoveryUiState(
+        decision = event.decision,
+        attempt = event.attempt,
+        maxAttempts = event.maxAttempts,
+        reason = event.reason,
+        retryAvailable = false,
+        sideEffectsPossible = false,
+        toolsExecuted = false,
+    )
+
+internal fun recoveryUiStateFromFailure(recovery: RecoveryFailureInfo, reason: String): RecoveryUiState =
+    RecoveryUiState(
+        decision = null,
+        attempt = 0,
+        maxAttempts = 0,
+        reason = reason,
+        retryAvailable = recovery.retryAvailable,
+        sideEffectsPossible = recovery.sideEffectsPossible,
+        toolsExecuted = recovery.toolsExecuted,
+    )
 
 data class AppUiState(
     val startupStage: StartupStage = StartupStage.CHECKING,
@@ -390,6 +486,8 @@ data class AppUiState(
     val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
+    val recovery: RecoveryUiState? = null,
+    val pendingRetryRequest: RuntimeRetryRequest? = null,
     val projectTerminalLines: List<TerminalOutputLine> = emptyList(),
     val projectTerminalLiveOutput: String = "",
     val projectTerminalRunning: Boolean = false,
@@ -4881,6 +4979,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 workSegmentStartedAtMillis = startedAt,
                 currentTaskRequest = requestText,
+                recovery = null,
+                pendingRetryRequest = null,
             )
         }
         touchProject(project.id)
@@ -4925,6 +5025,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { activeRuntime().respondToApproval(request, approved) }
     }
 
+    /**
+     * Manual retry of the last failed turn. Reuses the preserved request (project, prompt,
+     * history, provider) and starts a fresh session. Explicit user consent, so it may always
+     * start a new session; the side-effect warning is shown before this is called.
+     */
+    fun retryLastTurn() {
+        val request = _state.value.pendingRetryRequest ?: return
+        if (_state.value.isRunning) return
+        _state.update { it.copy(recovery = null, pendingRetryRequest = null, isRunning = true) }
+        transportRetryAttempts = 0
+        cancelTransportRetry()
+        activeRuntimeRequest = request
+        viewModelScope.launch {
+            request.runtime.startSession(
+                request.project.id,
+                request.project.slug,
+                request.project.kind,
+                request.prompt,
+                request.history,
+                request.provider,
+            )
+        }
+    }
+
     fun stopTask() {
         if (!_state.value.isRunning) return
         steeringToFollowUp = false
@@ -4933,7 +5057,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val retryGapActive = transportRetryWaiting
         val finalizeLocally = shouldFinalizeStopLocally(retryGapActive)
         cancelTransportRetry()
-        _state.update { it.copy(queuedFollowUps = emptyList()) }
+        _state.update { it.copy(queuedFollowUps = emptyList(), recovery = null, pendingRetryRequest = null) }
         if (finalizeLocally) {
             finalizeStoppedByUser()
         } else {
@@ -4962,6 +5086,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activity = listOf(ActivityItem("Task stopped", displayReason)) + current.activity,
                 taskFinishedAtMillis = finishedAt,
                 currentTaskRequest = null,
+                recovery = null,
+                pendingRetryRequest = null,
             )
         }
         activeRuntimeRequest = null
@@ -5331,6 +5457,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     attachTaskDuration(finishWorkSegment(current, finishedAt), finishedAt).copy(
                         isRunning = false,
                         activeSessionId = null,
+                        recovery = null,
+                        pendingRetryRequest = null,
                         activity = listOf(ActivityItem(str(R.string.vm_task_completed), str(R.string.vm_agent_finished, current.agentKind.localizedTitle(getApplication())))) +
                             current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
                         taskFinishedAtMillis = finishedAt,
@@ -5340,6 +5468,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is RuntimeEvent.SessionFailed -> {
                     val finishedAt = System.currentTimeMillis()
                     val displayReason = localizedFailureReason(event.reason)
+                    // Capture the request BEFORE the terminal cleanup below clears
+                    // activeRuntimeRequest; the retry card reuses it for manual retry.
+                    val request = activeRuntimeRequest
+                    val context = request?.let { req ->
+                        req.runtime.recoveryContext(event.sessionId, req.project.id)
+                    }
+                    // Prefer the bridge's structured userStopped flag over the exact reason
+                    // string; fall back to the string when the session context is gone.
+                    val userStopped = context?.userStopped ?: (event.reason == "Stopped by user")
+                    // A user stop returns null (M3): the stop already cleared recovery/retry
+                    // state, so nothing is recreated. Otherwise derive side-effect facts from
+                    // the bridge recovery (verbatim) or the structured context (I2).
+                    val recoveryInfo = terminalFailureRecoveryInfo(event.recovery, context, userStopped)
+                    val pendingRetry = if (recoveryInfo?.retryAvailable == true) request else null
                     attachTaskDuration(
                         finishWorkSegment(
                             appendWorkItem(current, ActivityItem("Task stopped", displayReason)),
@@ -5358,10 +5500,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         activity = listOf(ActivityItem("Task stopped", displayReason)) + current.activity,
                         taskFinishedAtMillis = finishedAt,
                         currentTaskRequest = null,
+                        recovery = recoveryInfo?.let { recoveryUiStateFromFailure(it, displayReason) },
+                        pendingRetryRequest = pendingRetry,
                     )
                 }
-                // Task 3 owns the recovery UI state; until then the event is a no-op.
-                is RuntimeEvent.RecoveryStateChanged -> current
+                // In-place retry progress: show the reconnecting state without painting a
+                // failure. isRunning is intentionally left untouched here — during a normal
+                // retry it is already true, and the outer `!current.isRunning` guard above is
+                // what keeps a late recovery event from resurrecting a stopped session.
+                is RuntimeEvent.RecoveryStateChanged -> current.copy(
+                    recovery = recoveryUiStateFromEvent(event),
+                )
             }
         }
         if (terminalEventForActiveSession) {
@@ -5424,16 +5573,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Second retry layer for DSH transport drop-outs. After the SDK exhausts its 5 internal
-     * retries it reports `reason == "Connection error."`; the app retries the same turn up to
-     * 2 times with 5 s then 15 s backoff, only for the captured DSH runtime request.
+     * Transport-drop-out recovery. The runtime policy decides between continuing in place and
+     * starting a fresh session; the view model keeps its 5 s/15 s budget only for the fallback
+     * new-session path. The DSH bridge owns its in-place 5 s/15 s retries, so this must not add
+     * another in-place retry. Recovery is fail-closed: without bridge recovery evidence (or a
+     * live in-place continuation) the failed request is preserved for manual retry.
      */
     private fun retryOnTransportFailure(event: RuntimeEvent.SessionFailed): Boolean {
         val current = _state.value
         if (!current.isRunning || current.activeSessionId != event.sessionId) return false
         if (!isTransportFailure(event.reason)) return false
         val request = activeRuntimeRequest ?: return false
-        if (request.runtime !is DshRuntimeBridge) return false
+        val sessionId = current.activeSessionId ?: return false
+
+        val context = request.runtime.recoveryContext(sessionId, request.project.id) ?: return false
+
+        // Fail-closed gate: transport failure plus (recovery evidence OR live in-place).
+        if (!shouldHandleTransportFailure(event.reason, event.recovery) &&
+            !context.inPlaceContinuationAvailable
+        ) return false
+
+        // Effective facts for the fallback terminal state: event recovery wins verbatim,
+        // otherwise derive from the structured context so side-effect warnings survive.
+        val effectiveInfo = effectiveRecoveryInfo(event.recovery, context)
+
+        val decision = RuntimeRecoveryPolicy.decide(request.runtime.recoveryProfile, context)
+        if (decision == RecoveryDecision.MANUAL_RETRY_REQUIRED || decision == RecoveryDecision.NO_RETRY) return false
+
+        val action = RecoveryAction(
+            sessionId = sessionId,
+            projectId = request.project.id,
+            projectSlug = request.project.slug,
+            projectKind = request.project.kind,
+            originalPrompt = request.prompt,
+            instruction = DSH_CONTINUATION_INSTRUCTION,
+            history = request.history,
+            provider = request.provider,
+        )
+
+        if (decision == RecoveryDecision.CONTINUE_IN_PLACE) {
+            // The bridge's live session continues in place; no new session, no budget.
+            viewModelScope.launch {
+                val recovered = request.runtime.recover(action, decision)
+                // A failed in-place continuation must not leave a running phantom: fall back
+                // to manual retry unless a terminal event already arrived.
+                if (!recovered && _state.value.isRunning && activeRuntimeRequest === request) {
+                    preserveForManualRetry(request, event.reason, effectiveInfo)
+                }
+            }
+            return true
+        }
+
+        // Fallback path (RETRY_NEW_SESSION_SAFE and future RESUME_PERSISTED): budget the
+        // new-session retries at 5 s then 15 s before exhausting into manual retry.
         val delayMillis = transportRetryDelayMillis(transportRetryAttempts) ?: return false
         transportRetryAttempts += 1
         val generation = ++transportRetryGeneration
@@ -5458,16 +5650,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (activeRuntimeRequest !== request) return@launch
             transportRetryWaiting = false
             transportRetryingFromSessionId = null
-            request.runtime.startSession(
-                request.project.id,
-                request.project.slug,
-                request.project.kind,
-                request.prompt,
-                request.history,
-                request.provider,
-            )
+            val recovered = request.runtime.recover(action, decision)
+            if (!recovered) {
+                // The bridge declined to restart; preserve the request for manual retry.
+                preserveForManualRetry(request, event.reason, effectiveInfo)
+            }
         }
         return true
+    }
+
+    /**
+     * Paints a terminal transport failure after an automatic recover attempt returned false
+     * (no new session started), preserving the request so the user can retry manually. Uses the
+     * effective recovery facts (bridge recovery verbatim, or derived from session context) so
+     * the side-effect warning is not lost.
+     */
+    private fun preserveForManualRetry(request: RuntimeRetryRequest, reason: String, recoveryInfo: RecoveryFailureInfo) {
+        val finishedAt = System.currentTimeMillis()
+        val displayReason = localizedFailureReason(reason)
+        _state.update { current ->
+            attachTaskDuration(
+                finishWorkSegment(
+                    appendWorkItem(current, ActivityItem("Task stopped", displayReason)),
+                    finishedAt,
+                ),
+                finishedAt,
+            ).copy(
+                isRunning = false,
+                activeSessionId = null,
+                pendingApproval = null,
+                activity = listOf(ActivityItem("Task stopped", displayReason)) + current.activity,
+                taskFinishedAtMillis = finishedAt,
+                currentTaskRequest = null,
+                recovery = recoveryUiStateFromFailure(recoveryInfo, displayReason),
+                pendingRetryRequest = request,
+            )
+        }
+        activeRuntimeRequest = null
+        failedApiKeyIds.clear()
+        steeringToFollowUp = false
+        transportRetryAttempts = 0
+        cancelTransportRetry()
+        // Mirror the normal terminal path: drain any queued follow-ups now that the
+        // session is no longer running, then persist the timeline including the
+        // interrupted work block.
+        if (pendingFollowUps.isNotEmpty()) {
+            viewModelScope.launch {
+                delay(150)
+                if (!_state.value.isRunning) startNextFollowUp()
+            }
+        }
+        persistMessages(includeLiveProcess = true)
     }
 
     /** True while a terminal event belongs to the failed session we are retrying away from. */
