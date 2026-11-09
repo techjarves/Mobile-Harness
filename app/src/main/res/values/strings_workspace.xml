@@ -33,6 +33,12 @@
     <string name="ws_terminal_alt_modifier">Alt modifier</string>
     <string name="ws_terminal_escape">Escape</string>
     <string name="ws_terminal_ctrl_modifier">Control modifier; press C to interrupt</string>
+    <string name="ws_terminal_environment" translatable="false">Ubuntu PRoot</string>
+    <string name="ws_terminal_key_alt" translatable="false">ALT</string>
+    <string name="ws_terminal_key_esc" translatable="false">ESC</string>
+    <string name="ws_terminal_key_ctrl" translatable="false">CTRL</string>
+    <string name="ws_terminal_modifier_active">Active</string>
+    <string name="ws_terminal_modifier_inactive">Inactive</string>
     <string name="ws_md_code_label">code</string>
     <string name="ws_md_run_in_terminal">Run in project terminal</string>
     <string name="ws_md_copy_code">Copy code</string>
