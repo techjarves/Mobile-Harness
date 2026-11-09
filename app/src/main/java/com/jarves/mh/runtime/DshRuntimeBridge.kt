@@ -11,10 +11,13 @@ import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.RecoveryDecision
+import com.jarves.mh.model.RecoveryFailureInfo
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.RuntimeRecoveryContext
 import com.jarves.mh.model.RuntimeRecoveryProfile
 import com.jarves.mh.model.ToolRequest
+import java.io.BufferedWriter
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
@@ -54,30 +57,98 @@ class DshRuntimeBridge(
     private val finishedSessions = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var activeProcess: Process? = null
     @Volatile private var activeSessionId: String? = null
+    @Volatile private var liveSession: LiveSession? = null
     @Volatile private var userStopRequested: Boolean = false
     @Volatile private var activeProjectSlug: String? = null
     @Volatile private var taskStartedAtElapsedRealtime: Long = 0L
     @Volatile private var lastForegroundProgressAt: Long = 0L
     @Volatile private var foregroundResultPosted: Boolean = false
     @Volatile private var lastThinkingUpdateAt: Long = 0L
+    @Volatile private var sawToolCall: Boolean = false
+    @Volatile private var sawMutatingTool: Boolean = false
+    @Volatile private var lastSessionId: String? = null
+    @Volatile private var lastFailureRecovery: RecoveryFailureInfo? = null
 
     override val recoveryProfile: RuntimeRecoveryProfile = DSH_RECOVERY_PROFILE
 
-    override fun recoveryContext(sessionId: String, projectId: String): RuntimeRecoveryContext? =
-        if (activeSessionId != sessionId) null else RuntimeRecoveryContext(
+    override fun recoveryContext(sessionId: String, projectId: String): RuntimeRecoveryContext? {
+        // Report the real tracked flags even after the process died and
+        // `activeSessionId` was nulled: `lastSessionId` still names the failed
+        // session until the next `startSession` begins.
+        val isCurrent = activeSessionId == sessionId
+        val isLast = lastSessionId == sessionId
+        if (!isCurrent && !isLast) return null
+        return RuntimeRecoveryContext(
             sessionId = sessionId,
-            inPlaceContinuationAvailable = false, // Task 2/5 refine this
+            inPlaceContinuationAvailable = activeProcess?.isAlive == true && isCurrent,
             persistedHandle = null,
-            toolsExecuted = false,
-            mutatingToolsExecuted = false,
+            toolsExecuted = sawToolCall,
+            mutatingToolsExecuted = sawMutatingTool,
             interruptedToolOutcomeKnown = false,
             checkpointAvailable = false,
             userStopped = userStopRequested,
         )
+    }
+
+    override suspend fun recover(action: RecoveryAction, decision: RecoveryDecision): Boolean {
+        return when (decision) {
+            RecoveryDecision.CONTINUE_IN_PLACE ->
+                // Same session, no new process: write the continuation to the live
+                // writer. Returns false if the process died or the session changed.
+                sendContinuation(action.sessionId, action.instruction)
+            RecoveryDecision.RETRY_NEW_SESSION_SAFE -> {
+                // Defense in depth on top of the policy: never auto-restart a turn
+                // that already ran tools, even if the caller chose the "safe" path.
+                val context = recoveryContext(action.sessionId, action.projectId) ?: return false
+                if (context.toolsExecuted) return false
+                startSession(
+                    action.projectId,
+                    action.projectSlug,
+                    action.projectKind,
+                    action.originalPrompt,
+                    action.history,
+                    action.provider,
+                )
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun sendContinuation(sessionId: String, instruction: String): Boolean {
+        // Read a single atomic snapshot so a concurrent session transition cannot
+        // pair a stale id with a fresh process/writer and write the wrong session.
+        val live = liveSession ?: return false
+        if (live.sessionId != sessionId || !live.process.isAlive) return false
+        val frame = JSONObject()
+            .put("jsonrpc", "2.0")
+            .put("id", SDK_CONTINUATION_PROMPT_ID)
+            .put("method", "session/prompt")
+            .put(
+                "params",
+                JSONObject()
+                    .put("sessionId", sessionId)
+                    .put(
+                        "contentBlocks",
+                        JSONArray().put(JSONObject().put("type", "text").put("text", instruction)),
+                    ),
+            )
+        return runCatching {
+            synchronized(live.writer) {
+                live.writer.write(frame.toString())
+                live.writer.newLine()
+                live.writer.flush()
+            }
+        }.isSuccess
+    }
 
     override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
+        lastSessionId = sessionId
+        sawToolCall = false
+        sawMutatingTool = false
+        lastFailureRecovery = null
         activeSessionId = sessionId
         userStopRequested = false
         activeProjectSlug = projectSlug
@@ -197,7 +268,7 @@ class DshRuntimeBridge(
         }.onFailure { error ->
             Log.e("DshBridge", "Session failed", error)
             val message = friendlyError(error)
-            emitFailureOnce(sessionId, message)
+            emitFailureOnce(sessionId, message, lastFailureRecovery)
             if (userStopRequested) {
                 cancelForegroundRuntime()
             } else {
@@ -209,6 +280,7 @@ class DshRuntimeBridge(
             }
         }
         openRouterGateway?.close()
+        liveSession = null
         activeProcess = null
         activeSessionId = null
         RuntimeTaskController.stopAction = null
@@ -226,6 +298,7 @@ class DshRuntimeBridge(
         val nativeProcess = process as? NativeSpawnProcess
             ?: error("Unsupported Android runtime process")
         val writer = process.outputStream.bufferedWriter()
+        liveSession = LiveSession(sessionId, process, writer)
         val parser = DshSdkProtocolParser(sessionId)
         var outputOffset = 0L
         val pendingOutput = StringBuilder()
@@ -239,8 +312,13 @@ class DshRuntimeBridge(
         var inputClosed = false
         var discardingOversizedLine = false
         var failure = ""
-        val finalAnswer = FinalAnswerStateMachine()
+        var finalAnswer = FinalAnswerStateMachine()
         var nudgeSentAt = 0L
+        val retryState = DshTransportRetryState()
+        var continuationDueAt = 0L
+        var continuationSentAt = 0L
+        var continuationAttempt = 0
+        var continuationMessage = ""
 
         fun send(method: String, id: Int, params: JSONObject? = null) {
             val frame = JSONObject()
@@ -248,15 +326,17 @@ class DshRuntimeBridge(
                 .put("id", id)
                 .put("method", method)
             if (params != null) frame.put("params", params)
-            writer.write(frame.toString())
-            writer.newLine()
-            writer.flush()
+            synchronized(writer) {
+                writer.write(frame.toString())
+                writer.newLine()
+                writer.flush()
+            }
         }
 
         fun closeInput() {
             if (inputClosed) return
             inputClosed = true
-            runCatching { writer.close() }
+            runCatching { synchronized(writer) { writer.close() } }
         }
 
         fun finishTurnAndShutdown() {
@@ -268,6 +348,16 @@ class DshRuntimeBridge(
             shutdownSent = true
             shutdownSentAt = android.os.SystemClock.elapsedRealtime()
             send("shutdown", SDK_SHUTDOWN_ID)
+        }
+
+        fun failContinuation(message: String) {
+            failure = message
+            lastFailureRecovery = RecoveryFailureInfo(
+                retryAvailable = true,
+                sideEffectsPossible = sawMutatingTool,
+                toolsExecuted = sawToolCall,
+            )
+            finishTurnAndShutdown()
         }
 
         suspend fun emitNoFinalAnswerThenFinish() {
@@ -361,9 +451,18 @@ class DshRuntimeBridge(
                         }
                     }
                 }
+                is DshSdkProtocolEvent.ContinuationRejected -> {
+                    // The SDK refused the in-place continuation prompt. Non-fatal on
+                    // its own: the 60 s continuation watchdog below takes over and
+                    // ends the turn in a terminal failure path rather than spinning.
+                    if (!shutdownSent) {
+                        Log.w("DshBridge", "Continuation rejected: ${protocolEvent.message}")
+                    }
+                }
                 is DshSdkProtocolEvent.Status -> {
                     if (protocolEvent.running) {
                         sawRunning = true
+                        continuationSentAt = 0L
                         pushForegroundProgress(R.string.rt_bridge_working, "DeepSeek Harness")
                         finalAnswer.step(FinalAnswerEvent.RUNNING)
                     } else if (shouldEvaluateNudgeOnIdle(failure, sawRunning, shutdownSent)) {
@@ -377,6 +476,7 @@ class DshRuntimeBridge(
                 }
                 is DshSdkProtocolEvent.Reasoning -> {
                     sawActivity = true
+                    continuationSentAt = 0L
                     finalAnswer.step(FinalAnswerEvent.REASONING)
                     if (!shutdownSent) {
                         emitReasoningSummary(
@@ -391,6 +491,9 @@ class DshRuntimeBridge(
                 }
                 is DshSdkProtocolEvent.ToolStarted -> {
                     sawActivity = true
+                    continuationSentAt = 0L
+                    sawToolCall = true
+                    if (isMutatingTool(protocolEvent.name)) sawMutatingTool = true
                     finalAnswer.step(FinalAnswerEvent.TOOL_ACTIVITY)
                     if (!shutdownSent) {
                         eventBus.emit(
@@ -400,6 +503,9 @@ class DshRuntimeBridge(
                 }
                 is DshSdkProtocolEvent.ToolCompleted -> {
                     sawActivity = true
+                    continuationSentAt = 0L
+                    sawToolCall = true
+                    if (isMutatingTool(protocolEvent.name)) sawMutatingTool = true
                     finalAnswer.step(FinalAnswerEvent.TOOL_COMPLETED)
                     if (!shutdownSent) {
                         eventBus.emit(
@@ -409,28 +515,48 @@ class DshRuntimeBridge(
                 }
                 is DshSdkProtocolEvent.AssistantText -> if (protocolEvent.text.isNotEmpty()) {
                     sawActivity = true
+                    continuationSentAt = 0L
                     finalAnswer.step(FinalAnswerEvent.ASSISTANT_TEXT)
                     if (!shutdownSent) {
                         eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, protocolEvent.text))
                     }
                 }
                 is DshSdkProtocolEvent.Failed -> {
-                    failure = protocolEvent.message
-                    // Terminal: a transport/agent error can never complete the turn, so
-                    // shut the session down instead of waiting on a live DSH server that
-                    // is still awaiting prompts (the read loop would spin forever).
-                    // `finishTurnAndShutdown` is idempotent and computes
-                    // `completed = turnCompleted(sawActivity, failure)` (false here),
-                    // preserving the non-blank failure and sending `shutdown`; the
-                    // forced-shutdown watchdog then guarantees the process exits so
-                    // `emitFailureOnce` runs and the transport retry path can fire.
-                    finishTurnAndShutdown()
+                    // A transport error is no longer terminal on arrival: the SDK
+                    // session is still alive, so we continue it in place instead of
+                    // restarting a fresh session (which would re-run tools).
+                    continuationSentAt = 0L
+                    val decision = retryState.onFailure(protocolEvent.code, protocolEvent.message, userStopRequested)
+                    when (decision.action) {
+                        DshTransportRetryAction.RETRY -> {
+                            continuationDueAt = android.os.SystemClock.elapsedRealtime() + decision.delayMs
+                            continuationAttempt = decision.attempt
+                            continuationMessage = protocolEvent.message
+                            eventBus.emit(
+                                RuntimeEvent.RecoveryStateChanged(
+                                    sessionId,
+                                    RecoveryDecision.CONTINUE_IN_PLACE,
+                                    decision.attempt,
+                                    SDK_MAX_TRANSPORT_RETRIES,
+                                    protocolEvent.message,
+                                ),
+                            )
+                        }
+                        DshTransportRetryAction.EXHAUSTED -> failContinuation(protocolEvent.message)
+                        DshTransportRetryAction.USER_STOP,
+                        DshTransportRetryAction.NOT_TRANSPORT,
+                        -> {
+                            failure = protocolEvent.message
+                            finishTurnAndShutdown()
+                        }
+                    }
                 }
                 DshSdkProtocolEvent.TurnCompleted -> {
                     // Some dsh builds finish a turn without publishing the expected
                     // follow-up `session.status: idle` notification. Treat turn/end
                     // as authoritative so the UI cannot remain stuck in Running.
                     sawActivity = true
+                    continuationSentAt = 0L
                     when (finalAnswer.step(FinalAnswerEvent.TURN_END)) {
                         FinalAnswerAction.SEND_NUDGE -> sendNudge()
                         FinalAnswerAction.FINISH -> finishTurnAndShutdown()
@@ -460,6 +586,61 @@ class DshRuntimeBridge(
                     FinalAnswerAction.FINISH -> finishTurnAndShutdown()
                     FinalAnswerAction.EMIT_FALLBACK -> emitNoFinalAnswerThenFinish()
                     else -> Unit
+                }
+            }
+            // Continuation watchdog: if a transport-retry continuation produced no
+            // turn/end or text within the bound, fail terminally (no infinite loop).
+            if (
+                !shutdownSent &&
+                continuationSentAt > 0L &&
+                android.os.SystemClock.elapsedRealtime() - continuationSentAt >= SDK_CONTINUATION_WATCHDOG_MS
+            ) {
+                failContinuation(continuationMessage.ifBlank { "DeepSeek Harness did not resume after a transport error" })
+            }
+            // Send a scheduled continuation once its delay has elapsed.
+            if (
+                !shutdownSent &&
+                continuationDueAt > 0L &&
+                android.os.SystemClock.elapsedRealtime() >= continuationDueAt
+            ) {
+                continuationDueAt = 0L
+                val wrote = runCatching {
+                    send(
+                        method = "session/prompt",
+                        id = SDK_CONTINUATION_PROMPT_ID,
+                        params = JSONObject()
+                            .put("sessionId", sessionId)
+                            .put(
+                                "contentBlocks",
+                                JSONArray().put(
+                                    JSONObject().put("type", "text").put("text", DSH_CONTINUATION_INSTRUCTION),
+                                ),
+                            ),
+                    )
+                }.isSuccess
+                if (wrote) {
+                    // Keep the session id and its tool tracking; reset only the
+                    // per-turn flags (running + final-answer machine) so a trailing
+                    // idle/answer from the original turn cannot complete or nudge the
+                    // continuation before it has produced its own signal.
+                    continuationSentAt = android.os.SystemClock.elapsedRealtime()
+                    val turn = resetContinuationTurn()
+                    sawRunning = turn.sawRunning
+                    finalAnswer = turn.finalAnswer
+                    eventBus.emit(
+                        RuntimeEvent.RecoveryStateChanged(
+                            sessionId,
+                            RecoveryDecision.CONTINUE_IN_PLACE,
+                            continuationAttempt,
+                            SDK_MAX_TRANSPORT_RETRIES,
+                            continuationMessage,
+                        ),
+                    )
+                } else {
+                    // The continuation write failed (e.g. broken pipe on a dying
+                    // session). Fail terminally with recovery info.
+                    Log.w("DshBridge", "Continuation write failed; failing the turn")
+                    failContinuation(continuationMessage.ifBlank { "DeepSeek Harness could not be resumed after a transport error" })
                 }
             }
             if (
@@ -513,6 +694,17 @@ class DshRuntimeBridge(
         }
         pendingOutput.toString().trim().takeIf(String::isNotBlank)?.let {
             if (!parser.consumeDuplicateAssistantMessage(it)) handle(parser.parseLine(it))
+        }
+        // If a continuation was still outstanding (scheduled or sent) when the
+        // process died, fail with recovery info rather than reporting a generic
+        // exit-code failure.
+        if (failure.isBlank() && (continuationSentAt > 0L || continuationDueAt > 0L)) {
+            failure = continuationMessage.ifBlank { "DeepSeek Harness did not resume after a transport error" }
+            lastFailureRecovery = RecoveryFailureInfo(
+                retryAvailable = true,
+                sideEffectsPossible = sawMutatingTool,
+                toolsExecuted = sawToolCall,
+            )
         }
         closeInput()
         return DshSdkRunResult(completed = completed, failure = failure)
@@ -665,9 +857,9 @@ class DshRuntimeBridge(
         }
     }
 
-    private suspend fun emitFailureOnce(sessionId: String, reason: String) {
+    private suspend fun emitFailureOnce(sessionId: String, reason: String, recovery: RecoveryFailureInfo? = null) {
         if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason, recovery))
             if (userStopRequested) {
                 cancelForegroundRuntime()
             } else {
@@ -847,10 +1039,23 @@ class DshRuntimeBridge(
         private const val SDK_SHUTDOWN_ID = 3
         private const val SDK_SHUTDOWN_TIMEOUT_MS = 3_000L
         private const val SDK_NUDGE_WATCHDOG_MS = 30_000L
+        private const val SDK_CONTINUATION_WATCHDOG_MS = 60_000L
+        private const val SDK_MAX_TRANSPORT_RETRIES = 2
     }
 }
 
 private data class DshSdkRunResult(val completed: Boolean, val failure: String)
+
+/**
+ * Consistent snapshot of the live session (id + process + writer) read/written
+ * as a single `@Volatile` object so `recover` can never pair a stale id with a
+ * fresh process/writer during a session transition.
+ */
+private data class LiveSession(
+    val sessionId: String,
+    val process: Process,
+    val writer: BufferedWriter,
+)
 
 /**
  * JSON-RPC id reserved for the follow-up `session/prompt` nudge sent when a turn
@@ -858,6 +1063,9 @@ private data class DshSdkRunResult(val completed: Boolean, val failure: String)
  * prompt id (2), so its acceptance/rejection can be classified independently.
  */
 private const val SDK_NUDGE_PROMPT_ID = 4
+
+/** JSON-RPC id for the in-place `session/prompt` continuation after a transport error. */
+private const val SDK_CONTINUATION_PROMPT_ID = 5
 
 /** True only when the turn ran, produced no assistant text since the last tool,
  * and we have not already sent the follow-up nudge. */
@@ -886,6 +1094,21 @@ internal fun turnCompleted(sawActivity: Boolean, failure: String): Boolean =
  */
 internal fun shouldEvaluateNudgeOnIdle(failure: String, sawRunning: Boolean, shutdownSent: Boolean): Boolean =
     failure.isBlank() && sawRunning && !shutdownSent
+
+/**
+ * Per-turn state an in-place continuation resets: the running flag clears (so a
+ * trailing `session.status: idle` from the original turn is ignored until the
+ * continuation itself signals running) and the final-answer machine is replaced
+ * with a fresh one. The session id and the whole-turn tool flags are deliberately
+ * outside this value and are kept across the reset.
+ */
+internal data class ContinuationTurnReset(
+    val sawRunning: Boolean,
+    val finalAnswer: FinalAnswerStateMachine,
+)
+
+internal fun resetContinuationTurn(): ContinuationTurnReset =
+    ContinuationTurnReset(sawRunning = false, finalAnswer = FinalAnswerStateMachine())
 
 internal enum class FinalAnswerPhase { INITIAL, NUDGE_SENT, AFTER_NUDGE, DONE }
 
@@ -1122,6 +1345,7 @@ internal sealed interface DshSdkProtocolEvent {
     data object PromptAccepted : DshSdkProtocolEvent
     data object NudgeAccepted : DshSdkProtocolEvent
     data class NudgeRejected(val message: String) : DshSdkProtocolEvent
+    data class ContinuationRejected(val message: String) : DshSdkProtocolEvent
     data class Status(val running: Boolean) : DshSdkProtocolEvent
     data class Reasoning(
         val blockId: Long,
@@ -1132,7 +1356,7 @@ internal sealed interface DshSdkProtocolEvent {
     data class ToolStarted(val callId: String, val name: String, val detail: String) : DshSdkProtocolEvent
     data class ToolCompleted(val callId: String, val name: String, val summary: String) : DshSdkProtocolEvent
     data class AssistantText(val text: String) : DshSdkProtocolEvent
-    data class Failed(val message: String) : DshSdkProtocolEvent
+    data class Failed(val message: String, val code: String? = null) : DshSdkProtocolEvent
     data object TurnCompleted : DshSdkProtocolEvent
     data object ShutdownAcknowledged : DshSdkProtocolEvent
     data object Ignored : DshSdkProtocolEvent
@@ -1174,12 +1398,16 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
             val id = frame.optInt("id", -1)
             frame.optJSONObject("error")?.let { error ->
                 val message = error.optString("message").meaningfulDshText("DeepSeek Harness SDK request $id failed")
-                return if (id == SDK_NUDGE_PROMPT_ID) {
-                    // A rejected nudge must stay non-fatal: turning it into `Failed`
-                    // would mark an already-completed turn as SessionFailed.
-                    DshSdkProtocolEvent.NudgeRejected(message)
-                } else {
-                    DshSdkProtocolEvent.Failed(message)
+                return when (id) {
+                    SDK_NUDGE_PROMPT_ID ->
+                        // A rejected nudge must stay non-fatal: turning it into `Failed`
+                        // would mark an already-completed turn as SessionFailed.
+                        DshSdkProtocolEvent.NudgeRejected(message)
+                    SDK_CONTINUATION_PROMPT_ID ->
+                        // A rejected continuation is non-fatal; the continuation
+                        // watchdog takes over and ends the turn terminally.
+                        DshSdkProtocolEvent.ContinuationRejected(message)
+                    else -> DshSdkProtocolEvent.Failed(message)
                 }
             }
             return when (id) {
@@ -1187,6 +1415,7 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
                 2 -> DshSdkProtocolEvent.PromptAccepted
                 3 -> DshSdkProtocolEvent.ShutdownAcknowledged
                 SDK_NUDGE_PROMPT_ID -> DshSdkProtocolEvent.NudgeAccepted
+                SDK_CONTINUATION_PROMPT_ID -> DshSdkProtocolEvent.PromptAccepted
                 else -> DshSdkProtocolEvent.Ignored
             }
         }
@@ -1246,10 +1475,14 @@ internal class DshSdkProtocolParser(private val expectedSessionId: String) {
             "turn/end" -> {
                 val reason = data.optJSONObject("reason")
                 when (reason?.optString("kind")) {
-                    "error" -> DshSdkProtocolEvent.Failed(
-                        reason.optJSONObject("error")?.optString("message").orEmpty()
-                            .meaningfulDshText("DeepSeek Harness turn failed"),
-                    )
+                    "error" -> {
+                        val error = reason.optJSONObject("error")
+                        DshSdkProtocolEvent.Failed(
+                            error?.optString("message").orEmpty()
+                                .meaningfulDshText("DeepSeek Harness turn failed"),
+                            error?.optString("code")?.takeIf { it.isNotBlank() },
+                        )
+                    }
                     "blocked" -> DshSdkProtocolEvent.Failed("DeepSeek Harness was blocked from completing the task")
                     else -> DshSdkProtocolEvent.TurnCompleted
                 }
@@ -1386,3 +1619,49 @@ internal fun compactDshText(value: String, rawLimit: Int, outputLimit: Int): Str
     }
     return result.toString().takeLast(outputLimit)
 }
+
+/** Action the pure transport-retry policy can decide for a failed turn. */
+internal enum class DshTransportRetryAction {
+    RETRY,
+    EXHAUSTED,
+    NOT_TRANSPORT,
+    USER_STOP,
+}
+
+internal data class DshTransportRetryDecision(
+    val action: DshTransportRetryAction,
+    val attempt: Int = 0,
+    val delayMs: Long = 0L,
+)
+
+/**
+ * Pure transport-retry policy: up to two in-place continuations with 5 s then
+ * 15 s backoff, then exhaustion. Non-transport failures and user stops never
+ * retry. Free of Android/coroutine types so the whole sequence is unit-testable.
+ */
+internal class DshTransportRetryState(private val maxAttempts: Int = 2) {
+    private var transportFailures = 0
+
+    fun onFailure(code: String?, message: String, userStopRequested: Boolean): DshTransportRetryDecision {
+        if (userStopRequested) return DshTransportRetryDecision(DshTransportRetryAction.USER_STOP)
+        if (!isTransportFailure(code, message)) return DshTransportRetryDecision(DshTransportRetryAction.NOT_TRANSPORT)
+        transportFailures += 1
+        if (transportFailures > maxAttempts) return DshTransportRetryDecision(DshTransportRetryAction.EXHAUSTED)
+        val delayMs = when (transportFailures) {
+            1 -> 5_000L
+            2 -> 15_000L
+            else -> return DshTransportRetryDecision(DshTransportRetryAction.EXHAUSTED)
+        }
+        return DshTransportRetryDecision(DshTransportRetryAction.RETRY, transportFailures, delayMs)
+    }
+}
+
+/** True when a failure is a transport drop-out that can be retried in place. */
+internal fun isTransportFailure(code: String?, message: String): Boolean =
+    code == "TRANSPORT" || message.contains("Connection error", ignoreCase = true)
+
+private val READ_ONLY_TOOLS = setOf("read", "glob", "grep", "web_search", "web_fetch", "ls", "file_info")
+
+/** True for tools that can mutate the workspace; unknown names default to mutating. */
+internal fun isMutatingTool(name: String): Boolean =
+    name.lowercase() !in READ_ONLY_TOOLS
