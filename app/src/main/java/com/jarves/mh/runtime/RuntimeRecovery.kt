@@ -42,6 +42,10 @@ object RuntimeRecoveryPolicy {
     }
 }
 
+/** Fail-closed: auto-restart is allowed only with a context that proves no tool ran. */
+internal fun canAutoRestartWithoutTools(context: RuntimeRecoveryContext?): Boolean =
+    context != null && !context.toolsExecuted
+
 val DSH_RECOVERY_PROFILE = RuntimeRecoveryProfile(
     canResumePersisted = false,
     reportsToolActivity = true,

@@ -64,6 +64,7 @@ import com.jarves.mh.runtime.DshRuntimeBridge
 import com.jarves.mh.runtime.AgentRegistry
 import com.jarves.mh.runtime.RecoveryAction
 import com.jarves.mh.runtime.RuntimeRecoveryPolicy
+import com.jarves.mh.runtime.canAutoRestartWithoutTools
 import com.jarves.mh.runtime.AgentUpdateInfo
 import com.jarves.mh.runtime.AntigravityAuthController
 import com.jarves.mh.runtime.AntigravityAuthState
@@ -5617,6 +5618,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 liveProcess = it.liveProcess + ActivityItem(str(R.string.vm_api_key_switched), str(R.string.vm_using_key, next.name), true),
             )
         }
+        // Fail-closed, same rule as transport recovery: a turn that already ran tools
+        // must not be replayed in a fresh session without the user's consent. The
+        // rotated key stays active so a manual retry uses it.
+        val context = request.runtime.recoveryContext(event.sessionId, request.project.id)
+        if (!canAutoRestartWithoutTools(context)) return false
         viewModelScope.launch {
             kotlinx.coroutines.delay(300)
             request.runtime.startSession(
