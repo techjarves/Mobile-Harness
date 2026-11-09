@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -2637,6 +2638,7 @@ private fun RootScreenHost(
                 showThemeAction = false,
                 showQuickCommands = true,
                 compactHeader = true,
+                fontSize = state.terminalFontSize,
             )
         }
     }
@@ -4726,7 +4728,11 @@ private fun WorkspaceScreen(
                         )
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                            if (selectedTab == WorkspaceTab.TERMINAL) {
+                                "${state.projectTerminalCwd} · Ubuntu PRoot"
+                            } else {
+                                "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}"
+                            },
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -4736,6 +4742,16 @@ private fun WorkspaceScreen(
                 },
                 navigationIcon = { IconButton(onClick = requestBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
                 actions = {
+                    if (selectedTab == WorkspaceTab.TERMINAL) {
+                        if (state.projectTerminalRunning) {
+                            IconButton(onClick = onTerminalStop) {
+                                Icon(Icons.Default.Stop, stringResource(R.string.chat_stop))
+                            }
+                        }
+                        IconButton(onClick = onTerminalClear) {
+                            Icon(Icons.Default.ClearAll, stringResource(R.string.ws_terminal_clear_output))
+                        }
+                    }
                     if (isAndroidProject) {
                         IconButton(
                             onClick = { showAndroidBuild = true },
@@ -4773,7 +4789,7 @@ private fun WorkspaceScreen(
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             when (selectedTab) {
                 WorkspaceTab.CHAT -> ChatTab(
                     state.messages,
@@ -4873,6 +4889,8 @@ private fun WorkspaceScreen(
                     showThemeAction = false,
                     showQuickCommands = false,
                     compactHeader = true,
+                    showHeader = false,
+                    fontSize = state.terminalFontSize,
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
