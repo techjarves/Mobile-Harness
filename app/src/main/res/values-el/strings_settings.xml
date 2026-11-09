@@ -94,8 +94,13 @@
     <string name="st_sync">Συγχρονισμός</string>
     <string name="st_tap_to_activate">Πατήστε για ενεργοποίηση</string>
     <string name="st_tap_to_make_active">Πατήστε για να γίνει ενεργό</string>
+    <string name="st_terminal_text">Κείμενο τερματικού</string>
     <string name="st_test_connection_and_save">Έλεγχος σύνδεσης και αποθήκευση</string>
     <string name="st_testing_connection">Δοκιμή σύνδεσης…</string>
+    <string name="st_text_size">Μέγεθος κειμένου</string>
+    <string name="st_text_size_large">Μεγάλο</string>
+    <string name="st_text_size_normal">Κανονικό</string>
+    <string name="st_text_size_xlarge">Πολύ μεγάλο</string>
     <string name="st_tier_open_source">Ανοιχτού κώδικα</string>
     <string name="st_tier_pro_reasoning">Pro συλλογισμός</string>
     <string name="st_tier_stable">Σταθερό</string>
