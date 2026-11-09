@@ -167,6 +167,7 @@
     <string name="vm_key_switched_toast">%1$s failed. Switched to %2$s.</string>
     <string name="vm_api_key_switched">API key switched</string>
     <string name="vm_using_key">Using %1$s</string>
+    <string name="vm_transport_reconnecting">Connection lost. Reconnecting…</string>
     <string name="vm_task_interrupted">Task interrupted</string>
     <string name="vm_task_interrupted_detail">The agent process stopped before reporting completion. Continue this chat to resume its official session.</string>
     <plurals name="vm_agent_updates_available">

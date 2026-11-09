@@ -241,6 +241,40 @@ internal fun sanitizeTerminalOutput(text: String): String = text
     .joinToString("\n") { line -> line.trimEnd('\r').substringAfterLast('\r') }
     .filter { it == '\n' || it == '\t' || it.code >= 0x20 }
 
+/**
+ * True when a DSH turn failed because the transport dropped, as opposed to an auth/quota/
+ * rate-limit rejection. The DSH parser keeps only the error message ("Connection error."),
+ * so `code` (TRANSPORT) is no longer present; both spellings are matched case-insensitively.
+ */
+internal fun isTransportFailure(reason: String): Boolean {
+    val value = reason.lowercase()
+    val transport = "connection error" in value || "transport" in value
+    if (!transport) return false
+    val authish = listOf("api key", "authentication", "401", "403", "429", "quota", "rate limit", "expired")
+    return authish.none { it in value }
+}
+
+/**
+ * Backoff budget for automatic transport retries. Attempt 0 waits 5 s, attempt 1 waits 15 s;
+ * attempt 2 and beyond return null to signal the budget is exhausted.
+ */
+internal fun transportRetryDelayMillis(attempt: Int): Long? = when (attempt) {
+    0 -> 5_000L
+    1 -> 15_000L
+    else -> null
+}
+
+/**
+ * True when `stopTask` must finalize the stopped state locally instead of delegating to the
+ * bridge. Only the transport reconnect gap triggers this: there the bridge has already ended
+ * its session (`stopActiveSession` would no-op) and no terminal event is coming, so the view
+ * model has to flip `isRunning` itself. A null `activeSessionId` alone (e.g. between
+ * `startPrompt` and the first `SessionStarted`) must still delegate to `stopActiveSession`,
+ * because the bridge sets its own session id synchronously and the real agent is still running.
+ */
+internal fun shouldFinalizeStopLocally(activeSessionId: String?, retryGapActive: Boolean): Boolean =
+    retryGapActive
+
 private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
 
 private fun antigravityEffortFromModel(model: String): String? =
@@ -472,6 +506,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var githubAuthJob: kotlinx.coroutines.Job? = null
     @Volatile private var lastOpenedAntigravityAuthUrl: String? = null
     private var activeRuntimeRequest: RuntimeRetryRequest? = null
+    private var transportRetryAttempts: Int = 0
+    private var transportRetryGeneration: Long = 0
+    private var transportRetryJob: kotlinx.coroutines.Job? = null
+    private var transportRetryWaiting: Boolean = false
+    private var transportRetryingFromSessionId: String? = null
     private val pendingFollowUps = java.util.ArrayDeque<QueuedFollowUp>()
     @Volatile private var steeringToFollowUp: Boolean = false
     private val failedApiKeyIds = mutableSetOf<String>()
@@ -4858,6 +4897,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendLine("</attached_files>")
         }
         failedApiKeyIds.clear()
+        transportRetryAttempts = 0
+        cancelTransportRetry()
         activeRuntimeRequest = RuntimeRetryRequest(
             runtime = activeRuntime(),
             project = project,
@@ -4888,8 +4929,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!_state.value.isRunning) return
         steeringToFollowUp = false
         pendingFollowUps.clear()
+        transportRetryAttempts = 0
+        val retryGapActive = transportRetryWaiting
+        val finalizeLocally = shouldFinalizeStopLocally(_state.value.activeSessionId, retryGapActive)
+        cancelTransportRetry()
         _state.update { it.copy(queuedFollowUps = emptyList()) }
-        viewModelScope.launch { activeRuntime().stopActiveSession() }
+        if (finalizeLocally) {
+            finalizeStoppedByUser()
+        } else {
+            viewModelScope.launch { activeRuntime().stopActiveSession() }
+        }
+    }
+
+    /**
+     * Paints the stopped state without waiting on a bridge terminal event. Used when the bridge
+     * has no live session to stop (transport reconnect gap), so `stopActiveSession` would no-op.
+     */
+    private fun finalizeStoppedByUser() {
+        val finishedAt = System.currentTimeMillis()
+        val displayReason = str(R.string.md_reason_stopped_by_user)
+        _state.update { current ->
+            attachTaskDuration(
+                finishWorkSegment(
+                    appendWorkItem(current, ActivityItem("Task stopped", displayReason)),
+                    finishedAt,
+                ),
+                finishedAt,
+            ).copy(
+                isRunning = false,
+                activeSessionId = null,
+                pendingApproval = null,
+                activity = listOf(ActivityItem("Task stopped", displayReason)) + current.activity,
+                taskFinishedAtMillis = finishedAt,
+                currentTaskRequest = null,
+            )
+        }
+        activeRuntimeRequest = null
+        failedApiKeyIds.clear()
+        steeringToFollowUp = false
+        persistMessages(includeLiveProcess = true)
     }
 
     private fun startNextFollowUp() {
@@ -5065,16 +5143,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val terminalEventForActiveSession =
             (event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) &&
                 _state.value.isRunning &&
-                (_state.value.activeSessionId == null || _state.value.activeSessionId == event.sessionId)
+                (_state.value.activeSessionId == null || _state.value.activeSessionId == event.sessionId) &&
+                !isStaleTransportRetryEvent(event)
         if (event is RuntimeEvent.SessionFailed && _state.value.agentKind == AgentKind.ANTIGRAVITY &&
             (event.reason.contains("sign-in", true) || event.reason.contains("authentication", true))) {
             antigravityAuthController.invalidateSession(event.reason)
         }
         if (event is RuntimeEvent.SessionFailed && retryWithNextApiKey(event)) return
+        if (event is RuntimeEvent.SessionFailed && retryOnTransportFailure(event)) return
         _state.update { current ->
             if (!current.isRunning) {
                 current
             } else if (current.activeSessionId != null && current.activeSessionId != event.sessionId) {
+                current
+            } else if (isStaleTransportRetryEvent(event)) {
                 current
             } else when (event) {
                 is RuntimeEvent.SessionStarted -> current.copy(
@@ -5284,6 +5366,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeRuntimeRequest = null
             failedApiKeyIds.clear()
             steeringToFollowUp = false
+            transportRetryAttempts = 0
+            cancelTransportRetry()
             if (pendingFollowUps.isNotEmpty()) {
                 viewModelScope.launch {
                     delay(150)
@@ -5335,6 +5419,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         return true
+    }
+
+    /**
+     * Second retry layer for DSH transport drop-outs. After the SDK exhausts its 5 internal
+     * retries it reports `reason == "Connection error."`; the app retries the same turn up to
+     * 2 times with 5 s then 15 s backoff, only for the captured DSH runtime request.
+     */
+    private fun retryOnTransportFailure(event: RuntimeEvent.SessionFailed): Boolean {
+        val current = _state.value
+        if (!current.isRunning || current.activeSessionId != event.sessionId) return false
+        if (!isTransportFailure(event.reason)) return false
+        val request = activeRuntimeRequest ?: return false
+        if (request.runtime !is DshRuntimeBridge) return false
+        val delayMillis = transportRetryDelayMillis(transportRetryAttempts) ?: return false
+        transportRetryAttempts += 1
+        val generation = ++transportRetryGeneration
+        transportRetryWaiting = true
+        transportRetryingFromSessionId = event.sessionId
+        _state.update {
+            it.copy(
+                activeSessionId = null,
+                pendingApproval = null,
+                activity = listOf(ActivityItem(str(R.string.vm_transport_reconnecting), "", isComplete = false)) + it.activity,
+            )
+        }
+        transportRetryJob = viewModelScope.launch {
+            delay(delayMillis)
+            if (generation != transportRetryGeneration) return@launch
+            if (!_state.value.isRunning) return@launch
+            if (activeRuntimeRequest !== request) return@launch
+            transportRetryWaiting = false
+            request.runtime.startSession(
+                request.project.id,
+                request.project.slug,
+                request.project.kind,
+                request.prompt,
+                request.history,
+                request.provider,
+            )
+        }
+        return true
+    }
+
+    /** True while a terminal event belongs to the failed session we are retrying away from. */
+    private fun isStaleTransportRetryEvent(event: RuntimeEvent): Boolean {
+        val retryingFrom = transportRetryingFromSessionId ?: return false
+        if (event.sessionId != retryingFrom) return false
+        return event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed
+    }
+
+    private fun cancelTransportRetry() {
+        transportRetryGeneration++
+        transportRetryJob?.cancel()
+        transportRetryJob = null
+        transportRetryWaiting = false
+        transportRetryingFromSessionId = null
     }
 
     /**
