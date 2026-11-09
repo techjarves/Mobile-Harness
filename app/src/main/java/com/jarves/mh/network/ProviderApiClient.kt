@@ -194,6 +194,8 @@ class ProviderApiClient(private val context: Context? = null) {
                     setRequestProperty("User-Agent", "opencode/1.18.20")
                     setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
                 }
+                openCodeGoHeaders(endpoint, "ses_${UUID.randomUUID().toString().replace("-", "")}")
+                    .forEach { (name, value) -> setRequestProperty(name, value) }
                 if (apiKey.isNotBlank() && protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
                     setRequestProperty("x-api-key", apiKey)
                     setRequestProperty("anthropic-version", "2023-06-01")
@@ -218,7 +220,7 @@ class ProviderApiClient(private val context: Context? = null) {
         }.getOrElse { HttpResult(0, "", it.message ?: text(R.string.rt_api_network_failed, "Network connection failed")) }
     }
 
-    private fun modelEndpoints(baseUrl: String, protocol: ProviderProtocol): List<String> {
+    internal fun modelEndpoints(baseUrl: String, protocol: ProviderProtocol): List<String> {
         val base = baseUrl.trim().trimEnd('/')
         val withoutAnthropic = base.removeSuffix("/anthropic")
         val candidates = when (protocol) {
@@ -229,7 +231,7 @@ class ProviderApiClient(private val context: Context? = null) {
         return candidates.distinct()
     }
 
-    private fun messagesEndpoint(baseUrl: String, protocol: ProviderProtocol): String {
+    internal fun messagesEndpoint(baseUrl: String, protocol: ProviderProtocol): String {
         val base = baseUrl.trim().trimEnd('/')
         return when (protocol) {
             ProviderProtocol.OPENROUTER -> "$base/v1/messages"
@@ -301,7 +303,7 @@ class ProviderApiClient(private val context: Context? = null) {
         else -> text(R.string.rt_api_http_error, "The provider returned HTTP $code. Check the URL and account access.", code)
     }
 
-    private fun providerErrorMessage(body: String): String? {
+    internal fun providerErrorMessage(body: String): String? {
         if (body.isBlank()) return null
         val extracted = runCatching {
             val root = JSONObject(body)
@@ -315,6 +317,7 @@ class ProviderApiClient(private val context: Context? = null) {
         return extracted
             .replace(Regex("(?i)bearer\\s+\\S+"), "Bearer ••••")
             .replace(Regex("(?i)sk-[a-z0-9_-]{8,}"), "sk-••••")
+            .replace(Regex("(?i)oc_sk_[a-z0-9_-]{8,}"), "oc_sk_••••")
             .replace(Regex("\\s+"), " ")
             .trim()
             .take(280)
@@ -368,3 +371,21 @@ object ModelResponseParser {
         }.distinctBy { it.id }.sortedWith(compareByDescending<DiscoveredModel> { it.isFree }.thenBy { it.displayName.lowercase() })
     }.getOrDefault(emptyList())
 }
+
+/** OpenCode Go lives under /inference/go/; OpenCode Zen shares the host but not this path. */
+internal fun isOpenCodeGoEndpoint(endpoint: String): Boolean =
+    endpoint.startsWith("https://opencode.ai/inference/go/", ignoreCase = true)
+
+/**
+ * OpenCode Go requires a session id on every inference call. The catalog is public,
+ * but sending the same identifying headers there is harmless and keeps one code path.
+ */
+internal fun openCodeGoHeaders(endpoint: String, sessionId: String): Map<String, String> =
+    if (!isOpenCodeGoEndpoint(endpoint)) {
+        emptyMap()
+    } else {
+        mapOf(
+            "User-Agent" to "MobileHarness/${com.jarves.mh.BuildConfig.VERSION_NAME}",
+            "x-opencode-session" to sessionId,
+        )
+    }

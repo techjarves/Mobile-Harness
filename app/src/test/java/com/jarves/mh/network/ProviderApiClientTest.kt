@@ -4,6 +4,7 @@ import com.jarves.mh.model.ProviderProtocol
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProviderApiClientTest {
@@ -52,5 +53,47 @@ class ProviderApiClientTest {
 
         assertEquals(8, chat.getInt("max_tokens"))
         assertEquals(8, anthropic.getInt("max_tokens"))
+    }
+
+    @Test
+    fun openCodeGoEndpointsTargetAnthropicMessages() {
+        val client = ProviderApiClient()
+        val base = "https://opencode.ai/inference/go/anthropic"
+
+        assertEquals(
+            "https://opencode.ai/inference/go/anthropic/v1/messages",
+            client.messagesEndpoint(base, ProviderProtocol.ANTHROPIC_GATEWAY),
+        )
+        assertEquals(
+            "https://opencode.ai/inference/go/anthropic/v1/models",
+            client.modelEndpoints(base, ProviderProtocol.ANTHROPIC_GATEWAY).first(),
+        )
+    }
+
+    @Test
+    fun openCodeGoRequestsCarrySessionAndMobileHarnessAgent() {
+        val headers = openCodeGoHeaders(
+            "https://opencode.ai/inference/go/anthropic/v1/messages",
+            sessionId = "ses_abc123",
+        )
+
+        assertEquals("ses_abc123", headers["x-opencode-session"])
+        assertTrue(headers.getValue("User-Agent").startsWith("MobileHarness/"))
+    }
+
+    @Test
+    fun otherEndpointsGetNoOpenCodeGoHeaders() {
+        assertTrue(openCodeGoHeaders("https://api.deepseek.com/anthropic/v1/messages", "ses_abc123").isEmpty())
+        assertTrue(openCodeGoHeaders("https://opencode.ai/zen/v1/responses", "ses_abc123").isEmpty())
+    }
+
+    @Test
+    fun openCodeGoKeysAreRedactedFromProviderErrors() {
+        val message = ProviderApiClient().providerErrorMessage(
+            """{"error":{"message":"invalid credential oc_sk_abc12345"}}""",
+        )
+
+        assertTrue(message!!.contains("oc_sk_••••"))
+        assertFalse(message.contains("oc_sk_abc12345"))
     }
 }

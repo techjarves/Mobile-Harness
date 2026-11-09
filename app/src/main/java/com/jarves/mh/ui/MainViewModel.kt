@@ -2846,7 +2846,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun discoverModels(profile: ProviderProfile, secret: String): ModelDiscoveryResult {
         val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
-        return providerApi.discoverModels(profile.baseUrl, key, providerProtocolForAgent(profile, _state.value.agentKind))
+        return providerApi.discoverModels(profile.resolvedBaseUrl, key, providerProtocolForAgent(profile, _state.value.agentKind))
     }
 
     suspend fun validateProvider(
@@ -2856,7 +2856,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): ConnectionValidation {
         val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
         return providerApi.validate(
-            profile.baseUrl,
+            profile.resolvedBaseUrl,
             profile.model,
             key,
             providerProtocolForAgent(profile, _state.value.agentKind),
@@ -2886,13 +2886,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             testClaudeSubscription(profile)
             return
         }
-        if (profile.baseUrl.isBlank() || profile.model.isBlank()) return
+        if (profile.resolvedBaseUrl.isBlank() || profile.model.isBlank()) return
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_ping_sending)) }
         viewModelScope.launch {
             val key = vault.get(profile.kind.name).orEmpty()
             val result = providerApi.validate(
-                profile.baseUrl,
+                profile.resolvedBaseUrl,
                 profile.model,
                 key,
                 providerProtocolForAgent(profile, _state.value.agentKind),

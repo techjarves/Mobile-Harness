@@ -5,6 +5,7 @@ import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.ProviderProtocol
+import com.jarves.mh.model.defaultDshApiForProvider
 import com.jarves.mh.model.inferredDshApiForUrl
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.model.providersForAgent
@@ -325,9 +326,81 @@ class DshRouteMapperTest {
         assertEquals("https://integrate.api.nvidia.com/v1", route.custom?.baseUrl)
     }
 
+    @Test
+    fun openCodeGoUsesFixedAnthropicMessagesRoute() {
+        val route = DshRouteMapper.forProfile(ProviderProfile(ProviderKind.OPENCODE_GO))
+        assertEquals("opencode-go", route.name)
+        assertEquals("anthropic-messages", route.custom?.api)
+        assertEquals("https://opencode.ai/inference/go/anthropic", route.custom?.baseUrl)
+        assertEquals(DshRuntimeBridge.FALLBACK_KEY_ENV, route.keyEnv)
+        assertEquals("deepseek-v4.1-flash", route.defaultModel)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun claudeSubscriptionIsRejected() {
         DshRouteMapper.forProfile(ProviderProfile(ProviderKind.CLAUDE))
+    }
+}
+
+class DshSettingsBuilderTest {
+    @Test
+    fun openCodeGoSettingsCarrySessionHeaderAndNeverTheKey() {
+        val profile = ProviderProfile(ProviderKind.OPENCODE_GO)
+        val route = withOpenCodeGoSession(
+            DshRouteMapper.forProfile(profile),
+            profile,
+            "6f1c9a0e-2b3d-4e5f-8a9b-0c1d2e3f4a5b",
+        )
+        val yaml = buildDshSettings(route, profile)
+
+        assertTrue(yaml, yaml.contains("x-opencode-session: 'ses_6f1c9a0e2b3d4e5f8a9b0c1d2e3f4a5b'"))
+        assertTrue(yaml, yaml.contains("api: anthropic-messages"))
+        assertTrue(yaml, yaml.contains("baseURL: 'https://opencode.ai/inference/go/anthropic'"))
+        assertTrue(yaml, yaml.contains("apiKeyEnv: ${DshRuntimeBridge.FALLBACK_KEY_ENV}"))
+        assertFalse(yaml, yaml.contains("oc_sk_"))
+    }
+
+    @Test
+    fun customProfilePointedAtGoStillGetsASessionHeader() {
+        val profile = ProviderProfile(
+            ProviderKind.CUSTOM,
+            baseUrl = "https://opencode.ai/inference/go/anthropic",
+            model = "deepseek-v4.1-flash",
+            dshApi = "anthropic-messages",
+        )
+        val route = withOpenCodeGoSession(DshRouteMapper.forProfile(profile), profile, "abc-123")
+
+        assertEquals("ses_abc123", route.headers["x-opencode-session"])
+    }
+
+    @Test
+    fun openCodeGoSessionSurvivesRouteRewritesWhenTheKindIsGo() {
+        val profile = ProviderProfile(ProviderKind.OPENCODE_GO)
+        val routed = DshRouteMapper.forProfile(profile).copy(
+            custom = DshCustomRoute("anthropic-messages", "http://127.0.0.1:12345"),
+        )
+        val route = withOpenCodeGoSession(routed, profile, "abc-123")
+
+        assertEquals("ses_abc123", route.headers["x-opencode-session"])
+        assertEquals("http://127.0.0.1:12345", route.custom?.baseUrl)
+    }
+
+    @Test
+    fun sessionIdIsPrefixedAndStrippedOfPunctuation() {
+        assertEquals("ses_abc123", openCodeGoSessionId("abc-123"))
+    }
+
+    @Test
+    fun routeWithoutHeadersOmitsTheHeadersBlock() {
+        val profile = ProviderProfile(ProviderKind.ANTHROPIC)
+        val route = withOpenCodeGoSession(
+            DshRouteMapper.forProfile(profile),
+            profile,
+            "abc-123",
+        )
+        val yaml = buildDshSettings(route, profile)
+        assertTrue(route.headers.isEmpty())
+        assertFalse(yaml, yaml.contains("headers:"))
     }
 }
 
@@ -378,7 +451,27 @@ class AgentProviderPresetTest {
         assertFalse(ProviderKind.CLAUDE in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.NVIDIA_NIM in DEEPSEEK_HARNESS_PROVIDERS)
-        assertEquals(6, DEEPSEEK_HARNESS_PROVIDERS.size)
+        assertTrue(ProviderKind.OPENCODE_GO in DEEPSEEK_HARNESS_PROVIDERS)
+        assertEquals(7, DEEPSEEK_HARNESS_PROVIDERS.size)
+    }
+
+    @Test
+    fun openCodeGoIsOfferedToHarnessAndClaudeCodeOnly() {
+        assertTrue(ProviderKind.OPENCODE_GO in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        assertTrue(ProviderKind.OPENCODE_GO in providersForAgent(AgentKind.CLAUDE_CODE))
+        assertFalse(ProviderKind.OPENCODE_GO in providersForAgent(AgentKind.ANTIGRAVITY))
+    }
+
+    @Test
+    fun openCodeGoPresetIsLockedToAnthropicMessages() {
+        val go = ProviderKind.OPENCODE_GO
+        assertEquals("https://opencode.ai/inference/go/anthropic", go.defaultBaseUrl)
+        assertEquals("deepseek-v4.1-flash", go.defaultModel)
+        assertTrue(go.fixedBaseUrl)
+        assertTrue(go.fixedProtocol)
+        assertEquals("anthropic-messages", defaultDshApiForProvider(go))
+        assertEquals(ProviderProtocol.ANTHROPIC_GATEWAY, providerProtocolForAgent(ProviderProfile(go), AgentKind.DEEPSEEK_HARNESS))
+        assertEquals("https://opencode.ai/inference/go/anthropic", ProviderProfile(go, baseUrl = "https://evil.example/").resolvedBaseUrl)
     }
 
     @Test

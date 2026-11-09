@@ -278,6 +278,7 @@ fun AgentScreen(
         val effectiveKey = apiKey.trim().ifBlank { newApiKey.trim() }
         val supportsPublicDiscovery = selectedKind == ProviderKind.LLM_ROUTER ||
             selectedKind == ProviderKind.OPENCODE_ZEN ||
+            selectedKind == ProviderKind.OPENCODE_GO ||
             selectedKind == ProviderKind.CUSTOM // self-hosted servers often need no key
         if (effectiveKey.isBlank() && !supportsPublicDiscovery) {
             status = context.getString(R.string.st_discover_need_key)
@@ -2168,6 +2169,12 @@ private fun defaultModelsForProvider(kind: ProviderKind, context: android.conten
     )
     ProviderKind.OPENCODE_ZEN -> listOf(
         DiscoveredModel(ProviderKind.OPENCODE_ZEN.defaultModel, context.getString(R.string.md_model_opencode_default)),
+    )
+    ProviderKind.OPENCODE_GO -> listOf(
+        DiscoveredModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash"),
+        DiscoveredModel("kimi-k3.1-pro", "Kimi K3.1 Pro"),
+        DiscoveredModel("gpt-6-luna", "GPT-6 Luna"),
+        DiscoveredModel("claude-haiku-5-5", "Claude Haiku 5.5"),
     )
     ProviderKind.NVIDIA_NIM -> listOf(
         DiscoveredModel(ProviderKind.NVIDIA_NIM.defaultModel, "Qwen 2.5 Coder 32B"),

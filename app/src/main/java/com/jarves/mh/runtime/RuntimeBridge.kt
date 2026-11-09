@@ -74,7 +74,8 @@ object RuntimeLaunchConfigBuilder {
             com.jarves.mh.model.ProviderProtocol.ANTHROPIC_GATEWAY -> {
                 // Claude Code appends /v1/messages itself; accept base URLs entered with or
                 // without /v1 so the agent hits the same endpoint as Test connection.
-                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trim().trimEnd('/').removeSuffix("/v1")
+                // OpenCode Go recognizes Claude Code's native x-claude-code-session-id.
+                environment["ANTHROPIC_BASE_URL"] = profile.resolvedBaseUrl.trim().trimEnd('/').removeSuffix("/v1")
                 environment["ANTHROPIC_MODEL"] = profile.model
             }
             com.jarves.mh.model.ProviderProtocol.OPENROUTER -> {
