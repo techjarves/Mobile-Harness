@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -258,7 +259,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(14.dp))
                     Text(stringResource(R.string.st_text_size), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp).selectableGroup(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
@@ -273,7 +274,7 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(14.dp))
                     Text(stringResource(R.string.st_terminal_text), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TERMINAL_FONT_SIZE_OPTIONS.forEach { size ->
                             DisplayChoice(stringResource(R.string.st_terminal_text_size_value, size), state.terminalFontSize == size, { onSetTerminalFontSize(size) }, Modifier.weight(1f))
                         }

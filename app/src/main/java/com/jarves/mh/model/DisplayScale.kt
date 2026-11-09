@@ -5,7 +5,7 @@ import com.jarves.mh.R
 import kotlin.math.abs
 
 /** One selectable UI scale together with the resource for its localized label. */
-data class DisplayScaleOption(val scale: Float, @StringRes val labelRes: Int)
+data class DisplayScaleOption(val scale: Float, @param:StringRes val labelRes: Int)
 
 val UI_SCALE_OPTIONS = listOf(
     DisplayScaleOption(0.75f, R.string.st_text_size_xsmall),
