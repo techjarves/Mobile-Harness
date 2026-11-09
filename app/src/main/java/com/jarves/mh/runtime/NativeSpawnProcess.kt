@@ -33,14 +33,39 @@ internal class NativeSpawnProcess private constructor(
         }
     }
 
-    /** Waits for the PTY pump to finish writing. No-op for non-PTY processes. */
-    internal fun awaitOutputPump(timeoutMillis: Long = 5_000) {
-        outputPump?.join(timeoutMillis)
+    /**
+     * Best effort: waits for the PTY pump to finish, then for [quietMillis] without new output.
+     *
+     * The pump only exits when every slave fd closes, so a command that backgrounds a child
+     * (`npm run dev &`, `tail -f &`, a daemon) would otherwise stall a completed command for the
+     * whole [timeoutMillis] budget. Treat a quiet output file as "done" instead, capped by
+     * [timeoutMillis]. No-op for non-PTY processes.
+     *
+     * Every call starts a fresh quiet window, so the drain after [waitFor] still waits for a
+     * live pump instead of returning on the previous call's quiet state.
+     */
+    internal fun awaitOutputPump(
+        timeoutMillis: Long = OUTPUT_PUMP_TIMEOUT_MS,
+        quietMillis: Long = OUTPUT_PUMP_QUIET_MS,
+    ) {
+        val pump = outputPump ?: return
+        awaitOutputPumpQuiet(
+            isAlive = { pump.isAlive },
+            length = { outputFile.length() },
+            now = { System.nanoTime() },
+            join = { pump.join(it) },
+            timeoutMillis = timeoutMillis,
+            quietMillis = quietMillis,
+            pollMillis = OUTPUT_PUMP_POLL_MS,
+        )
     }
 
     /**
      * Resizes the PTY and signals the child with SIGWINCH. Returns false when this is a
      * non-PTY process, the request is invalid, or the fd was already closed.
+     *
+     * Kept best-effort: the pump owns the descriptor and may close it concurrently, so a
+     * failed resize must never abort the terminal session.
      */
     internal fun resizePty(rows: Int, columns: Int): Boolean {
         val master = ptyMaster ?: return false
@@ -83,6 +108,10 @@ internal class NativeSpawnProcess private constructor(
     override fun isAlive(): Boolean = runCatching { exitValue(); false }.getOrDefault(true)
 
     companion object {
+        private const val OUTPUT_PUMP_TIMEOUT_MS = 1_000L
+        private const val OUTPUT_PUMP_QUIET_MS = 250L
+        private const val OUTPUT_PUMP_POLL_MS = 50L
+
         fun start(
             argv: List<String>,
             environment: Map<String, String>,

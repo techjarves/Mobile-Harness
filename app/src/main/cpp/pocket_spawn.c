@@ -151,6 +151,7 @@ Java_com_jarves_mh_runtime_NativeSpawn_resizePty(
     JNIEnv *env, jobject self, jint fd, jint rows, jint columns) {
     (void)env; (void)self;
     if (fd < 0 || rows <= 0 || columns <= 0) return JNI_FALSE;
+    if (rows > 0xFFFF || columns > 0xFFFF) return JNI_FALSE;
     struct winsize size = {
         .ws_row = (unsigned short)rows,
         .ws_col = (unsigned short)columns,

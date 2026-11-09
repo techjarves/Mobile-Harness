@@ -54,4 +54,36 @@ class TerminalOutputReaderTest {
 
         assertNull(readTerminalOutputChunk(file, 0))
     }
+
+    @Test
+    fun `drain stops at the total byte cap`() {
+        val file = temp.newFile("capped.log").apply { writeText("x".repeat(250)) }
+        val collected = StringBuilder()
+
+        val offset = drainTerminalOutput(file, 0, maxBytes = 16, maxTotalBytes = 40) {
+            collected.append(it)
+        }
+
+        assertEquals(40, collected.length)
+        assertEquals(40L, offset)
+    }
+
+    @Test
+    fun `drain recovers bytes written after the last poll`() {
+        val file = temp.newFile("drain.log").apply { writeText("start\n") }
+        val first = readTerminalOutputChunk(file, 0)!!
+        val collected = StringBuilder(first.text)
+
+        // The pump writes the tail and the cwd marker after the poll loop saw the first chunk.
+        file.appendText("tail\n__POCKETDEV_CWD__/workspace/project\n")
+
+        val offset = drainTerminalOutput(file, first.nextOffset) { collected.append(it) }
+
+        assertEquals(
+            "start\ntail\n__POCKETDEV_CWD__/workspace/project\n",
+            collected.toString(),
+        )
+        assertEquals(file.length(), offset)
+        assertNull(readTerminalOutputChunk(file, offset))
+    }
 }

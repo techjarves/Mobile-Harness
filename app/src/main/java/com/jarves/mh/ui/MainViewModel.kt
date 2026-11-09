@@ -904,10 +904,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Keeps the guest terminal's columns and rows in sync with the visible console area. */
     fun setProjectTerminalViewport(columns: Int, rows: Int) {
         val viewport = TerminalViewport.clamped(columns, rows)
-        val changed = _state.value.projectTerminalViewport != viewport
-        if (changed) _state.update { it.copy(projectTerminalViewport = viewport) }
-        if (changed && _state.value.projectTerminalRunning) {
-            (projectTerminalProcess as? NativeSpawnProcess)?.resizePty(viewport.rows, viewport.columns)
+        val current = _state.value
+        if (current.projectTerminalViewport == viewport) return
+        _state.update { it.copy(projectTerminalViewport = viewport) }
+        if (current.projectTerminalRunning) {
+            (projectTerminalProcess as? NativeSpawnProcess)?.resizePty(
+                rows = viewport.rows,
+                columns = viewport.columns,
+            )
         }
     }
 
@@ -1089,6 +1093,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (projectTerminalStopRequested) process.destroy()
         val native = process as? NativeSpawnProcess
             ?: return ProjectTerminalResult(str(R.string.vm_unsupported_terminal_process), 1, cwd)
+        // The viewport may have changed while the process was spawning; setProjectTerminalViewport
+        // saw no process to resize yet, so apply the current size now.
+        val currentViewport = _state.value.projectTerminalViewport
+        if (currentViewport != viewport) {
+            native.resizePty(rows = currentViewport.rows, columns = currentViewport.columns)
+        }
         var offset = 0L
         val output = StringBuilder()
         var autoConfirmed = false
@@ -1120,11 +1130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val exitCode = process.waitFor()
         native.awaitOutputPump()
-        while (true) {
-            val chunk = readTerminalOutputChunk(native.outputFile, offset) ?: break
-            offset = chunk.nextOffset
-            output.append(chunk.text)
-        }
+        drainTerminalOutput(native.outputFile, offset) { output.append(it) }
         runCatching { process.outputStream.close() }
         val raw = output.toString()
         val cwdAfter = raw.substringAfter(marker, "")

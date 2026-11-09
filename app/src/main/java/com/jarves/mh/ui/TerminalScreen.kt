@@ -65,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -133,9 +134,16 @@ fun TerminalScreen(
     fontSize: Int = DEFAULT_TERMINAL_FONT_SIZE,
     onViewportSizeChanged: (columns: Int, rows: Int) -> Unit = { _, _ -> },
 ) {
-    var commandInput by remember { mutableStateOf(TextFieldValue()) }
-    var commandHistory by remember { mutableStateOf(emptyList<String>()) }
-    var historyIndex by remember { mutableStateOf(-1) }
+    var commandInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue())
+    }
+    var commandHistory by rememberSaveable(
+        stateSaver = listSaver(
+            save = { it.toList() },
+            restore = { it },
+        ),
+    ) { mutableStateOf(emptyList<String>()) }
+    var historyIndex by rememberSaveable { mutableStateOf(-1) }
     var altActive by rememberSaveable { mutableStateOf(false) }
     var ctrlActive by rememberSaveable { mutableStateOf(false) }
     val terminalScrollState = rememberScrollState()
@@ -564,9 +572,13 @@ private fun TerminalKeyButton(
     fontSize: Int = DEFAULT_TERMINAL_FONT_SIZE,
     onClick: () -> Unit,
 ) {
-    val activeStateDescription = stringResource(
-        if (active) R.string.ws_terminal_modifier_active else R.string.ws_terminal_modifier_inactive,
-    )
+    val activeStateDescription = if (showActiveState) {
+        stringResource(
+            if (active) R.string.ws_terminal_modifier_active else R.string.ws_terminal_modifier_inactive,
+        )
+    } else {
+        null
+    }
     androidx.compose.material3.OutlinedButton(
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
@@ -575,7 +587,7 @@ private fun TerminalKeyButton(
             .then(if (fixedWidth) Modifier.widthIn(min = 70.dp) else Modifier)
             .semantics {
                 contentDescription = description
-                if (showActiveState) stateDescription = activeStateDescription
+                activeStateDescription?.let { stateDescription = it }
             },
         colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
             containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else Color.Transparent,
@@ -592,9 +604,15 @@ private fun TerminalKeyButton(
             fontSize = fontSize.sp,
             lineHeight = terminalLineHeight(fontSize),
         )
-        if (showActiveState && active) {
+        if (showActiveState) {
+            // Reserve the slot even when inactive so activating ALT/CTRL cannot reflow the row.
             Spacer(Modifier.width(4.dp))
-            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
+            Icon(
+                Icons.Default.Check,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = if (active) PocketOrange else Color.Transparent,
+            )
         }
     }
 }
