@@ -2,7 +2,7 @@
 
 **Status:** Available for DeepSeek Harness and Claude Code. Not offered for Antigravity.
 **Enum:** `ProviderKind.OPENCODE_GO`
-**Introduced in:** 1.0.10 (`feat/opencode-go-provider`)
+**Introduced in:** 1.0.10, PR [#6](https://github.com/hunterhn/Mobile-Harness/pull/6)
 
 ## What it is
 

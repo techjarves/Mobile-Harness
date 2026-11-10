@@ -1,6 +1,7 @@
 # OpenCode Go provider — traceability and test history
 
 **Branch:** `feat/opencode-go-provider`
+**PR:** https://github.com/hunterhn/Mobile-Harness/pull/6
 **Base:** `fork/main` at `76b6725`
 **Implementation commit:** `cf7dcc9` (`feat: add OpenCode Go as a first-class provider`)
 **Date of this report:** 2026-11-09
