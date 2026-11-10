@@ -194,7 +194,7 @@ class RuntimeInstaller(private val context: Context) {
                 validate = ::isValidCoreRootfs,
             )
             writeResolver()
-            if (archive.parentFile == downloads) archive.delete()
+            archive.delete()
         }
 
         check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
@@ -964,7 +964,7 @@ class RuntimeInstaller(private val context: Context) {
         onProgress(RuntimeInstallProgress(message, to * 0.8f + from * 0.2f, indeterminate = true))
         extractZstdTar(archive, rootfs)
         stripMacosMetadataArtifacts(rootfs)
-        if (archive.parentFile == downloads) archive.delete()
+        archive.delete()
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_bundle_tools_installed, bundle.label), to))
     }
 
@@ -1004,10 +1004,10 @@ class RuntimeInstaller(private val context: Context) {
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): File {
-        downloads.mkdirs()
-        val destination = File(downloads, bundle.fileName)
         val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
         if (useEmbedded) {
+            downloads.mkdirs()
+            val destination = File(downloads, bundle.fileName)
             val loadingLabel = str(R.string.rt_install_loading_bundle, bundle.label)
             onProgress(RuntimeInstallProgress(loadingLabel, from, 0, bundle.compressedBytes))
             val temporary = File(downloads, "${bundle.fileName}.part")
@@ -1034,9 +1034,10 @@ class RuntimeInstaller(private val context: Context) {
             return destination
         }
 
+        val destination = runtimeBundleDownloadFile(downloads, context.noBackupFilesDir, bundle.label, bundle.fileName)
         val url = "${BuildConfig.RUNTIME_RELEASE_BASE_URL}/${bundle.fileName}"
         val downloadingLabel = str(R.string.rt_install_downloading_bundle, bundle.label)
-        downloadVerified(url, destination, bundle.sha256) { downloaded, total ->
+        downloadVerified(url, destination, bundle.sha256, expectedBytes = bundle.compressedBytes) { downloaded, total ->
             val ratio = if (total > 0) downloaded.toFloat() / total else 0f
             onProgress(RuntimeInstallProgress(downloadingLabel, from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
         }
@@ -1857,14 +1858,18 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         destination: File,
         expectedChecksum: String,
         algorithm: String = "SHA-256",
+        expectedBytes: Long? = null,
         onBytes: suspend (downloaded: Long, total: Long) -> Unit,
     ) {
         destination.parentFile?.mkdirs()
-        if (destination.isFile && digest(destination, algorithm).equals(expectedChecksum, ignoreCase = true)) {
+        val temporary = File(destination.parentFile, "${destination.name}.part")
+        val alreadyDownloaded = reuseVerifiedDownload(destination, temporary, expectedBytes) { file ->
+            digest(file, algorithm).equals(expectedChecksum, ignoreCase = true)
+        }
+        if (alreadyDownloaded) {
             onBytes(destination.length(), destination.length())
             return
         }
-        val temporary = File(destination.parentFile, "${destination.name}.part")
         var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 20_000
