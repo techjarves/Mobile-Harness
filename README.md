@@ -198,10 +198,23 @@ Mobile Harness uses Claude Code's Anthropic-compatible API protocol. You can con
 | **OpenRouter** | Gateway | Supported | Supported | `Supported` | Routes compatible models through one API key |
 | **DeepSeek** | Direct Key | Supported | Supported | `Supported` | Anthropic-compatible endpoint |
 | **Kimi** | Direct Key | Supported | Supported | `Supported` | Anthropic-compatible Moonshot endpoint |
+| **OpenCode Go** | Subscription | Supported | Supported | `Supported` | Separate from OpenCode Zen; DeepSeek Harness and Claude Code |
 | **Custom API** | Endpoint Override | Compatible | Compatible | `Experimental` | User-configured gateway |
 
 > [!NOTE]
 > API keys are stored with hardware-backed Android Keystore AES-256-GCM encryption. Antigravity Google OAuth credentials are created and retained only by the official `agy` CLI in its persistent Linux home; Mobile Harness never reads or copies its tokens.
+
+### OpenCode Go
+
+OpenCode Go is a subscription separate from OpenCode Zen, with its own endpoint,
+catalog, and entitlement. Select **OpenCode Go** for DeepSeek Harness or Claude
+Code, paste a Go-enabled key, and refresh models. The catalog is public, so model
+discovery works before a key is saved; inference still requires the key. The API
+key never enters `settings.yaml`, and DeepSeek Harness receives a stable
+per-project `x-opencode-session` header for routing and prompt caching.
+
+See [docs/providers/opencode-go.md](docs/providers/opencode-go.md) for the wire
+contract, setup, quota behavior, and troubleshooting.
 
 ### Coding agents
 
