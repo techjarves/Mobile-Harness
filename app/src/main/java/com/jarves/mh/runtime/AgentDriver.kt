@@ -45,6 +45,7 @@ class AgentRegistry(drivers: List<AgentDriver>) {
             claude: RuntimeBridge,
             deepSeek: RuntimeBridge,
             antigravity: RuntimeBridge,
+            cursor: RuntimeBridge,
         ) = AgentRegistry(
             listOf(
                 BuiltInAgentDriver(
@@ -77,6 +78,15 @@ class AgentRegistry(drivers: List<AgentDriver>) {
                         AgentCapability.ACCOUNT_LOGIN,
                         AgentCapability.MODEL_PICKER,
                         AgentCapability.REASONING_EFFORT,
+                        AgentCapability.RESUME,
+                    ),
+                ),
+                BuiltInAgentDriver(
+                    AgentKind.CURSOR_CLI,
+                    cursor,
+                    setOf(
+                        AgentCapability.API_KEY,
+                        AgentCapability.MODEL_PICKER,
                         AgentCapability.RESUME,
                     ),
                 ),

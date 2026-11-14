@@ -1,0 +1,457 @@
+package com.jarves.mh.runtime
+
+import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.ChatMessage
+import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
+import com.jarves.mh.model.ProviderKind
+import com.jarves.mh.model.providersForAgent
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class CursorBridgeTest {
+    @Test
+    fun commandContainsHeadlessFlagsAndWorkspace() {
+        val command = cursorCommand("demo", model = "", sessionId = null, prompt = "hello")
+        listOf(
+            "-p",
+            "--force",
+            "--trust",
+            "--sandbox",
+            "disabled",
+            "--disable-auto-update",
+            "--output-format",
+            "stream-json",
+            "--stream-partial-output",
+            "--workspace",
+            "/workspace/demo",
+        ).forEach { token -> assertTrue(command.contains(token)) }
+        assertEquals("hello", command.last())
+    }
+
+    @Test
+    fun commandOmitsModelAndResumeWhenBlank() {
+        val command = cursorCommand("demo", model = "  ", sessionId = "", prompt = "hello")
+        assertFalse(command.contains("--model"))
+        assertFalse(command.contains("--resume"))
+    }
+
+    @Test
+    fun commandIncludesModelAndResumeWithoutAntigravityFlags() {
+        val command = cursorCommand("demo", model = "composer-2", sessionId = "sess-1", prompt = "again")
+        assertTrue(command.contains("--model"))
+        assertTrue(command.contains("composer-2"))
+        assertTrue(command.contains("--resume"))
+        assertTrue(command.contains("sess-1"))
+        assertFalse(command.contains("--effort"))
+        assertFalse(command.contains("--dangerously-skip-permissions"))
+        assertEquals("again", command.last())
+    }
+
+    @Test
+    fun parserKeepsInitSessionId() {
+        val event = CursorEventParser.parse(
+            """{"type":"system","subtype":"init","session_id":"sess-early","model":"default"}""",
+        )
+        assertEquals(CursorParsedEvent.Session("sess-early", "default"), event)
+    }
+
+    @Test
+    fun parserKeepsPartialAssistantDeltaAndDropsDuplicateFlush() {
+        val partial = CursorEventParser.parse(
+            """{"type":"assistant","timestamp_ms":10,"message":{"content":[{"type":"text","text":"hello"}]}}""",
+        )
+        assertEquals(CursorParsedEvent.AssistantDelta("hello"), partial)
+        val flush = CursorEventParser.parse(
+            """{"type":"assistant","timestamp_ms":10,"model_call_id":"call-1","message":{"content":[{"type":"text","text":"hello"}]}}""",
+        )
+        assertNull(flush)
+        val end = CursorEventParser.parse(
+            """{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}""",
+        )
+        assertNull(end)
+    }
+
+    @Test
+    fun parserMapsReadToolCall() {
+        val event = CursorEventParser.parse(
+            """{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"/workspace/demo/hello.txt"}}}}""",
+        )
+        assertEquals(CursorParsedEvent.ToolStarted("Read", "/workspace/demo/hello.txt"), event)
+    }
+
+    @Test
+    fun parserMapsWriteToolCallCompleted() {
+        val event = CursorEventParser.parse(
+            """{"type":"tool_call","subtype":"completed","tool_call":{"writeToolCall":{"args":{"path":"/workspace/demo/hello.txt"},"result":{"success":"wrote"}}}}""",
+        )
+        assertEquals(CursorParsedEvent.ToolCompleted("Write", "/workspace/demo/hello.txt"), event)
+    }
+
+    @Test
+    fun parserMapsSuccessResult() {
+        val event = CursorEventParser.parse(
+            """{"type":"result","subtype":"success","is_error":false,"session_id":"sess-1","result":"done"}""",
+        )
+        assertEquals(CursorParsedEvent.Success("sess-1", "done"), event)
+    }
+
+    @Test
+    fun parserReadsUsageWhenCursorSendsItAndOmitsItWhenAbsent() {
+        val withUsage = CursorEventParser.parse(
+            """{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"inputTokens":2000000,"outputTokens":8000000,"cacheReadTokens":10,"cacheWriteTokens":5}}""",
+        )
+        val usage = (withUsage as CursorParsedEvent.Success).usage
+        assertEquals(2_000_000L, usage?.inputTokens)
+        assertEquals(8_000_000L, usage?.outputTokens)
+        assertEquals(15L, (usage?.cacheReadTokens ?: 0) + (usage?.cacheWriteTokens ?: 0))
+        val without = CursorEventParser.parse(
+            """{"type":"result","subtype":"error","is_error":true,"error":"stopped"}""",
+        )
+        assertEquals(CursorParsedEvent.Failure("stopped"), without)
+    }
+
+    @Test
+    fun usageNoteShowsOnlyTheDetailsCursorProvided() {
+        val usage = CursorTokenUsage(inputTokens = 2_000_000, outputTokens = 8_000_000)
+        assertEquals(
+            "Model: claude-opus-4-5 · In: 2M · Out: 8M",
+            cursorUsageNote(cursorShownModel(null, "claude-opus-4-5"), usage),
+        )
+        assertEquals(
+            "In: 2M · Out: 8M",
+            cursorUsageNote(cursorShownModel(null, "default"), usage),
+        )
+        assertEquals("Model: grok-4.5", cursorUsageNote(cursorShownModel("grok-4.5", null), null))
+        assertNull(cursorUsageNote(cursorShownModel(null, "auto"), null))
+        val cached = cursorUsageNote(cursorShownModel(null, "gpt-5.5"), usage.copy(cacheReadTokens = 1_000))
+        assertTrue(cached!!.contains("Cache: 1K"))
+    }
+
+    @Test
+    fun tokenCountsUseShortUnits() {
+        assertEquals("999", formatTokenCount(999))
+        assertEquals("1K", formatTokenCount(1_000))
+        assertEquals("101.4K", formatTokenCount(101_400))
+        assertEquals("101K", formatTokenCount(101_000))
+        assertEquals("1M", formatTokenCount(1_000_000))
+        assertEquals("1.2M", formatTokenCount(1_234_567))
+        assertEquals("12M", formatTokenCount(12_000_000))
+        assertEquals("-2.5M", formatTokenCount(-2_500_000))
+    }
+
+    @Test
+    fun accountAndCreditsParseFromDashboardPayloads() {
+        val account = parseCursorAccount(
+            org.json.JSONObject(
+                """{"email":"dev@example.com","firstName":"Test","lastName":"User","teamName":"Team X","isTeamAdmin":true,"createdAt":"1700000000000"}""",
+            ),
+        )
+        requireNotNull(account)
+        assertEquals("dev@example.com", account.email)
+        assertEquals("Test User", account.name)
+        assertEquals("Team X", account.teamName)
+        assertTrue(account.isTeamAdmin)
+        assertEquals(1_700_000_000_000L, account.createdAtMillis)
+
+        val credits = parseCursorCredits(
+            org.json.JSONObject("""{"hasCreditGrants":true,"creditBalanceCents":"2500","totalCents":"10000","usedCents":"7500"}"""),
+        )
+        requireNotNull(credits)
+        assertEquals(2_500L, credits.balanceCents)
+        assertEquals(10_000L, credits.totalCents)
+        assertEquals(7_500L, credits.usedCents)
+
+        assertNull(parseCursorAccount(org.json.JSONObject("{}")))
+        assertNull(parseCursorCredits(org.json.JSONObject("{}")))
+    }
+
+    @Test
+    fun spendIsSortedAndSkipsEntriesWithoutADay() {
+        val days = parseCursorSpend(
+            org.json.JSONObject(
+                """{"dailySpend":[{"day":"2000","spendCents":"300"},{"spendCents":"99"},{"day":"1000","spendCents":"150","totalTokens":"5000"}]}""",
+            ),
+        )
+        assertEquals(listOf(1_000L, 2_000L), days.map { it.dayMillis })
+        assertEquals(150L, days.first().spendCents)
+        assertEquals(5_000L, days.first().totalTokens)
+    }
+
+    @Test
+    fun overviewSurvivesCacheRoundTrip() {
+        val overview = CursorOverview(
+            account = CursorAccount(email = "dev@example.com", name = "Dev", teamName = null),
+            usage = CursorUsage(planName = "Pro", includedPercent = 45f),
+            credits = CursorCredits(2_500L, 10_000L, 7_500L),
+            spend = listOf(CursorSpendDay(1_000L, 150L, 5_000L)),
+        )
+        val restored = CursorOverview.fromJson(overview.toJson())
+        assertEquals(overview, restored)
+    }
+
+    @Test
+    fun monthRangeStartsAtMidnightUtc() {
+        val (start, end) = cursorCurrentMonthRange(1_700_000_000_000L)
+        val startCalendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+            timeInMillis = start
+        }
+        assertEquals(1, startCalendar.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(0, startCalendar.get(java.util.Calendar.HOUR_OF_DAY))
+        assertTrue(end > start)
+    }
+
+    @Test
+    fun parserIgnoresMalformedJsonAndUnknownType() {
+        assertNull(CursorEventParser.parse("not-json"))
+        assertNull(CursorEventParser.parse("""{"type":"future-event","session_id":"x"}"""))
+    }
+
+    @Test
+    fun redactionReplacesApiKeyValue() {
+        val redacted = cursorRedact("api_key=supersecret token=abc")
+        assertFalse(redacted.contains("supersecret"))
+        assertTrue(redacted.contains("api_key="))
+        assertTrue(redacted.contains("••••"))
+    }
+
+    @Test
+    fun workspacePreambleStaysInsideTheProject() {
+        val prompt = cursorWorkspacePrompt("demo", "build it", listOf(ChatMessage(fromUser = true, text = "build it")))
+        assertTrue(prompt.contains("/workspace/demo"))
+        assertTrue(prompt.contains("assembleDebug"))
+        assertTrue(prompt.contains("--no-daemon"))
+        assertTrue(prompt.contains("nohup"))
+        assertFalse(prompt.contains("antigravity", ignoreCase = true))
+        assertFalse(prompt.contains("manage_task"))
+    }
+
+    @Test
+    fun cursorHasNoProviderPicker() {
+        assertTrue(providersForAgent(AgentKind.CURSOR_CLI).isEmpty())
+    }
+
+    @Test
+    fun existingProviderSetsStayTheSame() {
+        // Upstream v1.0.8 stopped offering OpenCode Zen; saved profiles still load the enum entry.
+        assertFalse(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        assertFalse(ProviderKind.OPENCODE_ZEN in DEEPSEEK_HARNESS_PROVIDERS)
+        assertFalse(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.CLAUDE_CODE))
+        assertFalse(ProviderKind.CLAUDE in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
+        assertEquals(6, DEEPSEEK_HARNESS_PROVIDERS.size)
+        assertTrue(providersForAgent(AgentKind.ANTIGRAVITY).isEmpty())
+    }
+
+    @Test
+    fun friendlyErrorKeepsOrdinaryFileNotFound() {
+        val message = cursorFriendlyError("src/Main.kt:12: error: file not found")
+        assertEquals("src/Main.kt:12: error: file not found", message)
+        assertEquals(CURSOR_INCOMPATIBLE, cursorFriendlyError("pty.node: GLIBC_2.34 not found"))
+        assertEquals(CURSOR_INCOMPATIBLE, cursorFriendlyError("cursor-agent: not found"))
+    }
+
+    @Test
+    fun friendlyErrorDoesNotTreatEvery401OrLoginAsAuth() {
+        assertEquals(CURSOR_NEEDS_KEY, cursorFriendlyError("request failed with HTTP 401"))
+        assertEquals("build id 14019", cursorFriendlyError("build id 14019"))
+        assertEquals(CURSOR_NEEDS_KEY, cursorFriendlyError("Please login to continue"))
+        assertEquals("catalog refreshed", cursorFriendlyError("catalog refreshed"))
+    }
+
+    @Test
+    fun friendlyErrorRedactsSecretsAndStaysStable() {
+        val redacted = cursorFriendlyError("api_key=supersecret")
+        assertFalse(redacted.contains("supersecret"))
+        assertEquals(CURSOR_TIMEOUT, cursorFriendlyError(CURSOR_TIMEOUT))
+        assertEquals(CURSOR_NETWORK, cursorFriendlyError("connect i/o timeout"))
+        val scrubbed = scrubCursorSecret("sent key crsr_live_secret_value", "crsr_live_secret_value")
+        assertFalse(scrubbed.contains("crsr_live_secret_value"))
+    }
+
+    @Test
+    fun modelListReadsJsonObject() {
+        val models = parseCursorModelList("""{"models":[{"id":"composer-2"},"auto"]}""")
+        assertEquals(listOf("composer-2", "auto"), models)
+    }
+
+    @Test
+    fun modelListReadsCursorTextCatalog() {
+        val output = """
+            Available models
+
+            ${'\u001B'}[36mcomposer-2.5${'\u001B'}[39m - Composer 2.5 (current, default)
+            gpt-5.5 - GPT-5.5
+
+            Tip: use --model <id> to switch.
+        """.trimIndent()
+        val catalog = parseCursorModelCatalog(output)
+        assertEquals(listOf("composer-2.5", "gpt-5.5"), catalog.ids)
+        assertEquals("composer-2.5", catalog.defaultId)
+        assertEquals("Composer 2.5", catalog.models[0].name)
+        assertEquals("GPT-5.5", catalog.models[1].name)
+    }
+
+    @Test
+    fun modelSearchMatchesNameVersionAndContextWindow() {
+        val output = """
+            claude-opus-4-5 - Claude Opus 4.5
+            grok-4.5 - Grok 4.5
+            composer-2.5 - Composer 2.5
+            gemini-2.5-pro - Gemini 2.5 Pro 1M context
+            claude-sonnet-4-5 - Claude Sonnet 4.5 200K context, 1M context
+            gpt-5.5 - GPT-5.5
+        """.trimIndent()
+        val models = parseCursorModelCatalog(output).models
+        assertEquals("1M", models.first { it.id == "gemini-2.5-pro" }.contextWindowLabel())
+        assertEquals("1M · Gemini 2.5 Pro", models.first { it.id == "gemini-2.5-pro" }.title())
+        assertEquals("200K–1M", models.first { it.id == "claude-sonnet-4-5" }.contextWindowLabel())
+
+        assertEquals(
+            listOf("claude-opus-4-5", "grok-4.5", "claude-sonnet-4-5"),
+            filterCursorModels(models, "4.5").map { it.id },
+        )
+        assertEquals(
+            listOf("gemini-2.5-pro", "claude-sonnet-4-5"),
+            filterCursorModels(models, "1m").map { it.id },
+        )
+        assertEquals(
+            listOf("gemini-2.5-pro"),
+            filterCursorModels(models, "google").map { it.id },
+        )
+        assertEquals(
+            listOf("claude-sonnet-4-5"),
+            filterCursorModels(models, "claude 1m").map { it.id },
+        )
+        assertEquals(
+            listOf("grok-4.5"),
+            filterCursorModels(models, "grok").map { it.id },
+        )
+        assertEquals(models.map { it.id }, filterCursorModels(models, "  ").map { it.id })
+    }
+
+    @Test
+    fun modelJsonKeepsDisplayNameAndContextLimit() {
+        val catalog = parseCursorModelCatalog(
+            """{"models":[{"id":"claude-opus-4-8","displayName":"Claude Opus 4.8","contextTokenLimit":200000,"contextTokenLimitForMaxMode":1000000}]}""",
+        )
+        val model = catalog.models.single()
+        assertEquals("Claude Opus 4.8", model.name)
+        assertEquals("200K–1M", model.contextWindowLabel())
+        assertEquals(listOf("claude-opus-4-8"), filterCursorModels(catalog.models, "1000000").map { it.id })
+        assertEquals(listOf("claude-opus-4-8"), filterCursorModels(catalog.models, "opus").map { it.id })
+    }
+
+    @Test
+    fun buildInstructionsAreNotReportedAsATimeout() {
+        val message = cursorFriendlyError("gradle failed: timeout 15m assembleDebug exited 1")
+        assertFalse(message == CURSOR_TIMEOUT)
+        assertTrue(message.contains("exited 1"))
+    }
+
+    @Test
+    fun storedAgentKindRoundTrips() {
+        assertEquals(AgentKind.CURSOR_CLI, AgentKind.fromStored("cursor-cli"))
+        assertEquals(AgentKind.CLAUDE_CODE, AgentKind.fromStored(null))
+        assertEquals(AgentKind.CLAUDE_CODE, AgentKind.fromStored("nope"))
+    }
+
+    @Test
+    fun modelsAreGroupedByVendorInCatalogOrder() {
+        val models = listOf(
+            CursorModel("claude-opus-4-8", "Claude Opus 4.8"),
+            CursorModel("gpt-5.5", "GPT-5.5"),
+            CursorModel("gemini-3-pro", "Gemini 3 Pro"),
+            CursorModel("grok-4.5", "Grok 4.5"),
+            CursorModel("claude-sonnet-4-5", "Claude Sonnet 4.5"),
+            CursorModel("composer-1", "Composer 1"),
+            CursorModel("mystery-model", "Mystery"),
+        )
+        val groups = groupCursorModels(models)
+        assertEquals(
+            listOf(
+                CursorVendor.ANTHROPIC,
+                CursorVendor.OPENAI,
+                CursorVendor.GOOGLE,
+                CursorVendor.XAI,
+                CursorVendor.CURSOR,
+                CursorVendor.OTHER,
+            ),
+            groups.map { it.vendor },
+        )
+        assertEquals(
+            listOf("claude-opus-4-8", "claude-sonnet-4-5"),
+            groups.first().models.map { it.id },
+        )
+        assertEquals(listOf("gpt-5.5"), groups[1].models.map { it.id })
+        assertEquals(CursorVendor.GOOGLE, cursorVendorOf(CursorModel("gemma-3", "Gemma 3")))
+        assertEquals(CursorVendor.CURSOR, cursorVendorOf(CursorModel("composer-1", "Composer 1")))
+    }
+
+    @Test
+    fun usageParsesPercentSpendAndPlan() {
+        val usage = parseCursorUsage(
+            org.json.JSONObject(
+                """{"billingCycleEnd":"1800000000000","planUsage":{"totalPercentUsed":45.4,"autoPercentUsed":30,"apiPercentUsed":15.4},"spendLimitUsage":{"individualUsed":1250,"individualLimit":5000}}""",
+            ),
+            hardLimit = org.json.JSONObject("""{"hardLimit":5000,"noUsageBasedAllowed":false}"""),
+            plan = org.json.JSONObject("""{"planInfo":{"planName":"Pro"}}"""),
+        )
+        requireNotNull(usage)
+        assertEquals("Pro", usage.planName)
+        assertEquals(45.4f, usage.includedPercent)
+        assertEquals(30f, usage.autoPercent)
+        assertEquals(15.4f, usage.apiPercent)
+        assertEquals(1_800_000_000_000L, usage.billingCycleEndMillis)
+        assertEquals(CursorOnDemandKind.FIXED, usage.onDemand?.kind)
+        assertEquals(12.5, usage.onDemand?.usedDollars ?: 0.0, 0.001)
+        assertEquals(50.0, usage.onDemand?.limitDollars ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun usageReadsDollarAmountsFromPlanBlock() {
+        val usage = parseCursorUsage(
+            org.json.JSONObject(
+                """{"planUsage":{"totalPercentUsed":30,"includedSpend":"1200","limit":"4000","remaining":"2800","bonusSpend":"500"}}""",
+            ),
+        )
+        requireNotNull(usage)
+        assertEquals(1_200L, usage.includedUsedCents)
+        assertEquals(4_000L, usage.includedLimitCents)
+        assertEquals(2_800L, usage.remainingCents)
+        assertEquals(500L, usage.bonusCents)
+    }
+
+    @Test
+    fun usageWithoutPlanBlockIsStillReadable() {
+        val usage = parseCursorUsage(
+            org.json.JSONObject("""{"spendLimitUsage":{"individualUsed":300}}"""),
+            hardLimit = org.json.JSONObject("""{"hardLimit":2147483647}"""),
+        )
+        requireNotNull(usage)
+        assertNull(usage.includedPercent)
+        assertEquals(CursorOnDemandKind.UNLIMITED, usage.onDemand?.kind)
+        assertEquals(3.0, usage.onDemand?.usedDollars ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun usageIsNullWhenCursorSendsNothing() {
+        assertNull(parseCursorUsage(org.json.JSONObject("{}")))
+    }
+
+    @Test
+    fun usageSurvivesCacheRoundTrip() {
+        val original = CursorUsage(
+            planName = "Pro",
+            includedPercent = 45f,
+            autoPercent = 20f,
+            apiPercent = 25f,
+            onDemand = CursorOnDemand(CursorOnDemandKind.FIXED, 4.5, 20.0),
+            billingCycleEndMillis = 1_800_000_000_000L,
+        )
+        val restored = CursorUsage.fromJson(original.toJson())
+        assertEquals(original, restored)
+    }
+}

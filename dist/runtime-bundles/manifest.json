@@ -59,6 +59,15 @@
       "includes": ["Antigravity CLI 1.1.27 ARM64", "Version marker"],
       "excludes": ["OAuth credentials", "Settings", "Conversations", "Projects", "Device data"]
     },
+    "cursor": {
+      "version": "2026.10.19-6bbf2c4",
+      "file": "agent-cli-package.tar.gz",
+      "sourceUrl": "https://downloads.cursor.com/lab/2026.10.19-6bbf2c4/linux/arm64/agent-cli-package.tar.gz",
+      "sha256": "71a90f12a8b8183a71442b7ed4037bddc1a0f88114ec4fb9ec92782acb8e7d84",
+      "compressedBytes": 181626232,
+      "includes": ["Cursor CLI 2026.10.19-6bbf2c4 linux/arm64"],
+      "excludes": ["API keys", "Auth state", "Projects", "Chats"]
+    },
     "dsh": {
       "version": "2026.09.1",
       "file": "pocketdev-dsh-arm64-2026.09.1.tar.zst",

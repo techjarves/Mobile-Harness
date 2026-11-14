@@ -52,6 +52,30 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_antigravity_model", "") ?: ""
         set(value) { preferences.edit().putString("agent_antigravity_model", value).apply() }
 
+    var cursorModel: String
+        get() = preferences.getString("agent_cursor_model", "") ?: ""
+        set(value) { preferences.edit().putString("agent_cursor_model", value).apply() }
+
+    /** Cached Cursor plan usage, so the last reading shows offline. JSON from CursorUsage. */
+    var cursorUsage: com.jarves.mh.runtime.CursorUsage?
+        get() = preferences.getString("agent_cursor_usage", null)
+            ?.let { runCatching { com.jarves.mh.runtime.CursorUsage.fromJson(org.json.JSONObject(it)) }.getOrNull() }
+        set(value) {
+            preferences.edit().putString("agent_cursor_usage", value?.toJson()?.toString()).apply()
+        }
+
+    var cursorUsageUpdatedAt: Long
+        get() = preferences.getLong("agent_cursor_usage_at", 0L)
+        set(value) { preferences.edit().putLong("agent_cursor_usage_at", value).apply() }
+
+    /** Last full dashboard reading: account, credits, and the month's daily spend. */
+    var cursorOverview: com.jarves.mh.runtime.CursorOverview?
+        get() = preferences.getString("agent_cursor_overview", null)
+            ?.let { runCatching { com.jarves.mh.runtime.CursorOverview.fromJson(org.json.JSONObject(it)) }.getOrNull() }
+        set(value) {
+            preferences.edit().putString("agent_cursor_overview", value?.toJson()?.toString()).apply()
+        }
+
     var antigravityEffort: String
         get() = preferences.getString("agent_antigravity_effort", "high") ?: "high"
         set(value) { preferences.edit().putString("agent_antigravity_effort", value).apply() }
@@ -490,10 +514,13 @@ class AppPreferences(private val context: Context) {
         if (!file.exists()) return emptyList()
         return runCatching {
             val arr = JSONArray(file.readText())
+            val seenIds = mutableSetOf<String>()
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
+                val rawId = obj.optString("id").ifBlank { java.util.UUID.randomUUID().toString() }
+                val id = if (seenIds.add(rawId)) rawId else "$rawId-${java.util.UUID.randomUUID()}"
                 ChatMessage(
-                    id = obj.getString("id"),
+                    id = id,
                     fromUser = obj.getBoolean("fromUser"),
                     text = obj.getString("text"),
                     createdAt = runCatching { Instant.parse(obj.getString("createdAt")) }
@@ -549,6 +576,11 @@ class AppPreferences(private val context: Context) {
             "dsh_version",
             "whats_new_seen_code",
             "backup_feature_seen",
+            // Cursor account usage, credits, and daily spend describe this phone's reading,
+            // not user work. Keep them out of exported backups.
+            "agent_cursor_usage",
+            "agent_cursor_usage_at",
+            "agent_cursor_overview",
         )
     }
 }

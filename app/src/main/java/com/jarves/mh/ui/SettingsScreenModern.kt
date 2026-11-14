@@ -140,6 +140,11 @@ fun SettingsScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    onSaveCursorKey: (String) -> Unit = {},
+    onRemoveCursorKey: () -> Unit = {},
+    onRefreshCursorModels: () -> Unit = {},
+    onSetCursorModel: (String) -> Unit = {},
+    onRefreshCursorUsage: () -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
@@ -456,6 +461,18 @@ fun SettingsScreen(
                                 RuntimeInfoRow(agent.localizedTitle(), "v$version")
                             }
                         }
+                    }
+                    if (state.agentKind == AgentKind.CURSOR_CLI) {
+                        Spacer(Modifier.height(8.dp))
+                        CursorKeySettings(
+                            state = state,
+                            onSaveKey = onSaveCursorKey,
+                            onRemoveKey = onRemoveCursorKey,
+                            onRefreshModels = onRefreshCursorModels,
+                            onSetModel = onSetCursorModel,
+                            onRefreshUsage = onRefreshCursorUsage,
+                            onTest = onPing,
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
@@ -1148,5 +1165,87 @@ private fun DebugUpdateChannelSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun CursorKeySettings(
+    state: AppUiState,
+    onSaveKey: (String) -> Unit,
+    onRemoveKey: () -> Unit,
+    onRefreshModels: () -> Unit,
+    onSetModel: (String) -> Unit,
+    onRefreshUsage: () -> Unit,
+    onTest: () -> Unit,
+) {
+    var draft by rememberSaveable { mutableStateOf("") }
+    var typedModel by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(state.cursorHasKey) {
+        if (state.cursorHasKey && state.cursorModels.isEmpty() && !state.cursorModelsLoading) onRefreshModels()
+    }
+    LaunchedEffect(state.cursorHasKey, state.cursorUsage, state.cursorUsageMessage) {
+        val stale = state.cursorUsageUpdatedAt <= 0L ||
+            System.currentTimeMillis() - state.cursorUsageUpdatedAt > CURSOR_USAGE_STALE_MILLIS
+        if (state.cursorHasKey && stale &&
+            !state.cursorUsageLoading && state.cursorUsageMessage == null
+        ) {
+            onRefreshUsage()
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.settings_cursor_billing_note), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.settings_cursor_force_warning), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        if (state.cursorHasKey) Text("••••••••", fontFamily = FontFamily.Monospace)
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            label = { Text(stringResource(R.string.settings_cursor_key_hint)) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onSaveKey(draft); draft = "" }, enabled = draft.isNotBlank()) {
+                Text(if (state.cursorHasKey) stringResource(R.string.settings_cursor_replace_key) else stringResource(R.string.action_save))
+            }
+            if (state.cursorHasKey) {
+                OutlinedButton(onClick = onRemoveKey) { Text(stringResource(R.string.action_remove)) }
+            }
+            OutlinedButton(onClick = onTest, enabled = state.cursorHasKey && state.apiPingStatus != ApiPingStatus.PINGING) {
+                Text(stringResource(R.string.action_test))
+            }
+        }
+        val selectedCursor = state.cursorModels.firstOrNull { it.id == state.cursorModel }
+        Text(
+            stringResource(
+                R.string.settings_cursor_model_using,
+                selectedCursor?.title() ?: state.cursorModel.ifBlank { stringResource(R.string.settings_cursor_model_default) },
+            ),
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            stringResource(R.string.settings_cursor_model_switch),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        CursorModelPicker(
+            models = state.cursorModels,
+            selectedId = state.cursorModel,
+            query = typedModel,
+            onQueryChange = { typedModel = it },
+            loading = state.cursorModelsLoading,
+            enabled = state.cursorHasKey,
+            onRefresh = onRefreshModels,
+            onSelect = onSetModel,
+        )
+        CursorUsagePanel(
+            usage = state.cursorUsage,
+            overview = state.cursorOverview,
+            loading = state.cursorUsageLoading,
+            message = state.cursorUsageMessage,
+            updatedAt = state.cursorUsageUpdatedAt,
+            enabled = state.cursorHasKey,
+            onRefresh = onRefreshUsage,
+        )
     }
 }
