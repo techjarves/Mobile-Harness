@@ -25,6 +25,7 @@ fun ProviderKind.titleRes(): Int = when (this) {
     ProviderKind.DEEPSEEK -> R.string.provider_title_deepseek
     ProviderKind.KIMI -> R.string.provider_title_kimi
     ProviderKind.OPENCODE_ZEN -> R.string.provider_title_opencode
+    ProviderKind.OPENCODE_GO -> R.string.provider_title_opencode_go
     ProviderKind.NVIDIA_NIM -> R.string.provider_title_nvidia
     ProviderKind.CUSTOM -> R.string.provider_title_custom
 }
@@ -37,6 +38,7 @@ fun ProviderKind.subtitleRes(): Int = when (this) {
     ProviderKind.DEEPSEEK -> R.string.provider_subtitle_deepseek
     ProviderKind.KIMI, ProviderKind.CUSTOM -> R.string.provider_subtitle_anthropic_compatible
     ProviderKind.OPENCODE_ZEN -> R.string.provider_subtitle_opencode
+    ProviderKind.OPENCODE_GO -> R.string.provider_subtitle_opencode_go
     ProviderKind.NVIDIA_NIM -> R.string.provider_subtitle_nvidia
 }
 

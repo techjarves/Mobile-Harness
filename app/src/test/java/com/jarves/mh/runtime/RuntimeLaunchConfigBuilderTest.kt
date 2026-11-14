@@ -98,4 +98,16 @@ class RuntimeLaunchConfigBuilderTest {
         assertEquals("http://127.0.0.1:12345", config.environment["ANTHROPIC_BASE_URL"])
         assertEquals("claude-sonnet-4-6", config.environment["ANTHROPIC_MODEL"])
     }
+
+    @Test
+    fun openCodeGoUsesFixedAnthropicBaseWithoutLocalGateway() {
+        val config = RuntimeLaunchConfigBuilder.build(
+            ProviderProfile(ProviderKind.OPENCODE_GO, baseUrl = "https://evil.example/"),
+            authToken = "oc_sk_secret",
+        )
+
+        assertEquals("https://opencode.ai/inference/go/anthropic", config.environment["ANTHROPIC_BASE_URL"])
+        assertEquals("deepseek-v4.1-flash", config.environment["ANTHROPIC_MODEL"])
+        assertEquals("oc_sk_secret", config.environment["ANTHROPIC_AUTH_TOKEN"])
+    }
 }

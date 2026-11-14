@@ -216,6 +216,7 @@
     <string name="provider_title_deepseek">DeepSeek</string>
     <string name="provider_title_kimi">Kimi</string>
     <string name="provider_title_opencode">OpenCode Zen</string>
+    <string name="provider_title_opencode_go">OpenCode Go</string>
     <string name="provider_title_nvidia">NVIDIA NIM</string>
     <string name="provider_title_custom">Προσαρμοσμένο API</string>
     <string name="provider_subtitle_claude">Pro, Max, Team ή Enterprise</string>
@@ -224,6 +225,7 @@
     <string name="provider_subtitle_deepseek">Χρήση του κλειδιού API του DeepSeek</string>
     <string name="provider_subtitle_anthropic_compatible">Endpoint συμβατό με Anthropic</string>
     <string name="provider_subtitle_opencode">Μοντέλα μέσω του gateway OpenCode Zen</string>
+    <string name="provider_subtitle_opencode_go">Μοντέλα μέσω της συνδρομής OpenCode Go</string>
     <string name="provider_subtitle_nvidia">Μοντέλα συμβατά με OpenAI, φιλοξενούμενα από τη NVIDIA</string>
     <string name="provider_gateway_protocol">Πρωτόκολλο gateway</string>
     <string name="provider_gateway_protocol_help">Επιλέξτε το πρωτόκολλο που χρησιμοποιεί το gateway σας· το DeepSeek Harness το δρομολογεί απευθείας.</string>

@@ -3080,6 +3080,7 @@ private fun providerTitleResource(provider: ProviderKind): Int = when (provider)
     ProviderKind.DEEPSEEK -> R.string.provider_title_deepseek
     ProviderKind.KIMI -> R.string.provider_title_kimi
     ProviderKind.OPENCODE_ZEN -> R.string.provider_title_opencode
+    ProviderKind.OPENCODE_GO -> R.string.provider_title_opencode_go
     ProviderKind.NVIDIA_NIM -> R.string.provider_title_nvidia
     ProviderKind.CUSTOM -> R.string.provider_title_custom
 }
@@ -3092,6 +3093,7 @@ private fun providerSubtitleResource(provider: ProviderKind): Int = when (provid
     ProviderKind.DEEPSEEK -> R.string.provider_subtitle_deepseek
     ProviderKind.KIMI, ProviderKind.CUSTOM -> R.string.provider_subtitle_anthropic_compatible
     ProviderKind.OPENCODE_ZEN -> R.string.provider_subtitle_opencode
+    ProviderKind.OPENCODE_GO -> R.string.provider_subtitle_opencode_go
     ProviderKind.NVIDIA_NIM -> R.string.provider_subtitle_nvidia
 }
 
@@ -3108,6 +3110,7 @@ private fun ProviderChoiceRow(
         ProviderKind.DEEPSEEK -> Color(0xFF4D6BFE)
         ProviderKind.KIMI -> Color(0xFF8B7CF6)
         ProviderKind.OPENCODE_ZEN -> Color(0xFF22C55E)
+        ProviderKind.OPENCODE_GO -> Color(0xFF0EA5E9)
         ProviderKind.NVIDIA_NIM -> Color(0xFF76B900)
         ProviderKind.CUSTOM -> PocketOrange
     }
@@ -3118,6 +3121,7 @@ private fun ProviderChoiceRow(
         ProviderKind.DEEPSEEK -> "DS"
         ProviderKind.KIMI -> "K"
         ProviderKind.OPENCODE_ZEN -> "Z"
+        ProviderKind.OPENCODE_GO -> "GO"
         ProviderKind.NVIDIA_NIM -> "NV"
         ProviderKind.CUSTOM -> "<>"
     }

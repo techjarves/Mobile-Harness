@@ -112,11 +112,16 @@ class DshRuntimeBridge(
             openRouterGateway = if (
                 provider.kind == ProviderKind.LLM_ROUTER && provider.openRouterProviders.isNotEmpty()
             ) OpenRouterRoutingGateway(provider, secret).start() else null
-            val route = if (openRouterGateway != null && baseRoute.custom != null) {
-                baseRoute.copy(custom = baseRoute.custom.copy(baseUrl = openRouterGateway!!.url))
-            } else {
-                baseRoute
-            }
+            val route = withOpenCodeGoSession(
+                if (openRouterGateway != null && baseRoute.custom != null) {
+                    baseRoute.copy(custom = baseRoute.custom.copy(baseUrl = openRouterGateway!!.url))
+                } else {
+                    baseRoute
+                },
+                provider,
+                // dsh starts a fresh process per turn; the project is this app's conversation.
+                conversationId = projectId,
+            )
             writeDshSettings(installed.rootfs, route, provider)
             val environment = linkedMapOf(
                 "DSH_HOME" to DSH_HOME_GUEST_PATH,
@@ -471,25 +476,8 @@ class DshRuntimeBridge(
 
     private fun writeDshSettings(rootfs: File, route: DshRoute, provider: ProviderProfile) {
         val home = File(rootfs, DSH_HOME_GUEST_PATH.removePrefix("/")).apply { mkdirs() }
-        val body = buildString {
-            appendLine("agent-default-model:")
-            appendLine("  provider: ${route.name}")
-            appendLine("  model: ${yamlQuote(provider.model.ifBlank { route.defaultModel })}")
-            if (route.custom != null) {
-                appendLine("llm-pi-ai:")
-                appendLine("  providers:")
-                appendLine("    ${route.name}:")
-                appendLine("      apiKeyEnv: ${route.keyEnv}")
-                appendLine("      api: ${route.custom.api}")
-                appendLine("      baseURL: ${yamlQuote(route.custom.baseUrl)}")
-                appendLine("      models:")
-                appendLine("        - id: ${yamlQuote(provider.model.ifBlank { route.defaultModel })}")
-            }
-        }
-        File(home, "settings.yaml").writeText(body)
+        File(home, "settings.yaml").writeText(buildDshSettings(route, provider))
     }
-
-    private fun yamlQuote(value: String): String = "'${value.replace("'", "''")}'"
 
     private suspend fun emitReasoningSummary(
         sessionId: String,
@@ -721,9 +709,60 @@ internal data class DshRoute(
     val keyEnv: String,
     val defaultModel: String,
     val custom: DshCustomRoute? = null,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 internal data class DshCustomRoute(val api: String, val baseUrl: String)
+
+/** `ses_` + alphanumerics, as OpenCode Go expects. */
+internal fun openCodeGoSessionId(sessionId: String): String =
+    "ses_" + sessionId.filter(Char::isLetterOrDigit)
+
+/**
+ * Adds the OpenCode Go session header when this route reaches Go, either through the
+ * dedicated kind or through a Custom profile pointed at the same fixed endpoint.
+ * The id must stay stable across turns so Go can keep routing and prompt caching warm.
+ */
+internal fun withOpenCodeGoSession(
+    route: DshRoute,
+    provider: ProviderProfile,
+    conversationId: String,
+): DshRoute {
+    val reachesGo = provider.kind == ProviderKind.OPENCODE_GO ||
+        com.jarves.mh.network.isOpenCodeGoEndpoint(route.custom?.baseUrl.orEmpty())
+    if (!reachesGo) return route
+    return route.copy(
+        headers = route.headers + ("x-opencode-session" to openCodeGoSessionId(conversationId)),
+    )
+}
+
+/** Pure settings.yaml body so the dsh contract can be tested without a rootfs. */
+internal fun buildDshSettings(route: DshRoute, provider: ProviderProfile): String {
+    val model = provider.model.ifBlank { route.defaultModel }
+    return buildString {
+        appendLine("agent-default-model:")
+        appendLine("  provider: ${route.name}")
+        appendLine("  model: ${dshYamlQuote(model)}")
+        if (route.custom != null) {
+            appendLine("llm-pi-ai:")
+            appendLine("  providers:")
+            appendLine("    ${route.name}:")
+            appendLine("      apiKeyEnv: ${route.keyEnv}")
+            appendLine("      api: ${route.custom.api}")
+            appendLine("      baseURL: ${dshYamlQuote(route.custom.baseUrl)}")
+            if (route.headers.isNotEmpty()) {
+                appendLine("      headers:")
+                route.headers.toSortedMap().forEach { (name, value) ->
+                    appendLine("        $name: ${dshYamlQuote(value)}")
+                }
+            }
+            appendLine("      models:")
+            appendLine("        - id: ${dshYamlQuote(model)}")
+        }
+    }
+}
+
+private fun dshYamlQuote(value: String): String = "'${value.replace("'", "''")}'"
 
 internal object DshRouteMapper {
     fun forProfile(profile: ProviderProfile): DshRoute {
@@ -757,6 +796,12 @@ internal object DshRouteMapper {
                 keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
                 defaultModel = model,
                 custom = DshCustomRoute("openai-responses", profile.resolvedBaseUrl),
+            )
+            ProviderKind.OPENCODE_GO -> DshRoute(
+                name = "opencode-go",
+                keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
+                defaultModel = model,
+                custom = DshCustomRoute("anthropic-messages", profile.resolvedBaseUrl),
             )
             ProviderKind.NVIDIA_NIM -> DshRoute(
                 name = "nvidia-nim",

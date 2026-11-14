@@ -32,6 +32,15 @@ enum class ProviderKind(
         fixedBaseUrl = true,
         fixedProtocol = true,
     ),
+    OPENCODE_GO(
+        "OpenCode Go",
+        "Models through the OpenCode Go subscription",
+        ProviderProtocol.ANTHROPIC_GATEWAY,
+        "https://opencode.ai/inference/go/anthropic",
+        "deepseek-v4.1-flash",
+        fixedBaseUrl = true,
+        fixedProtocol = true,
+    ),
     NVIDIA_NIM(
         "NVIDIA NIM",
         "OpenAI-compatible models hosted by NVIDIA",
@@ -88,6 +97,7 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.LLM_ROUTER,
     ProviderKind.KIMI,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OPENCODE_GO,
     ProviderKind.CUSTOM,
 )
 
@@ -100,6 +110,7 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.OPENCODE_ZEN -> "openai-responses"
+    ProviderKind.OPENCODE_GO -> "anthropic-messages"
     ProviderKind.NVIDIA_NIM -> "openai-completions"
     else -> "anthropic-messages"
 }
