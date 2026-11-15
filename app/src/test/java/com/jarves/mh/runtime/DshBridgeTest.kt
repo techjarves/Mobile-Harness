@@ -261,6 +261,38 @@ class DshSdkProtocolParserTest {
     }
 
     @Test
+    fun reasoningOnlyAssistantMessageIsIgnored() {
+        val event = parser.parseLine(sessionEvent("assistant/message", JSONObject()
+            .put("message", JSONObject().put("content", JSONArray().put(
+                JSONObject().put("type", "reasoning").put("text", "thinking it over"),
+            )))))
+
+        assertEquals(DshSdkProtocolEvent.Ignored, event)
+    }
+
+    @Test
+    fun nudgePromptAccepted() {
+        assertEquals(
+            DshSdkProtocolEvent.NudgeAccepted,
+            parser.parseLine("{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{}}"),
+        )
+    }
+
+    @Test
+    fun nudgePromptRejectedIsNotFailed() {
+        val event = parser.parseLine(
+            JSONObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 4)
+                .put("error", JSONObject().put("message", "session busy"))
+                .toString(),
+        )
+
+        assertTrue(event is DshSdkProtocolEvent.NudgeRejected)
+        assertEquals("session busy", (event as DshSdkProtocolEvent.NudgeRejected).message)
+    }
+
+    @Test
     fun nullTurnErrorUsesUsefulFallback() {
         val failed = parser.parseLine(
             sessionEvent(
@@ -275,6 +307,46 @@ class DshSdkProtocolParserTest {
         )
 
         assertEquals(DshSdkProtocolEvent.Failed("DeepSeek Harness turn failed"), failed)
+    }
+
+    @Test
+    fun transportTurnEndCarriesTheCode() {
+        val event = parser.parseLine(
+            sessionEvent(
+                "turn/end",
+                JSONObject().put("turn", 1).put(
+                    "reason",
+                    JSONObject().put("kind", "error").put(
+                        "error",
+                        JSONObject().put("code", "TRANSPORT").put("message", "Connection error."),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(DshSdkProtocolEvent.Failed("Connection error.", "TRANSPORT"), event)
+    }
+
+    @Test
+    fun transportErrorTurnEndIsFailedAndTerminal() {
+        val failed = parser.parseLine(
+            sessionEvent(
+                "turn/end",
+                JSONObject().put("turn", 1).put(
+                    "reason",
+                    JSONObject().put("kind", "error").put(
+                        "error",
+                        JSONObject().put("code", "TRANSPORT").put("message", "Connection error."),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(DshSdkProtocolEvent.Failed("Connection error.", "TRANSPORT"), failed)
+        // The failure must be terminal: it never counts as a completed turn, even
+        // when the session saw activity before the transport error arrived.
+        val message = (failed as DshSdkProtocolEvent.Failed).message
+        assertFalse(turnCompleted(sawActivity = true, failure = message))
     }
 
     private fun sessionEvent(type: String, data: JSONObject): String = notification(

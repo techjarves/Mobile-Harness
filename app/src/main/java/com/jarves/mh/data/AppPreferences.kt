@@ -2,7 +2,11 @@ package com.jarves.mh.data
 
 import android.content.Context
 import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.DEFAULT_TERMINAL_FONT_SIZE
+import com.jarves.mh.model.DEFAULT_UI_SCALE
 import com.jarves.mh.model.ChatMessage
+import com.jarves.mh.model.normalizeTerminalFontSize
+import com.jarves.mh.model.normalizeUiScale
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
@@ -113,6 +117,14 @@ class AppPreferences(private val context: Context) {
     var themeMode: String
         get() = preferences.getString("theme_mode", "dark") ?: "dark"
         set(value) { preferences.edit().putString("theme_mode", value).apply() }
+
+    var uiScale: Float
+        get() = normalizeUiScale(preferences.getFloat("ui_scale", DEFAULT_UI_SCALE))
+        set(value) { preferences.edit().putFloat("ui_scale", normalizeUiScale(value)).apply() }
+
+    var terminalFontSize: Int
+        get() = normalizeTerminalFontSize(preferences.getInt("terminal_font_size", DEFAULT_TERMINAL_FONT_SIZE))
+        set(value) { preferences.edit().putInt("terminal_font_size", normalizeTerminalFontSize(value)).apply() }
 
     var languageCode: String
         get() = preferences.getString("language_code", "system") ?: "system"
