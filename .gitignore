@@ -64,3 +64,9 @@ dist/runtime-bundles/sources/
 
 # Generated local in-app update test artifacts.
 dist/update-test/
+
+# Superpowers SDD scratch workspace
+.superpowers/
+
+# Local superpowers specs and plans
+docs/superpowers/

@@ -145,3 +145,15 @@ Java_com_jarves_mh_runtime_NativeSpawn_kill(JNIEnv *env, jobject self, jint pid,
     if (result != 0 && errno == ESRCH) result = kill(pid, signal);
     return result;
 }
+
+JNIEXPORT jboolean JNICALL
+Java_com_jarves_mh_runtime_NativeSpawn_resizePty(
+    JNIEnv *env, jobject self, jint fd, jint rows, jint columns) {
+    (void)env; (void)self;
+    if (fd < 0 || rows <= 0 || columns <= 0) return JNI_FALSE;
+    struct winsize size = {
+        .ws_row = (unsigned short)rows,
+        .ws_col = (unsigned short)columns,
+    };
+    return ioctl(fd, TIOCSWINSZ, &size) == 0 ? JNI_TRUE : JNI_FALSE;
+}

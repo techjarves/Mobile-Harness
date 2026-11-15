@@ -14,7 +14,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.LayoutDirection.Ltr
 import androidx.compose.ui.unit.LayoutDirection.Rtl
@@ -52,7 +54,12 @@ class MainActivity : ComponentActivity() {
             val localizedConfiguration = localizedContext.resources.configuration
             val layoutDirection: LayoutDirection =
                 if (localizedConfiguration.layoutDirection == android.view.View.LAYOUT_DIRECTION_RTL) Rtl else Ltr
+            val baseDensity = LocalDensity.current
+            val appDensity = remember(baseDensity, state.uiScale) {
+                Density(baseDensity.density * state.uiScale, baseDensity.fontScale)
+            }
             CompositionLocalProvider(
+                LocalDensity provides appDensity,
                 LocalContext provides localizedContext,
                 LocalConfiguration provides localizedConfiguration,
                 LocalLayoutDirection provides layoutDirection,
