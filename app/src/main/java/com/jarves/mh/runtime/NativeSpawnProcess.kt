@@ -1,6 +1,8 @@
 package com.jarves.mh.runtime
 
 import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -12,6 +14,9 @@ internal class NativeSpawnProcess private constructor(
     private val pid: Int,
     internal val outputFile: File,
     private val stdin: OutputStream,
+    private val ptyMaster: ParcelFileDescriptor? = null,
+    @Volatile private var ptyRows: Int = 0,
+    @Volatile private var ptyColumns: Int = 0,
     private val outputPump: Thread? = null,
 ) : Process() {
     @Volatile private var result: Int? = null
@@ -24,8 +29,59 @@ internal class NativeSpawnProcess private constructor(
         result?.let { return it }
         return NativeSpawn.waitFor(pid, false).also {
             result = it
-            outputPump?.join(1_000)
+            awaitOutputPump(1_000)
         }
+    }
+
+    /**
+     * Best effort: waits for the PTY pump to finish, then for [quietMillis] without new output.
+     *
+     * The pump only exits when every slave fd closes, so a command that backgrounds a child
+     * (`npm run dev &`, `tail -f &`, a daemon) would otherwise stall a completed command for the
+     * whole [timeoutMillis] budget. Treat a quiet output file as "done" instead, capped by
+     * [timeoutMillis]. No-op for non-PTY processes.
+     *
+     * Every call starts a fresh quiet window, so the drain after [waitFor] still waits for a
+     * live pump instead of returning on the previous call's quiet state.
+     */
+    internal fun awaitOutputPump(
+        timeoutMillis: Long = OUTPUT_PUMP_TIMEOUT_MS,
+        quietMillis: Long = OUTPUT_PUMP_QUIET_MS,
+    ) {
+        val pump = outputPump ?: return
+        awaitOutputPumpQuiet(
+            isAlive = { pump.isAlive },
+            length = { outputFile.length() },
+            now = { System.nanoTime() },
+            join = { pump.join(it) },
+            timeoutMillis = timeoutMillis,
+            quietMillis = quietMillis,
+            pollMillis = OUTPUT_PUMP_POLL_MS,
+        )
+    }
+
+    /**
+     * Resizes the PTY and signals the child with SIGWINCH. Returns false when this is a
+     * non-PTY process, the request is invalid, or the fd was already closed.
+     *
+     * Kept best-effort: the pump owns the descriptor and may close it concurrently, so a
+     * failed resize must never abort the terminal session.
+     */
+    internal fun resizePty(rows: Int, columns: Int): Boolean {
+        val master = ptyMaster ?: return false
+        if (rows <= 0 || columns <= 0) return false
+        if (rows == ptyRows && columns == ptyColumns) return true
+        return runCatching {
+            val fd = master.fd
+            if (fd < 0) return@runCatching false
+            val descriptor = master.fileDescriptor ?: return@runCatching false
+            Os.fstat(descriptor)
+            if (!NativeSpawn.resizePty(fd, rows, columns)) return@runCatching false
+            ptyRows = rows
+            ptyColumns = columns
+            NativeSpawn.kill(pid, OsConstants.SIGWINCH)
+            true
+        }.getOrDefault(false)
     }
 
     override fun exitValue(): Int {
@@ -52,6 +108,10 @@ internal class NativeSpawnProcess private constructor(
     override fun isAlive(): Boolean = runCatching { exitValue(); false }.getOrDefault(true)
 
     companion object {
+        private const val OUTPUT_PUMP_TIMEOUT_MS = 1_000L
+        private const val OUTPUT_PUMP_QUIET_MS = 250L
+        private const val OUTPUT_PUMP_POLL_MS = 50L
+
         fun start(
             argv: List<String>,
             environment: Map<String, String>,
@@ -74,10 +134,11 @@ internal class NativeSpawnProcess private constructor(
             )
             check(spawned.size == 3 && spawned[0] > 0) { "Native runtime launch failed" }
             val input = ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.adoptFd(spawned[1]))
-            val pump = spawned[2].takeIf { it >= 0 }?.let { outputFd ->
+            val master = spawned[2].takeIf { it >= 0 }?.let { ParcelFileDescriptor.adoptFd(it) }
+            val pump = master?.let { ptyMaster ->
                 Thread({
                     runCatching {
-                        ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.adoptFd(outputFd)).use { source ->
+                        ParcelFileDescriptor.AutoCloseInputStream(ptyMaster).use { source ->
                             FileOutputStream(outputFile, false).use { destination -> source.copyTo(destination) }
                         }
                     }
@@ -86,7 +147,15 @@ internal class NativeSpawnProcess private constructor(
                     start()
                 }
             }
-            return NativeSpawnProcess(spawned[0], outputFile, input, pump)
+            return NativeSpawnProcess(
+                pid = spawned[0],
+                outputFile = outputFile,
+                stdin = input,
+                ptyMaster = master,
+                ptyRows = if (pseudoTerminal) ptyRows else 0,
+                ptyColumns = if (pseudoTerminal) ptyColumns else 0,
+                outputPump = pump,
+            )
         }
     }
 }
@@ -109,4 +178,5 @@ private object NativeSpawn {
     ): IntArray
     external fun waitFor(pid: Int, noHang: Boolean): Int
     external fun kill(pid: Int, signal: Int): Int
+    external fun resizePty(fd: Int, rows: Int, columns: Int): Boolean
 }

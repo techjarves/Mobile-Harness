@@ -33,6 +33,10 @@ import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.DevStack
+import com.jarves.mh.model.DEFAULT_TERMINAL_FONT_SIZE
+import com.jarves.mh.model.DEFAULT_UI_SCALE
+import com.jarves.mh.model.normalizeTerminalFontSize
+import com.jarves.mh.model.normalizeUiScale
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectType
@@ -41,6 +45,7 @@ import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
+import com.jarves.mh.model.TerminalViewport
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
 import com.jarves.mh.model.projectSlug
@@ -224,9 +229,17 @@ data class TerminalOutputLine(
 
 private val ANSI_TERMINAL_SEQUENCE = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
 
+/**
+ * Strips ANSI escapes and turns carriage-return progress frames into plain lines.
+ * A trailing `\r` is removed before the last `\r`-separated segment is taken, so
+ * `"50%\r"` renders `"50%"` instead of an empty last frame.
+ */
 internal fun sanitizeTerminalOutput(text: String): String = text
     .replace(ANSI_TERMINAL_SEQUENCE, "")
-    .filter { it == '\n' || it == '\r' || it == '\t' || it.code >= 0x20 }
+    .replace("\r\n", "\n")
+    .split('\n')
+    .joinToString("\n") { line -> line.trimEnd('\r').substringAfterLast('\r') }
+    .filter { it == '\n' || it == '\t' || it.code >= 0x20 }
 
 private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
 
@@ -291,6 +304,8 @@ data class AppUiState(
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
     val activeApiKeyName: String? = null,
     val themeMode: com.jarves.mh.ui.theme.AppThemeMode = com.jarves.mh.ui.theme.AppThemeMode.DARK,
+    val uiScale: Float = DEFAULT_UI_SCALE,
+    val terminalFontSize: Int = DEFAULT_TERMINAL_FONT_SIZE,
     val languageCode: String = "system",
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
@@ -347,6 +362,7 @@ data class AppUiState(
     val projectTerminalCwd: String = "/workspace",
     val projectTerminalCommand: String? = null,
     val projectTerminalDraft: String? = null,
+    val projectTerminalViewport: TerminalViewport = TerminalViewport.Default,
     val pendingTerminalCommand: String? = null,
     val suggestedProjectRoot: String? = null,
     val selectedDevStacks: Set<DevStack> = emptySet(),
@@ -498,6 +514,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             antigravityEffort = preferences.antigravityEffort,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
+            uiScale = preferences.uiScale,
+            terminalFontSize = preferences.terminalFontSize,
             languageCode = preferences.languageCode,
             projects = preferences.loadProjects(),
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
@@ -883,6 +901,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
     }
 
+    /** Keeps the guest terminal's columns and rows in sync with the visible console area. */
+    fun setProjectTerminalViewport(columns: Int, rows: Int) {
+        val viewport = TerminalViewport.clamped(columns, rows)
+        val current = _state.value
+        if (current.projectTerminalViewport == viewport) return
+        _state.update { it.copy(projectTerminalViewport = viewport) }
+        if (current.projectTerminalRunning) {
+            (projectTerminalProcess as? NativeSpawnProcess)?.resizePty(
+                rows = viewport.rows,
+                columns = viewport.columns,
+            )
+        }
+    }
+
     fun refreshDeveloperDiagnostics() {
         if (diagnosticsJob?.isActive == true) return
         val now = SystemClock.elapsedRealtime()
@@ -1036,56 +1068,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             printf '\n$marker%s\n' "${'$'}PWD"
             exit ${'$'}pocket_status
         """.trimIndent()
+        val viewport = _state.value.projectTerminalViewport
+        val columns = viewport.columns
+        val rows = viewport.rows
         val process = installer.process(
             proot = installed.proot,
             rootfs = installed.rootfs,
             workspace = workspace,
-            environment = emptyMap(),
+            environment = mapOf(
+                "COLUMNS" to columns.toString(),
+                "LINES" to rows.toString(),
+                "PAGER" to "cat",
+                "GIT_PAGER" to "cat",
+                "SYSTEMD_PAGER" to "cat",
+            ),
             guestCommand = listOf("/usr/bin/bash", "-lc", script),
             guestWorkspacePath = guestWorkspacePath,
+            pseudoTerminal = true,
+            ptyRows = rows,
+            ptyColumns = columns,
         )
         projectTerminalProcess = process
         projectTerminalProjectId = projectId
         if (projectTerminalStopRequested) process.destroy()
         val native = process as? NativeSpawnProcess
             ?: return ProjectTerminalResult(str(R.string.vm_unsupported_terminal_process), 1, cwd)
+        // The viewport may have changed while the process was spawning; setProjectTerminalViewport
+        // saw no process to resize yet, so apply the current size now.
+        val currentViewport = _state.value.projectTerminalViewport
+        if (currentViewport != viewport) {
+            native.resizePty(rows = currentViewport.rows, columns = currentViewport.columns)
+        }
         var offset = 0L
         val output = StringBuilder()
         var autoConfirmed = false
         while (process.isAlive || native.outputFile.length() > offset) {
-            val available = native.outputFile.length() - offset
-            if (available <= 0) {
+            val chunk = readTerminalOutputChunk(native.outputFile, offset)
+            if (chunk == null) {
                 Thread.sleep(50)
                 continue
             }
-            val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-            val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                file.seek(offset)
-                file.read(bytes)
+            offset = chunk.nextOffset
+            output.append(chunk.text)
+            val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
+                .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+            if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
+                process.outputStream.write("y\n".toByteArray())
+                process.outputStream.flush()
+                autoConfirmed = true
             }
-            if (count > 0) {
-                offset += count
-                output.append(bytes.decodeToString(0, count))
-                val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
-                    .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
-                    process.outputStream.write("y\n".toByteArray())
-                    process.outputStream.flush()
-                    autoConfirmed = true
-                }
-                val detectedPreviewUrl = detectPreviewUrl(visible)
-                _state.update { current ->
-                    if (current.activeProject?.id == projectId) {
-                        current.copy(
-                            projectTerminalLiveOutput = visible,
-                            previewReady = current.previewReady || detectedPreviewUrl != null,
-                            previewUrl = detectedPreviewUrl ?: current.previewUrl,
-                        )
-                    } else current
-                }
+            val detectedPreviewUrl = detectPreviewUrl(visible)
+            _state.update { current ->
+                if (current.activeProject?.id == projectId) {
+                    current.copy(
+                        projectTerminalLiveOutput = visible,
+                        previewReady = current.previewReady || detectedPreviewUrl != null,
+                        previewUrl = detectedPreviewUrl ?: current.previewUrl,
+                    )
+                } else current
             }
         }
         val exitCode = process.waitFor()
+        native.awaitOutputPump()
+        drainTerminalOutput(native.outputFile, offset) { output.append(it) }
         runCatching { process.outputStream.close() }
         val raw = output.toString()
         val cwdAfter = raw.substringAfter(marker, "")
@@ -2007,6 +2052,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setThemeMode(mode: com.jarves.mh.ui.theme.AppThemeMode) {
         preferences.themeMode = mode.name.lowercase()
         _state.update { it.copy(themeMode = mode) }
+    }
+
+    fun setUiScale(scale: Float) {
+        val normalized = normalizeUiScale(scale)
+        preferences.uiScale = normalized
+        _state.update { it.copy(uiScale = normalized) }
+    }
+
+    fun setTerminalFontSize(size: Int) {
+        val normalized = normalizeTerminalFontSize(size)
+        preferences.terminalFontSize = normalized
+        _state.update { it.copy(terminalFontSize = normalized) }
     }
 
     fun setLanguage(code: String) {
