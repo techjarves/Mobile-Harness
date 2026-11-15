@@ -94,8 +94,13 @@
     <string name="st_sync">सिंक करें</string>
     <string name="st_tap_to_activate">सक्रिय करने के लिए टैप करें</string>
     <string name="st_tap_to_make_active">सक्रिय बनाने के लिए टैप करें</string>
+    <string name="st_terminal_text">टर्मिनल टेक्स्ट</string>
     <string name="st_test_connection_and_save">कनेक्शन जाँचें और सहेजें</string>
     <string name="st_testing_connection">कनेक्शन का परीक्षण हो रहा है…</string>
+    <string name="st_text_size">टेक्स्ट आकार</string>
+    <string name="st_text_size_large">बड़ा</string>
+    <string name="st_text_size_normal">सामान्य</string>
+    <string name="st_text_size_xlarge">बहुत बड़ा</string>
     <string name="st_tier_open_source">ओपन सोर्स</string>
     <string name="st_tier_pro_reasoning">प्रो तर्क</string>
     <string name="st_tier_stable">स्थिर</string>

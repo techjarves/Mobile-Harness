@@ -94,8 +94,13 @@
     <string name="st_sync">Sincronizar</string>
     <string name="st_tap_to_activate">Toca para activar</string>
     <string name="st_tap_to_make_active">Toca para activarla</string>
+    <string name="st_terminal_text">Texto del terminal</string>
     <string name="st_test_connection_and_save">Probar conexión y guardar</string>
     <string name="st_testing_connection">Probando la conexión…</string>
+    <string name="st_text_size">Tamaño de texto</string>
+    <string name="st_text_size_large">Grande</string>
+    <string name="st_text_size_normal">Normal</string>
+    <string name="st_text_size_xlarge">Muy grande</string>
     <string name="st_tier_open_source">Código abierto</string>
     <string name="st_tier_pro_reasoning">Razonamiento Pro</string>
     <string name="st_tier_stable">Estable</string>

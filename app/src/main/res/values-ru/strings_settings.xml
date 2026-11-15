@@ -94,8 +94,13 @@
     <string name="st_sync">Синхр.</string>
     <string name="st_tap_to_activate">Нажмите, чтобы активировать</string>
     <string name="st_tap_to_make_active">Нажмите, чтобы сделать активным</string>
+    <string name="st_terminal_text">Текст терминала</string>
     <string name="st_test_connection_and_save">Проверить подключение и сохранить</string>
     <string name="st_testing_connection">Проверка подключения…</string>
+    <string name="st_text_size">Размер текста</string>
+    <string name="st_text_size_large">Крупный</string>
+    <string name="st_text_size_normal">Обычный</string>
+    <string name="st_text_size_xlarge">Очень крупный</string>
     <string name="st_tier_open_source">Открытый код</string>
     <string name="st_tier_pro_reasoning">Продвинутые рассуждения</string>
     <string name="st_tier_stable">Стабильная</string>

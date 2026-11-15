@@ -94,8 +94,13 @@
     <string name="st_sync">同步</string>
     <string name="st_tap_to_activate">点按以启用</string>
     <string name="st_tap_to_make_active">点按设为当前</string>
+    <string name="st_terminal_text">终端文字</string>
     <string name="st_test_connection_and_save">测试连接并保存</string>
     <string name="st_testing_connection">正在测试连接…</string>
+    <string name="st_text_size">文字大小</string>
+    <string name="st_text_size_large">大</string>
+    <string name="st_text_size_normal">标准</string>
+    <string name="st_text_size_xlarge">特大</string>
     <string name="st_tier_open_source">开源</string>
     <string name="st_tier_pro_reasoning">专业推理</string>
     <string name="st_tier_stable">稳定</string>
