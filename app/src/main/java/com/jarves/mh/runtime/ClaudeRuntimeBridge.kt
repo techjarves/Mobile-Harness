@@ -36,21 +36,57 @@ import org.json.JSONObject
 import org.json.JSONArray
 
 internal object ProviderRuntimeErrorDetector {
+    private const val REJECTED_KEY = "The provider rejected the saved API key."
+    private const val USER_NOT_FOUND = "User not found. Check the API key and provider account."
+    private val fatalStatuses = setOf(401, 403, 429)
+
+    /**
+     * Returns a user-facing reason when [line] reports a fatal provider error, or null otherwise.
+     *
+     * In stream-json mode, only events that describe an API failure are inspected. Tool results
+     * (`"type":"user"`), regular assistant output and stream deltas carry arbitrary file contents
+     * or command output, so matching keywords there would kill healthy sessions (issue #110).
+     */
     fun detect(line: String): String? {
-        val json = runCatching { JSONObject(line) }.getOrNull()
-        val combined = buildString {
-            append(line)
-            json?.let {
-                append(' ')
-                append(it.optString("error"))
-                append(' ')
-                append(it.optString("message"))
-                append(' ')
-                append(it.optString("result"))
+        val json = runCatching { JSONObject(line) }.getOrNull() ?: return classify(line)
+        return when (json.optString("type")) {
+            "system" -> {
+                if (json.optString("subtype") != "api_retry") return null
+                val reason = classify(json.optString("error"))
+                when {
+                    reason != null -> reason
+                    json.optInt("error_status") in fatalStatuses -> REJECTED_KEY
+                    else -> null
+                }
             }
-        }.lowercase()
+            "result" -> {
+                if (!json.optBoolean("is_error")) return null
+                classify(listOf(json.optString("error"), json.optString("result")).joinToString(" "))
+            }
+            "assistant" -> {
+                // Claude Code marks synthetic API-error messages with a top-level "error" field.
+                val error = json.optString("error")
+                if (error.isBlank()) return null
+                classify("$error ${assistantText(json)}")
+            }
+            else -> null
+        }
+    }
+
+    private fun assistantText(json: JSONObject): String {
+        val content = json.optJSONObject("message")?.optJSONArray("content") ?: return ""
+        return buildString {
+            for (index in 0 until content.length()) {
+                val block = content.optJSONObject(index) ?: continue
+                if (block.optString("type") == "text") append(block.optString("text")).append(' ')
+            }
+        }
+    }
+
+    private fun classify(text: String): String? {
+        val combined = text.lowercase()
         return when {
-            "user not found" in combined -> "User not found. Check the API key and provider account."
+            "user not found" in combined -> USER_NOT_FOUND
             "authentication_failed" in combined ||
                 "authentication failed" in combined ||
                 "invalid api key" in combined ||
@@ -60,8 +96,7 @@ internal object ProviderRuntimeErrorDetector {
                 "expired" in combined ||
                 "quota" in combined ||
                 "rate limit" in combined ||
-                (json?.optString("subtype") == "api_retry" && json.optInt("error_status") in listOf(401, 403, 429)) ->
-                "The provider rejected the saved API key."
+                "rate_limit" in combined -> REJECTED_KEY
             else -> null
         }
     }
